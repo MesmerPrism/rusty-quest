@@ -18,7 +18,11 @@ pub(crate) fn status_owner_ended(identity: u64, epoch: u64) {
     });
 }
 fn notify_status_lifecycle(app: &AndroidApp, resumed: bool) {
+    #[cfg(feature = "showcase")]
+    {let _=crate::native_renderer_panel_bridge::call(app,if resumed {"resume"}else{"suspend"});}
+    #[cfg(not(feature = "showcase"))]
     let (identity, epoch) = STATUS_OWNER.with(|owner| owner.get());
+    #[cfg(not(feature = "showcase"))]
     if identity > 0 && epoch > 0 {
         if let Err(reason) = crate::native_renderer_panel_bridge::notify_app_status_lifecycle(
             app, identity, epoch, resumed,
@@ -83,6 +87,8 @@ pub(crate) fn pump_activity_events(
                     notify_status_lifecycle(app, true);
                 },
                 MainEvent::Destroy => {
+                    #[cfg(feature = "showcase")]
+                    {let _=crate::native_renderer_panel_bridge::call(app,"shutdown");}
                     DESTROY_OBSERVED.with(|observed| observed.set(true));
                     crate::marker("activity-lifecycle", "event=destroy");
                     *running = false;

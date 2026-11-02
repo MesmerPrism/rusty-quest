@@ -6,6 +6,14 @@ use std::{
 };
 
 fn main() {
+    if env::var_os("CARGO_FEATURE_SHOWCASE").is_some() {
+        for name in ["RUSTY_QUEST_NATIVE_RECORDING_EXPORT","RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED"] {
+            println!("cargo:rerun-if-env-changed={name}");
+            assert!(env::var(name).ok().is_none_or(|v|v=="false"), "forbidden showcase capability: {name}");
+        }
+        assert!(env::var_os("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_none(), "showcase cannot select captured hand source");
+    }
+
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDING_EXPORT");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID");
@@ -580,12 +588,17 @@ fn main() {
         let anchor_echo_radius_m_define = anchor_echo_radius_m.to_string();
         let anchor_echo_alpha_define = anchor_echo_alpha.to_string();
         let anchor_echo_rotation_radians_define = anchor_echo_rotation_radians.to_string();
+        let showcase = env::var_os("CARGO_FEATURE_SHOWCASE").is_some();
+        let extension_enabled = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1").ok().as_deref() == Some("true");
+        println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1");
+        assert_eq!(showcase, extension_enabled, "showcase and frame-extension source selections must match");
+        let frame_extension_define = if extension_enabled { "1" } else { "0" };
         compile_shader_with_defines(
             &glslc,
             "compute",
             &payload.shader,
             &out_dir.join("private_particles.comp.spv"),
-            &[
+            &[("PRIVATE_PARTICLE_FRAME_EXTENSION_V1", frame_extension_define),
                 (
                     "PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT",
                     &anchor_echo_max_count_define,

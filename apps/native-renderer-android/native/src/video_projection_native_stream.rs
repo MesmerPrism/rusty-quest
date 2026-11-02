@@ -108,6 +108,7 @@ struct NativeVideoProjectionReaderContext {
     last_accepted_timestamp_ns: AtomicI64,
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeCreateStereoVideoSurface(
     env: *mut JNIEnv,
@@ -173,6 +174,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
     }
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeStopStereoVideoStream(
     _env: *mut JNIEnv,
@@ -193,6 +195,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
     }
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeStereoVideoLifecycleEvent(
     _env: *mut JNIEnv,

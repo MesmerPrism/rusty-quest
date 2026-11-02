@@ -2,7 +2,10 @@
 
 use std::{
     collections::VecDeque,
-    sync::{atomic::{AtomicU64, Ordering}, Mutex, MutexGuard, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, MutexGuard, OnceLock,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -157,7 +160,11 @@ pub(crate) struct BreathCompositionRuntime {
     stale_after_micros: u64,
     latest_calibration: Option<CalibrationPanelReadback>,
     polar_state_tuning: PolarStateTuningControl,
-    polar_parameter_boundary: Option<(PolarStateTuningRequest, BreathTimestampMicros, crate::session_recording_clock::SourceClock)>,
+    polar_parameter_boundary: Option<(
+        PolarStateTuningRequest,
+        BreathTimestampMicros,
+        crate::source_clock::SourceClock,
+    )>,
     last_polar_diagnostics: Option<PolarAccRuntimeDiagnostics>,
     settings_revision: u64,
 }
@@ -613,64 +620,128 @@ impl BreathCompositionRuntime {
         })
     }
 
-    fn request_guided_arm(&mut self, experiment_generation: u64,
-        operation_id: &str) -> Result<GuidedArmRequest, &'static str> {
+    fn request_guided_arm(
+        &mut self,
+        experiment_generation: u64,
+        operation_id: &str,
+    ) -> Result<GuidedArmRequest, &'static str> {
         let previous = self.snapshot().effective.ok_or("no-effective-selection")?;
-        let desired = BreathCompositionRequest { source: BreathCompositionSource::PolarAcc,
-            mapping: BreathCompositionMapping::State, ..previous };
+        let desired = BreathCompositionRequest {
+            source: BreathCompositionSource::PolarAcc,
+            mapping: BreathCompositionMapping::State,
+            ..previous
+        };
         if previous != desired {
-            self.apply_command_inner(&json!({"schema": COMMAND_SCHEMA_ID, "operation":"select",
+            self.apply_command_inner(
+                &json!({"schema": COMMAND_SCHEMA_ID, "operation":"select",
                 "source":desired.source.as_str(), "mapping":desired.mapping.as_str(),
                 "controller_projection":desired.controller_projection.as_str(),
-                "polar_projection":desired.polar_projection.as_str(), "inverted":desired.inverted}).to_string())?;
+                "polar_projection":desired.polar_projection.as_str(), "inverted":desired.inverted})
+                .to_string(),
+            )?;
             self.settings_revision = self.settings_revision.saturating_add(1);
         }
         self.ensure_running_for_experiment_arm()?;
         let parameters = guided_arm_parameters();
-        let already_acknowledged = self.polar_parameter_boundary.as_ref().is_some_and(|(request, _, _)|
-            request.parameters == parameters && self.polar_state_tuning.pending.is_none()
-                && self.polar_state_tuning.requested.as_ref() == Some(request)
-                && self.pending_actions.iter().all(|a| a.source != BreathCompositionSource::PolarAcc))
-            && self.polar_adapter.as_ref().is_some_and(|adapter| adapter.acknowledged_phase_configuration()
-                .is_some_and(|(generation, mut actual)| {
-                    if actual.inverted != desired.inverted { return false; }
-                    actual.inverted = false;
-                    Some(generation) == self.snapshot().generation && actual == parameters
-                }));
+        let already_acknowledged =
+            self.polar_parameter_boundary
+                .as_ref()
+                .is_some_and(|(request, _, _)| {
+                    request.parameters == parameters
+                        && self.polar_state_tuning.pending.is_none()
+                        && self.polar_state_tuning.requested.as_ref() == Some(request)
+                        && self
+                            .pending_actions
+                            .iter()
+                            .all(|a| a.source != BreathCompositionSource::PolarAcc)
+                })
+                && self.polar_adapter.as_ref().is_some_and(|adapter| {
+                    adapter.acknowledged_phase_configuration().is_some_and(
+                        |(generation, mut actual)| {
+                            if actual.inverted != desired.inverted {
+                                return false;
+                            }
+                            actual.inverted = false;
+                            Some(generation) == self.snapshot().generation && actual == parameters
+                        },
+                    )
+                });
         if !already_acknowledged {
-            let generation = self.polar_state_tuning.generation.checked_add(1).ok_or("tuning-generation-exhausted")?;
+            let generation = self
+                .polar_state_tuning
+                .generation
+                .checked_add(1)
+                .ok_or("tuning-generation-exhausted")?;
             self.apply_command_inner(&json!({"schema":COMMAND_SCHEMA_ID,"operation":"configure_polar_state",
                 "session_id":self.polar_state_tuning.session_id,"generation":generation,
                 "request_id":&rusty_quest_broker_authority::packaged_json_sha256(&format!("{}:{generation}:{experiment_generation}:{operation_id}", self.polar_state_tuning.session_id))[..32],
                 "settings":polar_state_settings_value(parameters)}).to_string())?;
             self.settings_revision = self.settings_revision.saturating_add(1);
         }
-        Ok(GuidedArmRequest { selection:desired,
-            composition_generation:self.snapshot().generation.ok_or("adapter-generation-missing")?,
-            tuning:self.polar_state_tuning.requested.clone().ok_or("tuning-request-missing")? })
+        Ok(GuidedArmRequest {
+            selection: desired,
+            composition_generation: self
+                .snapshot()
+                .generation
+                .ok_or("adapter-generation-missing")?,
+            tuning: self
+                .polar_state_tuning
+                .requested
+                .clone()
+                .ok_or("tuning-request-missing")?,
+        })
     }
 
-    fn acknowledged_guided_arm(&self, token: &GuidedArmRequest, at_ns: u64,
-        experiment_generation: u64, operation_id: &str) -> Result<Option<Value>, &'static str> {
-        let desired=token.selection;
-        let parameters=guided_arm_parameters();
-        if self.snapshot().effective != Some(desired) || self.snapshot().generation != Some(token.composition_generation)
-            || self.polar_state_tuning.requested.as_ref() != Some(&token.tuning) {
+    fn acknowledged_guided_arm(
+        &self,
+        token: &GuidedArmRequest,
+        at_ns: u64,
+        experiment_generation: u64,
+        operation_id: &str,
+    ) -> Result<Option<Value>, &'static str> {
+        let desired = token.selection;
+        let parameters = guided_arm_parameters();
+        if self.snapshot().effective != Some(desired)
+            || self.snapshot().generation != Some(token.composition_generation)
+            || self.polar_state_tuning.requested.as_ref() != Some(&token.tuning)
+        {
             return Err("guided-configuration-superseded");
         }
         if self.polar_state_tuning.pending.as_ref() == Some(&token.tuning)
-            || self.pending_actions.iter().any(|action| action.source == BreathCompositionSource::PolarAcc) {
+            || self
+                .pending_actions
+                .iter()
+                .any(|action| action.source == BreathCompositionSource::PolarAcc)
+        {
             return Ok(None);
         }
-        let generation = self.snapshot().generation.ok_or("adapter-generation-missing")?;
-        let (actual_generation, mut actual) = self.polar_adapter.as_ref()
-            .and_then(PolarAccBreathAdapter::acknowledged_phase_configuration).ok_or("adapter-configuration-missing")?;
-        if actual_generation != generation || actual.inverted != desired.inverted { return Err("adapter-configuration-mismatch"); }
+        let generation = self
+            .snapshot()
+            .generation
+            .ok_or("adapter-generation-missing")?;
+        let (actual_generation, mut actual) = self
+            .polar_adapter
+            .as_ref()
+            .and_then(PolarAccBreathAdapter::acknowledged_phase_configuration)
+            .ok_or("adapter-configuration-missing")?;
+        if actual_generation != generation || actual.inverted != desired.inverted {
+            return Err("adapter-configuration-mismatch");
+        }
         actual.inverted = false;
-        let (receipt, boundary, boundary_clock) = self.polar_parameter_boundary.as_ref().ok_or("adapter-parameter-unacknowledged")?;
-        if actual != parameters || receipt != &token.tuning || receipt.parameters != parameters || self.polar_state_tuning.pending.is_some()
-            || self.polar_state_tuning.effective.as_ref() != Some(receipt) { return Err("adapter-parameter-mismatch"); }
-        Ok(Some(json!({"schema":"rusty.quest.breath_tracking_configuration.v1", "source":"polar-acc", "mapping":"state",
+        let (receipt, boundary, boundary_clock) = self
+            .polar_parameter_boundary
+            .as_ref()
+            .ok_or("adapter-parameter-unacknowledged")?;
+        if actual != parameters
+            || receipt != &token.tuning
+            || receipt.parameters != parameters
+            || self.polar_state_tuning.pending.is_some()
+            || self.polar_state_tuning.effective.as_ref() != Some(receipt)
+        {
+            return Err("adapter-parameter-mismatch");
+        }
+        Ok(Some(
+            json!({"schema":"rusty.quest.breath_tracking_configuration.v1", "source":"polar-acc", "mapping":"state",
             "sampled_clock":session_assessment_clocks(desired.source).0.as_str(),
             "observed_source_clock":session_assessment_clocks(desired.source).1.as_str(),
             "controller_projection":desired.controller_projection.as_str(), "polar_projection":desired.polar_projection.as_str(),
@@ -680,51 +751,81 @@ impl BreathCompositionRuntime {
             "boundary_source_time_ns":boundary.get().saturating_mul(1_000),
             "boundary_source_clock":boundary_clock.as_str(),"prepared_monotonic_ns":at_ns,
             "experiment_generation":experiment_generation,"arm_operation_id":operation_id,
-            "acknowledgement":"adapter-configuration-applied","tracking_claim":"not-established"})))
+            "acknowledgement":"adapter-configuration-applied","tracking_claim":"not-established"}),
+        ))
     }
 
     fn cancel_guided_arm(&mut self, token: &GuidedArmRequest) {
         if self.snapshot().generation == Some(token.composition_generation)
-            && self.polar_state_tuning.requested.as_ref() == Some(&token.tuning) {
-            self.pending_actions.retain(|action| action.source != BreathCompositionSource::PolarAcc);
+            && self.polar_state_tuning.requested.as_ref() == Some(&token.tuning)
+        {
+            self.pending_actions
+                .retain(|action| action.source != BreathCompositionSource::PolarAcc);
             if self.polar_state_tuning.pending.as_ref() == Some(&token.tuning) {
                 self.polar_state_tuning.pending = None;
             }
             self.polar_state_tuning.last_reason = "guided-arm-boundary-timeout";
-            let mut candidate=self.authority.clone();
-            if candidate.action(BreathCompositionAction::Reset).rejection.is_none() {
-                let _ = self.commit_transition(candidate, &[PendingAdapterAction {
-                    source:BreathCompositionSource::PolarAcc,action:AdapterAction::Reset }], true);
+            let mut candidate = self.authority.clone();
+            if candidate
+                .action(BreathCompositionAction::Reset)
+                .rejection
+                .is_none()
+            {
+                let _ = self.commit_transition(
+                    candidate,
+                    &[PendingAdapterAction {
+                        source: BreathCompositionSource::PolarAcc,
+                        action: AdapterAction::Reset,
+                    }],
+                    true,
+                );
             }
         }
     }
 
     fn invalidate_polar_clock_owner(&mut self) {
-        self.polar_adapter=None;
-        self.polar_parameter_boundary=None;
-        self.polar_state_tuning.pending=None;
-        self.last_polar_observed_at=None;
-        self.last_polar_sequence_id=None;
-        self.polar_missing_reported=false;
-        self.last_polar_diagnostics=None;
-        self.pending_actions.retain(|action| action.source != BreathCompositionSource::PolarAcc);
-        if self.snapshot().effective.is_some_and(|selection| selection.source == BreathCompositionSource::PolarAcc) {
-            let mut candidate=self.authority.clone();
-            if candidate.action(BreathCompositionAction::Reset).rejection.is_none() {
-                self.authority=candidate;
+        self.polar_adapter = None;
+        self.polar_parameter_boundary = None;
+        self.polar_state_tuning.pending = None;
+        self.last_polar_observed_at = None;
+        self.last_polar_sequence_id = None;
+        self.polar_missing_reported = false;
+        self.last_polar_diagnostics = None;
+        self.pending_actions
+            .retain(|action| action.source != BreathCompositionSource::PolarAcc);
+        if self
+            .snapshot()
+            .effective
+            .is_some_and(|selection| selection.source == BreathCompositionSource::PolarAcc)
+        {
+            let mut candidate = self.authority.clone();
+            if candidate
+                .action(BreathCompositionAction::Reset)
+                .rejection
+                .is_none()
+            {
+                self.authority = candidate;
             }
-            self.latest_calibration=None;
-            self.settings_revision=self.settings_revision.saturating_add(1);
+            self.latest_calibration = None;
+            self.settings_revision = self.settings_revision.saturating_add(1);
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn prepare_guided_arm(&mut self, at_ns: u64, generation: u64, operation_id: &str) -> Result<Value, &'static str> {
-        let token=self.request_guided_arm(generation, operation_id)?;
+    pub(crate) fn prepare_guided_arm(
+        &mut self,
+        at_ns: u64,
+        generation: u64,
+        operation_id: &str,
+    ) -> Result<Value, &'static str> {
+        let token = self.request_guided_arm(generation, operation_id)?;
         // Isolated real adapter boundary: tests supply this synthetic OpenXR clock.
-        self.apply_polar_configuration_boundary(BreathTimestampMicros::new(at_ns / 1_000),
-            crate::session_recording_clock::SourceClock::OpenXrTime);
-        self.acknowledged_guided_arm(&token,at_ns,generation,operation_id)?.ok_or("adapter-configuration-missing")
+        self.apply_polar_configuration_boundary(
+            BreathTimestampMicros::new(at_ns / 1_000),
+            crate::source_clock::SourceClock::OpenXrTime,
+        );
+        self.acknowledged_guided_arm(&token, at_ns, generation, operation_id)?
+            .ok_or("adapter-configuration-missing")
     }
 
     fn commit_transition(
@@ -805,7 +906,11 @@ impl BreathCompositionRuntime {
         });
     }
 
-    fn apply_polar_configuration_boundary(&mut self, at: BreathTimestampMicros, clock: crate::session_recording_clock::SourceClock) {
+    fn apply_polar_configuration_boundary(
+        &mut self,
+        at: BreathTimestampMicros,
+        clock: crate::source_clock::SourceClock,
+    ) {
         while let Some(action) = self.take_action(BreathCompositionSource::PolarAcc) {
             match action {
                 AdapterAction::Configure => {
@@ -878,7 +983,11 @@ impl BreathCompositionRuntime {
         // Configure/Start must complete before this actual adapter boundary.
         if let Some(request) = self.polar_state_tuning.pending.clone() {
             let mut parameters = request.parameters;
-            parameters.inverted = self.authority.snapshot().effective.is_some_and(|s| s.inverted);
+            parameters.inverted = self
+                .authority
+                .snapshot()
+                .effective
+                .is_some_and(|s| s.inverted);
             match self.polar_adapter.as_mut() {
                 Some(adapter) => match adapter.apply_polar_phase_parameters(at, parameters) {
                     Ok(()) => {
@@ -903,7 +1012,7 @@ impl BreathCompositionRuntime {
     }
 
     pub(crate) fn poll_polar(&mut self, at: BreathTimestampMicros) {
-        self.apply_polar_configuration_boundary(at, crate::session_recording_clock::SourceClock::OpenXrTime);
+        self.apply_polar_configuration_boundary(at, crate::source_clock::SourceClock::OpenXrTime);
         let snapshot = self.authority.snapshot();
         let Some(generation) = snapshot.generation else {
             return;
@@ -925,7 +1034,10 @@ impl BreathCompositionRuntime {
         self.last_polar_sequence_id = Some(measurement.sequence_id);
         self.last_polar_observed_at = Some(at);
         self.polar_missing_reported = false;
+        #[cfg(not(feature = "showcase"))]
         let guidance = crate::experiment_session_runtime::current_breath_guidance_target();
+        #[cfg(feature = "showcase")]
+        let guidance = None;
         let Some(adapter) = self.polar_adapter.as_mut() else {
             return;
         };
@@ -940,11 +1052,13 @@ impl BreathCompositionRuntime {
             let snapshot =
                 self.authority
                     .observe(at, BreathCompositionSource::PolarAcc, assessment);
+            #[cfg(not(feature = "showcase"))]
             crate::breath_capture::record_assessment(
                 BreathCompositionSource::PolarAcc,
                 assessment,
                 snapshot,
             );
+            #[cfg(not(feature = "showcase"))]
             record_session_assessment(
                 BreathCompositionSource::PolarAcc,
                 assessment,
@@ -953,8 +1067,13 @@ impl BreathCompositionRuntime {
                 result.guidance,
                 measurement.source_clock_provenance,
             );
-            observe_breath_monitor(snapshot, BreathCompositionSource::PolarAcc, assessment,
-                result.unbiased_phase.map(|observation| observation.phase));
+            #[cfg(not(feature = "showcase"))]
+            observe_breath_monitor(
+                snapshot,
+                BreathCompositionSource::PolarAcc,
+                assessment,
+                result.unbiased_phase.map(|observation| observation.phase),
+            );
         }
         self.refresh_polar_state_diagnostics();
     }
@@ -1012,13 +1131,19 @@ impl BreathCompositionRuntime {
             let snapshot =
                 self.authority
                     .observe(at, BreathCompositionSource::PolarAcc, assessment);
+            #[cfg(not(feature = "showcase"))]
             crate::breath_capture::record_assessment(
                 BreathCompositionSource::PolarAcc,
                 assessment,
                 snapshot,
             );
-            observe_breath_monitor(snapshot, BreathCompositionSource::PolarAcc, assessment,
-                result.unbiased_phase.map(|observation| observation.phase));
+            #[cfg(not(feature = "showcase"))]
+            observe_breath_monitor(
+                snapshot,
+                BreathCompositionSource::PolarAcc,
+                assessment,
+                result.unbiased_phase.map(|observation| observation.phase),
+            );
         }
     }
 
@@ -1064,21 +1189,33 @@ fn runtime() -> &'static Mutex<BreathCompositionRuntime> {
 struct RuntimeGuard(MutexGuard<'static, BreathCompositionRuntime>);
 impl std::ops::Deref for RuntimeGuard {
     type Target = BreathCompositionRuntime;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 impl std::ops::DerefMut for RuntimeGuard {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 impl Drop for RuntimeGuard {
     fn drop(&mut self) {
         let snapshot = self.0.snapshot();
-        crate::polar_input_health::configure(self.0.input_owner_id,
-            snapshot.feature_lock_active && snapshot.requested.is_some_and(|selection|
-                selection.source == BreathCompositionSource::PolarAcc));
+        crate::polar_input_health::configure(
+            self.0.input_owner_id,
+            snapshot.feature_lock_active
+                && snapshot
+                    .requested
+                    .is_some_and(|selection| selection.source == BreathCompositionSource::PolarAcc),
+        );
     }
 }
 fn lock_runtime() -> RuntimeGuard {
-    RuntimeGuard(runtime().lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+    RuntimeGuard(
+        runtime()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+    )
 }
 
 /// Host tests need a real admitted composition binding; the production default
@@ -1111,12 +1248,18 @@ pub(crate) mod scoped_test_binding {
     /// Declare this guard before session runtimes so their workers stop before
     /// the prior breath authority is restored, including during panic unwind.
     /// The test runner serializes other global-runtime users (--test-threads=1).
-    pub(crate) fn install() -> Guard { install_source(false) }
+    pub(crate) fn install() -> Guard {
+        install_source(false)
+    }
 
-    pub(crate) fn install_polar() -> Guard { install_source(true) }
+    pub(crate) fn install_polar() -> Guard {
+        install_source(true)
+    }
 
     fn install_source(polar: bool) -> Guard {
-        let serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let serial = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let replacement = BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
             enabled: true,
             packaged_activation_binding: BreathCompositionBinding::Digest(TEST_BINDING),
@@ -1133,7 +1276,7 @@ pub(crate) mod scoped_test_binding {
                 mapping: BreathCompositionMapping::State,
                 controller_projection: ControllerProjectionSelection::DynamicAxis,
                 polar_projection: PolarProjectionSelection::Xz,
-                inverted: false
+                inverted: false,
             }),
             ..BreathCompositionRuntimeConfig::default()
         });
@@ -1145,7 +1288,10 @@ pub(crate) mod scoped_test_binding {
             let mut current = lock_runtime();
             std::mem::replace(&mut *current, replacement)
         };
-        Guard { previous: Some(previous), _serial: serial }
+        Guard {
+            previous: Some(previous),
+            _serial: serial,
+        }
     }
 }
 
@@ -1184,6 +1330,9 @@ pub(crate) fn reset_to_packaged_defaults() {
     lock_runtime().reset_to_packaged_defaults();
 }
 
+#[cfg(feature = "showcase")]
+pub(crate) fn ensure_running_for_visual_use()->Result<&'static str,&'static str>{lock_runtime().ensure_running_for_experiment_arm()}
+
 pub(crate) fn ensure_running_for_experiment_arm() -> Result<&'static str, &'static str> {
     let mut state = lock_runtime();
     let result = state.ensure_running_for_experiment_arm();
@@ -1214,14 +1363,21 @@ pub(crate) fn ensure_running_for_experiment_arm() -> Result<&'static str, &'stat
     result
 }
 
-pub(crate) fn prepare_guided_arm(at_ns: u64, generation: u64, operation_id: &str) -> Result<Value, &'static str> {
-    let started=Instant::now();
-    let token=lock_runtime().request_guided_arm(generation, operation_id)?;
-    let deadline=started+Duration::from_secs(2);
+pub(crate) fn prepare_guided_arm(
+    at_ns: u64,
+    generation: u64,
+    operation_id: &str,
+) -> Result<Value, &'static str> {
+    let started = Instant::now();
+    let token = lock_runtime().request_guided_arm(generation, operation_id)?;
+    let deadline = started + Duration::from_secs(2);
     loop {
         // The renderer owns adapter time. Never hold its mutex while waiting.
-        let observed_ns=at_ns.saturating_add(started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64);
-        if let Some(receipt)=lock_runtime().acknowledged_guided_arm(&token,observed_ns,generation,operation_id)? {
+        let observed_ns =
+            at_ns.saturating_add(started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64);
+        if let Some(receipt) =
+            lock_runtime().acknowledged_guided_arm(&token, observed_ns, generation, operation_id)?
+        {
             return Ok(receipt);
         }
         if Instant::now() >= deadline {
@@ -1239,54 +1395,130 @@ pub(crate) fn invalidate_polar_clock_owner() {
 #[cfg(test)]
 pub(crate) fn isolated_guided_test_runtime() -> BreathCompositionRuntime {
     BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
-        enabled:true, packaged_activation_binding:BreathCompositionBinding::Digest([0x6b;32]),
-        runtime_activation_binding:BreathCompositionBinding::Digest([0x6b;32]),
-        capabilities:BreathCompositionCapabilities {controller_assessment:true, polar_acc_assessment:true,
-            volume_mapping:true,state_mapping:true,same_apk_panel:true},
-        initial_request:Some(BreathCompositionRequest { source:BreathCompositionSource::Controller,
-            mapping:BreathCompositionMapping::Volume,controller_projection:ControllerProjectionSelection::DynamicAxis,
-            polar_projection:PolarProjectionSelection::Xz,inverted:false }),
-        stale_after_micros:500_000,polar_state_parameters:None,
+        enabled: true,
+        packaged_activation_binding: BreathCompositionBinding::Digest([0x6b; 32]),
+        runtime_activation_binding: BreathCompositionBinding::Digest([0x6b; 32]),
+        capabilities: BreathCompositionCapabilities {
+            controller_assessment: true,
+            polar_acc_assessment: true,
+            volume_mapping: true,
+            state_mapping: true,
+            same_apk_panel: true,
+        },
+        initial_request: Some(BreathCompositionRequest {
+            source: BreathCompositionSource::Controller,
+            mapping: BreathCompositionMapping::Volume,
+            controller_projection: ControllerProjectionSelection::DynamicAxis,
+            polar_projection: PolarProjectionSelection::Xz,
+            inverted: false,
+        }),
+        stale_after_micros: 500_000,
+        polar_state_parameters: None,
     })
 }
 
 pub(crate) fn guided_arm_parameters() -> PolarAccPhaseParameters {
-    parse_polar_state_settings(json!({"inhale_entry_per_second":0.030,"exhale_entry_per_second":0.030,
+    parse_polar_state_settings(
+        json!({"inhale_entry_per_second":0.030,"exhale_entry_per_second":0.030,
         "hold_band_per_second":0.025,"smoothing_millis":400,"confirmation_millis":400,
         "minimum_dwell_millis":400,"stale_millis":500,"motion_admission_mg":2.0,
         "leave_full_contraction_per_second":0.030,"leave_full_expansion_per_second":0.030,
-        "late_sample_window_millis":120}).as_object().unwrap()).expect("checked app-owned tuned defaults")
+        "late_sample_window_millis":120})
+        .as_object()
+        .unwrap(),
+    )
+    .expect("checked app-owned tuned defaults")
 }
 
 pub(crate) fn validate_tracking_configuration(value: &Value) -> Result<(), &'static str> {
-    let object = value.as_object().ok_or("tracking-configuration-object-invalid")?;
-    require_fields(object, &["schema","source","mapping","controller_projection","polar_projection","inverted",
-        "composition_generation","tuning_session_id","tuning_generation","tuning_request_id","settings",
-        "settings_revision","boundary_source_time_ns","experiment_generation","arm_operation_id","acknowledgement","tracking_claim",
-        "sampled_clock","observed_source_clock","boundary_source_clock","prepared_monotonic_ns"])?;
-    if value["schema"] != "rusty.quest.breath_tracking_configuration.v1" || value["source"] != "polar-acc"
-        || value["mapping"] != "state" || value["acknowledgement"] != "adapter-configuration-applied"
-        || value["tracking_claim"] != "not-established" { return Err("tracking-configuration-contract-invalid"); }
+    let object = value
+        .as_object()
+        .ok_or("tracking-configuration-object-invalid")?;
+    require_fields(
+        object,
+        &[
+            "schema",
+            "source",
+            "mapping",
+            "controller_projection",
+            "polar_projection",
+            "inverted",
+            "composition_generation",
+            "tuning_session_id",
+            "tuning_generation",
+            "tuning_request_id",
+            "settings",
+            "settings_revision",
+            "boundary_source_time_ns",
+            "experiment_generation",
+            "arm_operation_id",
+            "acknowledgement",
+            "tracking_claim",
+            "sampled_clock",
+            "observed_source_clock",
+            "boundary_source_clock",
+            "prepared_monotonic_ns",
+        ],
+    )?;
+    if value["schema"] != "rusty.quest.breath_tracking_configuration.v1"
+        || value["source"] != "polar-acc"
+        || value["mapping"] != "state"
+        || value["acknowledgement"] != "adapter-configuration-applied"
+        || value["tracking_claim"] != "not-established"
+    {
+        return Err("tracking-configuration-contract-invalid");
+    }
     let clocks = session_assessment_clocks(BreathCompositionSource::PolarAcc);
-    if value["sampled_clock"] != clocks.0.as_str() || value["observed_source_clock"] != clocks.1.as_str() {
+    if value["sampled_clock"] != clocks.0.as_str()
+        || value["observed_source_clock"] != clocks.1.as_str()
+    {
         return Err("tracking-source-clocks-invalid");
     }
-    parse_request_tokens(value["source"].as_str(),value["mapping"].as_str(),value["controller_projection"].as_str(),
-        value["polar_projection"].as_str(),value["inverted"].as_bool().ok_or("tracking-inversion-invalid")?)?;
-    for key in ["composition_generation","tuning_generation","settings_revision","experiment_generation"] {
-        if value[key].as_u64().is_none_or(|v| v == 0) { return Err("tracking-generation-invalid"); }
+    parse_request_tokens(
+        value["source"].as_str(),
+        value["mapping"].as_str(),
+        value["controller_projection"].as_str(),
+        value["polar_projection"].as_str(),
+        value["inverted"]
+            .as_bool()
+            .ok_or("tracking-inversion-invalid")?,
+    )?;
+    for key in [
+        "composition_generation",
+        "tuning_generation",
+        "settings_revision",
+        "experiment_generation",
+    ] {
+        if value[key].as_u64().is_none_or(|v| v == 0) {
+            return Err("tracking-generation-invalid");
+        }
     }
-    for key in ["tuning_session_id","tuning_request_id","arm_operation_id"] {
-        if value[key].as_str().is_none_or(|v| v.is_empty() || v.len() > 256) { return Err("tracking-identity-invalid"); }
+    for key in ["tuning_session_id", "tuning_request_id", "arm_operation_id"] {
+        if value[key]
+            .as_str()
+            .is_none_or(|v| v.is_empty() || v.len() > 256)
+        {
+            return Err("tracking-identity-invalid");
+        }
     }
-    for key in ["tuning_session_id","tuning_request_id"] {
-        let token=value[key].as_str().ok_or("tracking-identity-invalid")?;
-        if !is_lower_hex(token,32) || token.bytes().all(|byte| byte == b'0') { return Err("tracking-identity-invalid"); }
+    for key in ["tuning_session_id", "tuning_request_id"] {
+        let token = value[key].as_str().ok_or("tracking-identity-invalid")?;
+        if !is_lower_hex(token, 32) || token.bytes().all(|byte| byte == b'0') {
+            return Err("tracking-identity-invalid");
+        }
     }
-    if value["boundary_source_clock"] != crate::session_recording_clock::SourceClock::OpenXrTime.as_str()
-        || value["prepared_monotonic_ns"].as_u64().is_none() || value["boundary_source_time_ns"].as_u64().is_none() { return Err("tracking-boundary-invalid"); }
-    let settings = value["settings"].as_object().ok_or("tracking-settings-invalid")?;
-    if parse_polar_state_settings(settings)? != guided_arm_parameters() { return Err("tracking-settings-mismatch"); }
+    if value["boundary_source_clock"] != crate::source_clock::SourceClock::OpenXrTime.as_str()
+        || value["prepared_monotonic_ns"].as_u64().is_none()
+        || value["boundary_source_time_ns"].as_u64().is_none()
+    {
+        return Err("tracking-boundary-invalid");
+    }
+    let settings = value["settings"]
+        .as_object()
+        .ok_or("tracking-settings-invalid")?;
+    if parse_polar_state_settings(settings)? != guided_arm_parameters() {
+        return Err("tracking-settings-mismatch");
+    }
     Ok(())
 }
 
@@ -1303,32 +1535,60 @@ pub(crate) fn submit_assessment(
     let snapshot = state.submit_assessment(at, source, assessment);
     let settings_revision = state.settings_revision;
     drop(state);
+    #[cfg(not(feature = "showcase"))]
     crate::breath_capture::record_assessment(source, assessment, snapshot);
+    #[cfg(not(feature = "showcase"))]
     record_session_assessment(source, assessment, settings_revision, None, None, None);
+    #[cfg(not(feature = "showcase"))]
     observe_breath_monitor(snapshot, source, assessment, None);
     snapshot
 }
 
-fn monitor_tracking(snapshot: BreathCompositionSnapshot, source: BreathCompositionSource,
-    assessment: BreathAssessmentObservation) -> Option<&'static str> {
+fn monitor_tracking(
+    snapshot: BreathCompositionSnapshot,
+    source: BreathCompositionSource,
+    assessment: BreathAssessmentObservation,
+) -> Option<&'static str> {
     if snapshot.status != BreathCompositionStatus::Running
-        || !snapshot.effective.is_some_and(|selected| selected.source == source)
-        || snapshot.generation != Some(assessment.generation) { return None; }
+        || !snapshot
+            .effective
+            .is_some_and(|selected| selected.source == source)
+        || snapshot.generation != Some(assessment.generation)
+    {
+        return None;
+    }
     Some(if snapshot.rejection == Some(rusty_quest_breath_contract::composition::BreathCompositionRejection::StaleAssessment) {
         "stale"
     } else { assessment.tracking.as_str() })
 }
 
-fn observe_breath_monitor(snapshot: BreathCompositionSnapshot, source: BreathCompositionSource,
+#[cfg(not(feature = "showcase"))]
+fn observe_breath_monitor(
+    snapshot: BreathCompositionSnapshot,
+    source: BreathCompositionSource,
     assessment: BreathAssessmentObservation,
-    unbiased_phase: Option<rusty_quest_breath_contract::assessment::CommonBreathPhase>) {
-    let Some(tracking) = monitor_tracking(snapshot, source, assessment) else { return; };
+    unbiased_phase: Option<rusty_quest_breath_contract::assessment::CommonBreathPhase>,
+) {
+    let Some(tracking) = monitor_tracking(snapshot, source, assessment) else {
+        return;
+    };
     let phase = unbiased_phase.unwrap_or(assessment.phase).as_str();
-    crate::experiment_session_runtime::observe_breath_monitor(source.as_str(), tracking,
-        if phase == "bad-tracking" { "unknown" } else { phase },
-        assessment.volume01.map(|v| v as f32), assessment.quality01 as f32, assessment.generation.get());
+    #[cfg(not(feature = "showcase"))]
+    crate::experiment_session_runtime::observe_breath_monitor(
+        source.as_str(),
+        tracking,
+        if phase == "bad-tracking" {
+            "unknown"
+        } else {
+            phase
+        },
+        assessment.volume01.map(|v| v as f32),
+        assessment.quality01 as f32,
+        assessment.generation.get(),
+    );
 }
 
+#[cfg(not(feature = "showcase"))]
 fn record_session_assessment(
     source: BreathCompositionSource,
     assessment: BreathAssessmentObservation,
@@ -1388,17 +1648,17 @@ fn record_session_assessment(
 fn session_assessment_clocks(
     source: BreathCompositionSource,
 ) -> (
-    crate::session_recording_clock::SourceClock,
-    crate::session_recording_clock::SourceClock,
+    crate::source_clock::SourceClock,
+    crate::source_clock::SourceClock,
 ) {
     match source {
         BreathCompositionSource::Controller => (
-            crate::session_recording_clock::SourceClock::OpenXrTime,
-            crate::session_recording_clock::SourceClock::OpenXrTime,
+            crate::source_clock::SourceClock::OpenXrTime,
+            crate::source_clock::SourceClock::OpenXrTime,
         ),
         BreathCompositionSource::PolarAcc => (
-            crate::session_recording_clock::SourceClock::OpenXrTime,
-            crate::session_recording_clock::SourceClock::OpenXrTime,
+            crate::source_clock::SourceClock::OpenXrTime,
+            crate::source_clock::SourceClock::OpenXrTime,
         ),
     }
 }
@@ -1427,6 +1687,7 @@ pub(crate) fn status_json() -> String {
 }
 
 pub(crate) fn apply_command_json(command_json: &str) -> String {
+    #[cfg(not(feature = "showcase"))]
     if serde_json::from_str::<Value>(command_json)
         .ok()
         .and_then(|value| {
@@ -1997,6 +2258,7 @@ fn jni_response(mut env: jni::EnvUnowned, response: String) -> jni::sys::jstring
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeApplyBreathCompositionCommand(
     mut env: jni::EnvUnowned,
@@ -2021,6 +2283,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeReadBreathCompositionStatus(
     env: jni::EnvUnowned,
@@ -2110,98 +2373,192 @@ mod tests {
     #[test]
     fn guided_arm_switches_controller_to_acknowledged_polar_without_resetting_healthy_rearm() {
         let mut runtime = isolated_guided_test_runtime();
-        assert_eq!(runtime.snapshot().effective.unwrap().source, BreathCompositionSource::Controller);
-        let receipt = runtime.prepare_guided_arm(1_000_000_000, 1, "first-arm").unwrap();
+        assert_eq!(
+            runtime.snapshot().effective.unwrap().source,
+            BreathCompositionSource::Controller
+        );
+        let receipt = runtime
+            .prepare_guided_arm(1_000_000_000, 1, "first-arm")
+            .unwrap();
         validate_tracking_configuration(&receipt).unwrap();
         assert_eq!(receipt["source"], "polar-acc");
         assert_eq!(receipt["mapping"], "state");
         assert_eq!(receipt["tracking_claim"], "not-established");
-        assert_eq!(receipt["settings"]["confirmation_millis"],400);
-        assert!(runtime.polar_adapter.as_ref().unwrap().acknowledged_phase_configuration().is_some());
-        assert_eq!(runtime.latest_calibration.as_ref().unwrap().lifecycle,"collecting");
-        let rearm = runtime.prepare_guided_arm(1_010_000_000, 2, "second-arm").unwrap();
-        for key in ["composition_generation","tuning_generation","tuning_request_id","boundary_source_time_ns","settings_revision"] {
-            assert_eq!(rearm[key], receipt[key], "healthy adapter must be preserved: {key}");
+        assert_eq!(receipt["settings"]["confirmation_millis"], 400);
+        assert!(runtime
+            .polar_adapter
+            .as_ref()
+            .unwrap()
+            .acknowledged_phase_configuration()
+            .is_some());
+        assert_eq!(
+            runtime.latest_calibration.as_ref().unwrap().lifecycle,
+            "collecting"
+        );
+        let rearm = runtime
+            .prepare_guided_arm(1_010_000_000, 2, "second-arm")
+            .unwrap();
+        for key in [
+            "composition_generation",
+            "tuning_generation",
+            "tuning_request_id",
+            "boundary_source_time_ns",
+            "settings_revision",
+        ] {
+            assert_eq!(
+                rearm[key], receipt[key],
+                "healthy adapter must be preserved: {key}"
+            );
         }
-        assert_eq!(rearm["experiment_generation"],2);
-        assert_eq!(rearm["arm_operation_id"],"second-arm");
+        assert_eq!(rearm["experiment_generation"], 2);
+        assert_eq!(rearm["arm_operation_id"], "second-arm");
         assert!(runtime.snapshot().latest_assessment.is_none());
-        let mut corrupt=receipt.clone(); corrupt["sampled_clock"]=json!(crate::session_recording_clock::SourceClock::JavaNanoTime.as_str());
+        let mut corrupt = receipt.clone();
+        corrupt["sampled_clock"] = json!(crate::source_clock::SourceClock::JavaNanoTime.as_str());
         assert!(validate_tracking_configuration(&corrupt).is_err());
     }
 
     #[test]
     fn guided_arm_preserves_projection_inversion_and_rejects_missing_real_adapter() {
         let mut runtime = isolated_guided_test_runtime();
-        let mut request: Value=serde_json::from_str(&select("polar-acc","state")).unwrap();
-        request["polar_projection"]=json!("full-3d"); request["inverted"]=json!(true);
+        let mut request: Value = serde_json::from_str(&select("polar-acc", "state")).unwrap();
+        request["polar_projection"] = json!("full-3d");
+        request["inverted"] = json!(true);
         runtime.apply_command_inner(&request.to_string()).unwrap();
-        let receipt=runtime.prepare_guided_arm(1_000_000_000,1,"projected-arm").unwrap();
-        assert_eq!(receipt["polar_projection"],PolarProjectionSelection::Full3d.as_str()); assert_eq!(receipt["inverted"],true);
-        assert!(runtime.polar_adapter.as_ref().unwrap().acknowledged_phase_configuration().unwrap().1.inverted);
-        runtime.polar_adapter=None;
-        assert_eq!(runtime.prepare_guided_arm(1_100_000_000,2,"missing-adapter"),Err("adapter-configuration-missing"));
-        assert_eq!(runtime.polar_state_tuning.last_reason,"awaiting-polar-adapter");
-        let mut disabled=BreathCompositionRuntime::new(Default::default());
-        assert!(disabled.prepare_guided_arm(1,1,"disabled").is_err());
+        let receipt = runtime
+            .prepare_guided_arm(1_000_000_000, 1, "projected-arm")
+            .unwrap();
+        assert_eq!(
+            receipt["polar_projection"],
+            PolarProjectionSelection::Full3d.as_str()
+        );
+        assert_eq!(receipt["inverted"], true);
+        assert!(
+            runtime
+                .polar_adapter
+                .as_ref()
+                .unwrap()
+                .acknowledged_phase_configuration()
+                .unwrap()
+                .1
+                .inverted
+        );
+        runtime.polar_adapter = None;
+        assert_eq!(
+            runtime.prepare_guided_arm(1_100_000_000, 2, "missing-adapter"),
+            Err("adapter-configuration-missing")
+        );
+        assert_eq!(
+            runtime.polar_state_tuning.last_reason,
+            "awaiting-polar-adapter"
+        );
+        let mut disabled = BreathCompositionRuntime::new(Default::default());
+        assert!(disabled.prepare_guided_arm(1, 1, "disabled").is_err());
     }
 
     #[test]
     fn tuning_acknowledgement_requires_success_at_real_adapter_boundary() {
-        let mut runtime=isolated_guided_test_runtime();
-        let command=polar_tuning_command(&runtime,1,"11111111111111111111111111111111");
+        let mut runtime = isolated_guided_test_runtime();
+        let command = polar_tuning_command(&runtime, 1, "11111111111111111111111111111111");
         runtime.apply_command_inner(&command).unwrap();
-        runtime.apply_polar_configuration_boundary(BreathTimestampMicros::new(1), crate::session_recording_clock::SourceClock::OpenXrTime);
+        runtime.apply_polar_configuration_boundary(
+            BreathTimestampMicros::new(1),
+            crate::source_clock::SourceClock::OpenXrTime,
+        );
         assert!(runtime.polar_state_tuning.effective.is_none());
         assert!(runtime.polar_state_tuning.pending.is_some());
         assert!(runtime.polar_parameter_boundary.is_none());
-        let settings=PolarAccVolumeSettings::new(true,PolarAccProjection::Xz,
-            rusty_quest_breath_contract::calibration::CalibrationParameters::default()).unwrap();
-        runtime.polar_adapter=Some(PolarAccBreathAdapter::new(settings));
-        runtime.polar_state_tuning.pending.as_mut().unwrap().parameters.inhale_entry_per_second=f64::NAN;
-        runtime.apply_polar_configuration_boundary(BreathTimestampMicros::new(2), crate::session_recording_clock::SourceClock::OpenXrTime);
-        assert_eq!(runtime.polar_state_tuning.last_reason,"adapter-parameter-rejected");
+        let settings = PolarAccVolumeSettings::new(
+            true,
+            PolarAccProjection::Xz,
+            rusty_quest_breath_contract::calibration::CalibrationParameters::default(),
+        )
+        .unwrap();
+        runtime.polar_adapter = Some(PolarAccBreathAdapter::new(settings));
+        runtime
+            .polar_state_tuning
+            .pending
+            .as_mut()
+            .unwrap()
+            .parameters
+            .inhale_entry_per_second = f64::NAN;
+        runtime.apply_polar_configuration_boundary(
+            BreathTimestampMicros::new(2),
+            crate::source_clock::SourceClock::OpenXrTime,
+        );
+        assert_eq!(
+            runtime.polar_state_tuning.last_reason,
+            "adapter-parameter-rejected"
+        );
         assert!(runtime.polar_state_tuning.effective.is_none());
         assert!(runtime.polar_parameter_boundary.is_none());
-        assert_eq!(runtime.polar_state_tuning.effective_count,0);
+        assert_eq!(runtime.polar_state_tuning.effective_count, 0);
     }
 
     #[test]
     fn guided_arm_waits_for_renderer_boundary_and_rejects_superseded_or_cancelled_work() {
-        let mut runtime=isolated_guided_test_runtime();
-        let token=runtime.request_guided_arm(1,"await-renderer").unwrap();
-        assert_eq!(runtime.acknowledged_guided_arm(&token,9_000_000_000,1,"await-renderer").unwrap(),None);
+        let mut runtime = isolated_guided_test_runtime();
+        let token = runtime.request_guided_arm(1, "await-renderer").unwrap();
+        assert_eq!(
+            runtime
+                .acknowledged_guided_arm(&token, 9_000_000_000, 1, "await-renderer")
+                .unwrap(),
+            None
+        );
         // Deliberately different epochs: no Android elapsed timestamp initializes
         // calibration or classifier state. Only this OpenXR consumer time does.
-        runtime.apply_polar_configuration_boundary(BreathTimestampMicros::new(123_000),
-            crate::session_recording_clock::SourceClock::OpenXrTime);
-        let receipt=runtime.acknowledged_guided_arm(&token,9_000_000_000,1,"await-renderer").unwrap().unwrap();
-        assert_eq!(receipt["boundary_source_clock"],"openxr-time");
-        assert_eq!(receipt["boundary_source_time_ns"],123_000_000_u64);
-        assert_eq!(receipt["prepared_monotonic_ns"],9_000_000_000_u64);
-        runtime.apply_command_inner(&select("controller","volume")).unwrap();
-        assert_eq!(runtime.acknowledged_guided_arm(&token,9_100_000_000,1,"await-renderer"),Err("guided-configuration-superseded"));
-        let token=runtime.request_guided_arm(2,"no-renderer").unwrap();
+        runtime.apply_polar_configuration_boundary(
+            BreathTimestampMicros::new(123_000),
+            crate::source_clock::SourceClock::OpenXrTime,
+        );
+        let receipt = runtime
+            .acknowledged_guided_arm(&token, 9_000_000_000, 1, "await-renderer")
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt["boundary_source_clock"], "openxr-time");
+        assert_eq!(receipt["boundary_source_time_ns"], 123_000_000_u64);
+        assert_eq!(receipt["prepared_monotonic_ns"], 9_000_000_000_u64);
+        runtime
+            .apply_command_inner(&select("controller", "volume"))
+            .unwrap();
+        assert_eq!(
+            runtime.acknowledged_guided_arm(&token, 9_100_000_000, 1, "await-renderer"),
+            Err("guided-configuration-superseded")
+        );
+        let token = runtime.request_guided_arm(2, "no-renderer").unwrap();
         runtime.cancel_guided_arm(&token);
         assert!(runtime.polar_state_tuning.pending.is_none());
-        assert!(!runtime.pending_actions.iter().any(|a| matches!(a.action,AdapterAction::Configure|AdapterAction::Start(_))));
-        assert!(runtime.acknowledged_guided_arm(&token,10_000_000_000,2,"no-renderer").is_err());
+        assert!(!runtime
+            .pending_actions
+            .iter()
+            .any(|a| matches!(a.action, AdapterAction::Configure | AdapterAction::Start(_))));
+        assert!(runtime
+            .acknowledged_guided_arm(&token, 10_000_000_000, 2, "no-renderer")
+            .is_err());
     }
 
     #[test]
     fn replacement_xr_owner_invalidates_parameter_acknowledgement_and_calibration() {
-        let mut runtime=isolated_guided_test_runtime();
-        let before=runtime.prepare_guided_arm(9_000_000_000,1,"old-xr").unwrap();
-        let stale=runtime.request_guided_arm(2,"pending-old-xr").unwrap();
+        let mut runtime = isolated_guided_test_runtime();
+        let before = runtime
+            .prepare_guided_arm(9_000_000_000, 1, "old-xr")
+            .unwrap();
+        let stale = runtime.request_guided_arm(2, "pending-old-xr").unwrap();
         runtime.invalidate_polar_clock_owner();
         assert!(runtime.polar_adapter.is_none());
         assert!(runtime.polar_parameter_boundary.is_none());
-        assert!(runtime.acknowledged_guided_arm(&stale,10_000_000_000,2,"pending-old-xr").is_err());
-        let after=runtime.prepare_guided_arm(1_000_000_000,3,"new-xr").unwrap();
-        assert!(after["composition_generation"].as_u64()>before["composition_generation"].as_u64());
-        assert!(after["tuning_generation"].as_u64()>before["tuning_generation"].as_u64());
-        assert_eq!(after["boundary_source_time_ns"],1_000_000_000_u64);
-        assert_eq!(after["tracking_claim"],"not-established");
+        assert!(runtime
+            .acknowledged_guided_arm(&stale, 10_000_000_000, 2, "pending-old-xr")
+            .is_err());
+        let after = runtime
+            .prepare_guided_arm(1_000_000_000, 3, "new-xr")
+            .unwrap();
+        assert!(
+            after["composition_generation"].as_u64() > before["composition_generation"].as_u64()
+        );
+        assert!(after["tuning_generation"].as_u64() > before["tuning_generation"].as_u64());
+        assert_eq!(after["boundary_source_time_ns"], 1_000_000_000_u64);
+        assert_eq!(after["tracking_claim"], "not-established");
     }
 
     #[test]
@@ -2228,7 +2585,7 @@ mod tests {
 
     #[test]
     fn normalized_assessment_clock_identity_is_openxr_for_both_sources() {
-        use crate::session_recording_clock::SourceClock;
+        use crate::source_clock::SourceClock;
 
         assert_eq!(
             session_assessment_clocks(BreathCompositionSource::Controller),
@@ -3022,14 +3379,28 @@ mod tests {
         .expect("valid assessment");
         runtime.submit_assessment(at, BreathCompositionSource::PolarAcc, valid);
         let accepted = runtime.snapshot();
-        assert_eq!(monitor_tracking(accepted, BreathCompositionSource::PolarAcc, valid), Some("valid"));
-        assert_eq!(monitor_tracking(accepted, BreathCompositionSource::Controller, valid), None);
+        assert_eq!(
+            monitor_tracking(accepted, BreathCompositionSource::PolarAcc, valid),
+            Some("valid")
+        );
+        assert_eq!(
+            monitor_tracking(accepted, BreathCompositionSource::Controller, valid),
+            None
+        );
         let mut previous = valid;
         previous.generation = BreathGeneration::new(generation.get() + 1).unwrap();
-        assert_eq!(monitor_tracking(accepted, BreathCompositionSource::PolarAcc, previous), None);
+        assert_eq!(
+            monitor_tracking(accepted, BreathCompositionSource::PolarAcc, previous),
+            None
+        );
         let mut stale = accepted;
-        stale.rejection = Some(rusty_quest_breath_contract::composition::BreathCompositionRejection::StaleAssessment);
-        assert_eq!(monitor_tracking(stale, BreathCompositionSource::PolarAcc, valid), Some("stale"));
+        stale.rejection = Some(
+            rusty_quest_breath_contract::composition::BreathCompositionRejection::StaleAssessment,
+        );
+        assert_eq!(
+            monitor_tracking(stale, BreathCompositionSource::PolarAcc, valid),
+            Some("stale")
+        );
         assert_eq!(
             runtime.snapshot().output.and_then(|value| value.volume01),
             Some(0.75)
@@ -3045,8 +3416,14 @@ mod tests {
             Some(BreathTrackingState::Missing)
         );
         assert!(snapshot.output.is_none());
-        assert_eq!(monitor_tracking(snapshot, BreathCompositionSource::PolarAcc,
-            snapshot.latest_assessment.unwrap()), Some("missing"));
+        assert_eq!(
+            monitor_tracking(
+                snapshot,
+                BreathCompositionSource::PolarAcc,
+                snapshot.latest_assessment.unwrap()
+            ),
+            Some("missing")
+        );
         assert!(runtime.polar_missing_reported);
 
         let received = snapshot.telemetry.received_assessment_count;

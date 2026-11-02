@@ -110,7 +110,8 @@ const PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS: usize =
     PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT: usize = 3;
 const PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS: usize = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
-    + PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT;
+    + PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
+    + if cfg!(feature = "showcase") { 2 } else { 0 };
 const PRIVATE_PARTICLE_DIAGNOSTIC_WORDS: usize = 24;
 const PRIVATE_PARTICLE_DIAGNOSTIC_BYTES: vk::DeviceSize =
     (PRIVATE_PARTICLE_DIAGNOSTIC_WORDS * mem::size_of::<i32>()) as vk::DeviceSize;
@@ -1687,6 +1688,13 @@ fn private_particle_driver_bank_rows(
             rows[control_row + 2] = runtime_settings.orbit_distance.aux_row();
         }
     }
+    #[cfg(feature = "showcase")]
+    {
+        let extension = crate::showcase_runtime::frame_extension();
+        rows[26] = extension[0];
+        rows[27] = extension[1];
+    }
+
     rows
 }
 
@@ -2912,9 +2920,14 @@ impl GpuPrivateParticleRenderer {
         dt_seconds: f32,
         frame_count: u64,
     ) {
+        #[cfg(feature = "showcase")]
+        {
+            return;
+        }
         let settings = self.breath_composition_driver.settings();
         self.breath_composition_driver
             .update_frame(settings, snapshot, observed_at, dt_seconds);
+        #[cfg(not(feature = "showcase"))]
         crate::breath_capture::record_driver_apply(
             frame_count,
             observed_at.get(),
@@ -2951,12 +2964,22 @@ impl GpuPrivateParticleRenderer {
         mesh_ui_animation: Option<(u64, bool, f32)>,
     ) -> GpuPrivateParticleFrameStats {
         let mut runtime_settings = self.runtime_settings(frame_count);
+        #[cfg(feature = "showcase")]
+        {
+            let progress = crate::showcase_runtime::frame_extension()[1][0];
+            runtime_settings.driver0_value01 = progress;
+            runtime_settings.driver_values01[0] = progress;
+            runtime_settings.driver_bank_values01[0] = progress;
+        }
         if let Some((_, _, scale_factor)) = mesh_ui_animation {
             runtime_settings.visual_scale *= scale_factor.clamp(0.5, 1.5);
             runtime_settings.visual_parameter_source = "native-mesh-ui";
         }
         let mut world_center_scale = world_center_scale;
+        #[cfg(feature = "showcase")]
+        if let Some(radius) = crate::showcase_runtime::applied_radius_m() {world_center_scale[3]=radius;}
         let mut world_anchor_scale_parameter_source = world_anchor_scale_parameter_source;
+        #[cfg(not(feature = "showcase"))]
         if let Some(radius_m) = crate::experiment_session_runtime::active_radius_m_for_progress(
             runtime_settings.driver0_value01,
         ) {
@@ -3332,6 +3355,7 @@ impl GpuPrivateParticleRenderer {
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
             diagnostic_snapshot: self.last_diagnostic_snapshot,
         };
+        #[cfg(not(feature = "showcase"))]
         if let Some(observed_at_ns) =
             crate::experiment_session_runtime::current_elapsed_realtime_ns()
         {
@@ -3704,8 +3728,11 @@ impl GpuPrivateParticleRenderer {
                 driver_parameter_source = "breath-composition-closed-world";
                 self.emit_breath_composition_driver_connected_marker(frame_count);
             }
+            #[cfg(not(feature = "showcase"))]
             let lsl_inlet_active_count =
                 crate::lsl_panel_runtime::apply_inlet_driver_values(&mut next.driver_values01);
+            #[cfg(feature = "showcase")]
+            let lsl_inlet_active_count = 0;
             if lsl_inlet_active_count > 0 {
                 driver_parameter_source = "lsl-float32-inlet";
             }
@@ -3794,6 +3821,7 @@ impl GpuPrivateParticleRenderer {
                 driver_parameter_source = "breath-composition-closed-world";
                 self.emit_breath_composition_driver_connected_marker(frame_count);
             }
+            #[cfg(not(feature = "showcase"))]
             if crate::lsl_panel_runtime::apply_inlet_driver_values(&mut self.driver_source_values01)
                 > 0
             {

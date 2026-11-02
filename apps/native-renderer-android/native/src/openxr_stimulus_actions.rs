@@ -55,16 +55,26 @@ fn xr_time_micros(value: xr::Time) -> BreathTimestampMicros {
 /// value is a predicted display target, not a simultaneous clock reading.
 fn observe_polar_presentation_clock(app: &android_activity::AndroidApp, predicted: xr::Time) {
     use jni::{jni_sig, jni_str, JavaVM};
-    let vm=unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
-    let readings=vm.attach_current_thread(|env| -> jni::errors::Result<(i64,i64)> {
-        let system=env.find_class(jni_str!("java/lang/System"))?;
-        let before=env.call_static_method(&system,jni_str!("nanoTime"),jni_sig!("()J"),&[])?.j()?;
-        let after=env.call_static_method(&system,jni_str!("nanoTime"),jni_sig!("()J"),&[])?.j()?;
-        Ok((before,after))
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let readings = vm.attach_current_thread(|env| -> jni::errors::Result<(i64, i64)> {
+        let system = env.find_class(jni_str!("java/lang/System"))?;
+        let before = env
+            .call_static_method(&system, jni_str!("nanoTime"), jni_sig!("()J"), &[])?
+            .j()?;
+        let after = env
+            .call_static_method(&system, jni_str!("nanoTime"), jni_sig!("()J"), &[])?
+            .j()?;
+        Ok((before, after))
     });
-    let (before,after)=readings.ok().filter(|(before,after)|*before>0 && *after>=*before).unwrap_or((0,0));
+    let (before, after) = readings
+        .ok()
+        .filter(|(before, after)| *before > 0 && *after >= *before)
+        .unwrap_or((0, 0));
     crate::polar_composition_adapters::install_polar_presentation_clock_pair(
-        u64::try_from(predicted.as_nanos()).unwrap_or(0),before as u64,after as u64);
+        u64::try_from(predicted.as_nanos()).unwrap_or(0),
+        before as u64,
+        after as u64,
+    );
 }
 
 fn right_thumbstick_binding_enabled(
@@ -79,6 +89,7 @@ fn right_thumbstick_binding_enabled(
 pub(crate) struct StimulusVolumeActions {
     control_mode_gate: ControllerModeGate,
     experiment_controls_enabled: bool,
+    #[cfg(not(feature = "showcase"))]
     experiment_control_gesture: crate::experiment_session::ExperimentControlGesture,
     experiment_control_sequence: u64,
     pending_control_haptic: Option<(u64, u64, &'static str)>,
@@ -650,6 +661,7 @@ impl StimulusVolumeActions {
             right_primary_randomize,
             control_mode_gate: ControllerModeGate::new(experiment_control_mode::read()),
             experiment_controls_enabled,
+            #[cfg(not(feature = "showcase"))]
             experiment_control_gesture: Default::default(),
             experiment_control_sequence: 0,
             pending_control_haptic: None,
@@ -911,10 +923,11 @@ impl StimulusVolumeActions {
         let mut events = NativeRendererControllerEvents::default();
         let observed_at = xr_time_micros(predicted_display_time);
         if crate::breath_composition_runtime::effective_request()
-            .is_some_and(|request| request.source == BreathCompositionSource::PolarAcc) {
-            observe_polar_presentation_clock(app,predicted_display_time);
+            .is_some_and(|request| request.source == BreathCompositionSource::PolarAcc)
+        {
+            observe_polar_presentation_clock(app, predicted_display_time);
         } else {
-            crate::polar_composition_adapters::install_polar_presentation_clock_pair(0,0,0);
+            crate::polar_composition_adapters::install_polar_presentation_clock_pair(0, 0, 0);
         }
         events.breath_observed_at = Some(observed_at);
         if crate::breath_composition_runtime::controller_adapter_available() {
@@ -923,13 +936,17 @@ impl StimulusVolumeActions {
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
             self.control_mode_gate
                 .update(experiment_control_mode::read(), None, dt_seconds);
-            self.experiment_control_gesture = Default::default();
+            #[cfg(not(feature = "showcase"))]
+            {
+                self.experiment_control_gesture = Default::default();
+            }
             self.pending_control_haptic = None;
             self.right_experiment_grip_pressed = false;
             self.same_apk_panel_action.cancel_pending_sequence(false);
             self.same_apk_developer_action.cancel_pending_sequence();
             self.observe_composition_controller_missing(observed_at, frame_count.saturating_add(1));
             crate::breath_composition_runtime::poll_polar(observed_at);
+            #[cfg(not(feature = "showcase"))]
             if crate::breath_capture::active() {
                 crate::breath_capture::record_controller_right_thumbstick(
                     frame_count.saturating_add(1),
@@ -970,8 +987,14 @@ impl StimulusVolumeActions {
         }
         let mut control_haptic = false;
         if mode_actions.direct_shortcuts {
-            control_haptic = self.poll_experiment_control(session, dt_seconds, frame_count);
+            #[cfg(not(feature = "showcase"))]
+            {
+                control_haptic = self.poll_experiment_control(session, dt_seconds, frame_count);
+            }
+            #[cfg(not(feature = "showcase"))]
             let suppress_buttons = self.experiment_control_gesture.suppress_buttons();
+            #[cfg(feature = "showcase")]
+            let suppress_buttons = false;
             events.stimulus_randomize_triggered =
                 !suppress_buttons && self.poll_primary_randomize(session, frame_count);
             let (compatibility_trigger_toggle, developer_panel_triggered) =
@@ -1080,15 +1103,26 @@ impl StimulusVolumeActions {
             .uses_native_controller_assessment();
         let composition_controller_enabled =
             crate::breath_composition_runtime::controller_selected();
+        #[cfg(not(feature = "showcase"))]
         let controller_capture_enabled = crate::breath_capture::active();
+        #[cfg(feature = "showcase")]
+        let controller_capture_enabled = false;
         let native_controller_breath_enabled = projection_native_controller_breath_enabled
             || private_particle_breath_assessment_enabled
             || composition_controller_enabled;
         let right_grip_pose_sample = if breath_haptics_enabled
             || native_controller_breath_enabled
             || controller_capture_enabled
-            || crate::lsl_panel_runtime::controller_outlet_requested()
-        {
+            || {
+                #[cfg(not(feature = "showcase"))]
+                {
+                    crate::lsl_panel_runtime::controller_outlet_requested()
+                }
+                #[cfg(feature = "showcase")]
+                {
+                    false
+                }
+            } {
             self.locate_right_grip_pose_sample(
                 reference_space,
                 predicted_display_time,
@@ -1102,6 +1136,7 @@ impl StimulusVolumeActions {
         };
         events.right_grip_pose_tracked =
             right_grip_pose_sample.is_some_and(|sample| sample.tracked);
+        #[cfg(not(feature = "showcase"))]
         if let Some(sample) = right_grip_pose_sample {
             crate::lsl_panel_runtime::submit_controller_right_grip(
                 sample.position_m,
@@ -1110,6 +1145,7 @@ impl StimulusVolumeActions {
                 sample.tracked,
             );
         }
+        #[cfg(not(feature = "showcase"))]
         if controller_capture_enabled {
             if let Some(sample) = right_grip_pose_sample {
                 crate::breath_capture::record_controller_pose(
@@ -1268,7 +1304,10 @@ impl StimulusVolumeActions {
     }
 
     fn clear_pending_operator_gestures(&mut self) {
-        self.experiment_control_gesture = Default::default();
+        #[cfg(not(feature = "showcase"))]
+        {
+            self.experiment_control_gesture = Default::default();
+        }
         self.pending_control_haptic = None;
         self.control_haptic_cooldown = 0.0;
         self.right_experiment_grip_pressed = false;
@@ -1900,6 +1939,7 @@ impl StimulusVolumeActions {
         (triggered, false)
     }
 
+    #[cfg(not(feature = "showcase"))]
     fn poll_experiment_control<G>(
         &mut self,
         session: &xr::Session<G>,
@@ -1953,7 +1993,10 @@ impl StimulusVolumeActions {
         let a = self.right_primary_reset.state(session, xr::Path::NULL);
         let b = self.right_secondary_action.state(session, xr::Path::NULL);
         let (Ok(grip), Ok(a), Ok(b)) = (grip, a, b) else {
-            self.experiment_control_gesture = Default::default();
+            #[cfg(not(feature = "showcase"))]
+            {
+                self.experiment_control_gesture = Default::default();
+            }
             self.right_experiment_grip_pressed = false;
             return acknowledged;
         };
@@ -2222,6 +2265,7 @@ impl StimulusVolumeActions {
         None
     }
 
+    #[cfg(not(feature = "showcase"))]
     fn record_capture_right_thumbstick<G>(
         &self,
         session: &xr::Session<G>,

@@ -270,6 +270,7 @@ fn geometry_readback(state: ControlSnapshot, generation: u64) -> serde_json::Val
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelGeometry(
     mut env: jni::EnvUnowned,
@@ -351,6 +352,7 @@ fn visibility_status(state: ControlSnapshot, generation: u64, revision: u64) -> 
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeSetPanelVisible(
     _env: *mut jni::sys::JNIEnv,
@@ -365,6 +367,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelVisibility(
     mut env: jni::EnvUnowned,
@@ -805,6 +808,7 @@ impl PointerCapture {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeControl(
     _env: *mut jni::sys::JNIEnv,

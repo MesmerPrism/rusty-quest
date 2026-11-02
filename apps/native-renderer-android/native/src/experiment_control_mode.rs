@@ -85,6 +85,7 @@ pub(crate) fn read() -> ModeSnapshot {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ExperimentControlMode_nativeInitialize(
     _env: jni::EnvUnowned,
@@ -95,6 +96,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Ex
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ExperimentControlMode_nativeRead(
     _env: jni::EnvUnowned,
@@ -104,6 +106,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Ex
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ExperimentControlMode_nativeSelect(
     _env: jni::EnvUnowned,

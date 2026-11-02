@@ -336,6 +336,7 @@ fn clear_latest_for_side(side: RemoteCameraSide) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeCreateRemoteCameraSurface(
     env: *mut JNIEnv,
@@ -416,6 +417,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
     }
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeStopRemoteCameraStream(
     _env: *mut JNIEnv,
@@ -433,6 +435,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
     }
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativePumpRemoteCameraImage(
     _env: *mut JNIEnv,
@@ -448,6 +451,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
     -3
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeSetPackedStereoPairMetadata(
     _env: *mut JNIEnv,
@@ -494,6 +498,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
     }
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeRemoteCameraLifecycleEvent(
     _env: *mut JNIEnv,

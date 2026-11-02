@@ -107,6 +107,7 @@ pub(crate) fn renderer_focus_state_json(
     .to_string()
 }
 
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_renderer_focus_state_file(
     data_path: &Path,
     process_id: u32,
@@ -168,6 +169,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "showcase"))]
     fn focus_state_file_is_atomically_staged_and_pid_bound() {
         let unique_suffix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

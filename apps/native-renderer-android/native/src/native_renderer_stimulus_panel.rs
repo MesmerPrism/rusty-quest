@@ -557,6 +557,7 @@ fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, 
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn append_questionnaire_result(
     session_dir_path: &str,
     result_json: &str,
@@ -610,6 +611,7 @@ fn append_questionnaire_result(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn validate_questionnaire_session_dir(
     session_dir_path: &str,
     session_id: &str,
@@ -650,6 +652,7 @@ fn validate_questionnaire_session_dir(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn assert_safe_session_id(value: &str) -> Result<(), String> {
     let mut chars = value.chars();
     let first = chars.next().ok_or_else(|| "empty_session_id".to_string())?;
@@ -666,6 +669,7 @@ fn assert_safe_session_id(value: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn ensure_questionnaire_bundle_skeleton(
     session_dir: &Path,
     session_id: &str,
@@ -808,6 +812,7 @@ fn ensure_questionnaire_bundle_skeleton(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn questionnaire_session_schema_json() -> Value {
     json!({
         "schema_id": "rusty.telemetry.session_schema.v1",
@@ -830,6 +835,7 @@ fn questionnaire_session_schema_json() -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn json_file_schema(file_name: &str, schema_id: &str) -> Value {
     json!({
         "file_name": file_name,
@@ -841,6 +847,7 @@ fn json_file_schema(file_name: &str, schema_id: &str) -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn jsonl_file_schema(file_name: &str, schema_id: &str) -> Value {
     json!({
         "file_name": file_name,
@@ -852,6 +859,7 @@ fn jsonl_file_schema(file_name: &str, schema_id: &str) -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn csv_file_schema(file_name: &str, schema_id: &str) -> Value {
     json!({
         "file_name": file_name,
@@ -863,6 +871,7 @@ fn csv_file_schema(file_name: &str, schema_id: &str) -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn refresh_questionnaire_artifact_manifest(
     session_dir: &Path,
     session_id: &str,
@@ -957,6 +966,7 @@ fn refresh_questionnaire_artifact_manifest(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_json_if_missing(path: &Path, value: &Value) -> Result<(), String> {
     if path.exists() {
         return Ok(());
@@ -965,6 +975,7 @@ fn write_json_if_missing(path: &Path, value: &Value) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|_| "create_json_parent_failed".to_string())?;
@@ -982,6 +993,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_text_if_missing(path: &Path, text: String) -> Result<(), String> {
     if path.exists() {
         return Ok(());
@@ -1000,11 +1012,13 @@ fn write_text_if_missing(path: &Path, text: String) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn csv_header(fields: &[&str]) -> String {
     format!("{}\n", fields.join(","))
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn wall_time_unix_ns_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1155,6 +1169,7 @@ pub(crate) fn poll_spatial_camera_panel_open(frame_count: u64) -> Option<Spatial
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveStimulusCandidate(
     mut env: jni::EnvUnowned,
@@ -1221,6 +1236,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_QuestionnairePanelActivity_nativeSubmitQuestionnaireResult(
     mut env: jni::EnvUnowned,
@@ -1288,6 +1304,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Qu
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateLayerSelection(
     mut env: jni::EnvUnowned,
@@ -1354,6 +1371,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveDepthAlignment(
     mut env: jni::EnvUnowned,
@@ -1420,6 +1438,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateParticleDynamics(
     mut env: jni::EnvUnowned,
@@ -1486,6 +1505,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeStartDriverProfileSessionBlock(
     mut env: jni::EnvUnowned,
@@ -2151,7 +2171,7 @@ fn private_particle_curve_code(control: &Value) -> Result<u32, String> {
     }
 }
 
-fn private_particle_canonical_driver_range(index: usize) -> (f32, f32) {
+pub(crate) fn private_particle_canonical_driver_range(index: usize) -> (f32, f32) {
     match index {
         2 => (0.04, 0.115),
         3 => (0.0, 0.1),
@@ -2426,6 +2446,7 @@ pub(crate) fn parse_candidate_json(text: &str) -> Result<StimulusPanelCandidate,
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn apply_app_private_candidate(
     app: &android_activity::AndroidApp,
     options: NativeRendererRuntimeOptions,
@@ -2594,6 +2615,7 @@ fn private_layer_label(index: u32) -> &'static str {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_live_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2614,6 +2636,7 @@ pub(crate) fn write_live_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_private_layer_selection_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2645,6 +2668,7 @@ pub(crate) fn write_private_layer_selection_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_environment_depth_alignment_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2703,6 +2727,7 @@ pub(crate) fn write_environment_depth_alignment_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_private_particle_dynamics_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2855,6 +2880,7 @@ pub(crate) fn write_private_particle_dynamics_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_status(
     data_path: &Path,
     status: &str,

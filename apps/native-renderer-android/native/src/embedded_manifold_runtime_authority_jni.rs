@@ -144,6 +144,7 @@ fn jni_string(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_EmbeddedManifoldRuntimeAuthorityBridge_nativeInitialize(
     env: jni::EnvUnowned,
@@ -165,6 +166,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Em
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_EmbeddedManifoldRuntimeAuthorityBridge_nativeAdmit(
     env: jni::EnvUnowned,
@@ -175,6 +177,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Em
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_EmbeddedManifoldRuntimeAuthorityBridge_nativeMutate(
     env: jni::EnvUnowned,
@@ -190,6 +193,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Em
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_EmbeddedManifoldRuntimeAuthorityBridge_nativeCompleteMediaAction(
     env: jni::EnvUnowned,
@@ -205,6 +209,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Em
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_EmbeddedManifoldRuntimeAuthorityBridge_nativeEvidence(
     mut env: jni::EnvUnowned,

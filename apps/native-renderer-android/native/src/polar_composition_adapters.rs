@@ -61,9 +61,15 @@ struct PolarPresentationClockPair {
 
 impl PolarPresentationClockPair {
     fn new(xr_target_ns: u64, java_before_ns: u64, java_after_ns: u64) -> Option<Self> {
-        (xr_target_ns > 0 && java_before_ns > 0 && java_after_ns >= java_before_ns
+        (xr_target_ns > 0
+            && java_before_ns > 0
+            && java_after_ns >= java_before_ns
             && java_after_ns - java_before_ns <= 5_000_000)
-            .then_some(Self { java_before_ns, java_after_ns, xr_target_ns })
+            .then_some(Self {
+                java_before_ns,
+                java_after_ns,
+                xr_target_ns,
+            })
     }
     fn java_midpoint(self) -> u64 {
         self.java_before_ns + (self.java_after_ns - self.java_before_ns) / 2
@@ -87,22 +93,49 @@ pub(crate) struct PolarPresentationProvenance {
 
 impl PolarPresentationProvenance {
     pub(crate) fn validate(self) -> Result<(), &'static str> {
-        let pair=PolarPresentationClockPair::new(self.xr_target_ns,self.java_before_ns,self.java_after_ns)
-            .ok_or("polar-provenance-pair-invalid")?;
-        if [self.java_target_ns,self.source_left_sequence_id,self.source_right_sequence_id,
-            self.source_left_host_ns,self.source_right_host_ns,self.source_left_sensor_ns,self.source_right_sensor_ns]
-            .contains(&0) { return Err("polar-provenance-time-invalid"); }
+        let pair = PolarPresentationClockPair::new(
+            self.xr_target_ns,
+            self.java_before_ns,
+            self.java_after_ns,
+        )
+        .ok_or("polar-provenance-pair-invalid")?;
+        if [
+            self.java_target_ns,
+            self.source_left_sequence_id,
+            self.source_right_sequence_id,
+            self.source_left_host_ns,
+            self.source_right_host_ns,
+            self.source_left_sensor_ns,
+            self.source_right_sensor_ns,
+        ]
+        .contains(&0)
+        {
+            return Err("polar-provenance-time-invalid");
+        }
         match self.policy {
-            "latest-java-sample-smoothed-at-xr-target" if self.java_target_ns==pair.java_midpoint()
-                && self.source_left_host_ns==self.source_right_host_ns
-                && self.source_left_sequence_id==self.source_right_sequence_id
-                && self.source_left_sensor_ns==self.source_right_sensor_ns
-                && self.source_right_host_ns<=pair.java_midpoint() => Ok(()),
-            "java-delayed-interpolation-at-xr-delayed-target" if pair.java_midpoint().checked_sub(POLAR_ACC_PRESENTATION_DELAY_NS)==Some(self.java_target_ns)
-                && pair.xr_target_ns>POLAR_ACC_PRESENTATION_DELAY_NS
-                && self.source_left_host_ns<=self.java_target_ns && self.java_target_ns<=self.source_right_host_ns
-                && self.source_left_host_ns<self.source_right_host_ns && self.source_left_sequence_id<self.source_right_sequence_id => Ok(()),
-            _=>Err("polar-provenance-projection-invalid"),
+            "latest-java-sample-smoothed-at-xr-target"
+                if self.java_target_ns == pair.java_midpoint()
+                    && self.source_left_host_ns == self.source_right_host_ns
+                    && self.source_left_sequence_id == self.source_right_sequence_id
+                    && self.source_left_sensor_ns == self.source_right_sensor_ns
+                    && self.source_right_host_ns <= pair.java_midpoint() =>
+            {
+                Ok(())
+            }
+            "java-delayed-interpolation-at-xr-delayed-target"
+                if pair
+                    .java_midpoint()
+                    .checked_sub(POLAR_ACC_PRESENTATION_DELAY_NS)
+                    == Some(self.java_target_ns)
+                    && pair.xr_target_ns > POLAR_ACC_PRESENTATION_DELAY_NS
+                    && self.source_left_host_ns <= self.java_target_ns
+                    && self.java_target_ns <= self.source_right_host_ns
+                    && self.source_left_host_ns < self.source_right_host_ns
+                    && self.source_left_sequence_id < self.source_right_sequence_id =>
+            {
+                Ok(())
+            }
+            _ => Err("polar-provenance-projection-invalid"),
         }
     }
 
@@ -118,27 +151,60 @@ impl PolarPresentationProvenance {
 }
 
 pub(crate) fn validate_polar_presentation_provenance(value: &Value) -> Result<(), &'static str> {
-    let object=value.as_object().ok_or("polar-provenance-object-invalid")?;
-    let fields=["schema","policy","java_clock","presentation_clock","java_before_ns","java_after_ns",
-        "xr_target_ns","java_target_ns","source_left_sequence_id","source_right_sequence_id",
-        "source_left_host_ns","source_right_host_ns","source_left_sensor_ns","source_right_sensor_ns"];
-    if object.len()!=fields.len() || fields.iter().any(|key| !object.contains_key(*key))
-        || value["schema"]!="rusty.quest.polar_presentation_provenance.v1"
-        || value["java_clock"]!="java-nano-time" || value["presentation_clock"]!="openxr-time" {
+    let object = value.as_object().ok_or("polar-provenance-object-invalid")?;
+    let fields = [
+        "schema",
+        "policy",
+        "java_clock",
+        "presentation_clock",
+        "java_before_ns",
+        "java_after_ns",
+        "xr_target_ns",
+        "java_target_ns",
+        "source_left_sequence_id",
+        "source_right_sequence_id",
+        "source_left_host_ns",
+        "source_right_host_ns",
+        "source_left_sensor_ns",
+        "source_right_sensor_ns",
+    ];
+    if object.len() != fields.len()
+        || fields.iter().any(|key| !object.contains_key(*key))
+        || value["schema"] != "rusty.quest.polar_presentation_provenance.v1"
+        || value["java_clock"] != "java-nano-time"
+        || value["presentation_clock"] != "openxr-time"
+    {
         return Err("polar-provenance-contract-invalid");
     }
-    let number=|key:&str| value[key].as_u64().filter(|v|*v>0).ok_or("polar-provenance-time-invalid");
-    let policy=match value["policy"].as_str() {
-        Some("latest-java-sample-smoothed-at-xr-target")=>"latest-java-sample-smoothed-at-xr-target",
-        Some("java-delayed-interpolation-at-xr-delayed-target")=>"java-delayed-interpolation-at-xr-delayed-target",
-        _=>return Err("polar-provenance-projection-invalid"),
+    let number = |key: &str| {
+        value[key]
+            .as_u64()
+            .filter(|v| *v > 0)
+            .ok_or("polar-provenance-time-invalid")
     };
-    PolarPresentationProvenance { policy, java_before_ns:number("java_before_ns")?, java_after_ns:number("java_after_ns")?,
-        xr_target_ns:number("xr_target_ns")?,java_target_ns:number("java_target_ns")?,
-        source_left_sequence_id:number("source_left_sequence_id")?,source_right_sequence_id:number("source_right_sequence_id")?,
-        source_left_host_ns:number("source_left_host_ns")?,source_right_host_ns:number("source_right_host_ns")?,
-        source_left_sensor_ns:number("source_left_sensor_ns")?,source_right_sensor_ns:number("source_right_sensor_ns")? }.validate()
-
+    let policy = match value["policy"].as_str() {
+        Some("latest-java-sample-smoothed-at-xr-target") => {
+            "latest-java-sample-smoothed-at-xr-target"
+        }
+        Some("java-delayed-interpolation-at-xr-delayed-target") => {
+            "java-delayed-interpolation-at-xr-delayed-target"
+        }
+        _ => return Err("polar-provenance-projection-invalid"),
+    };
+    PolarPresentationProvenance {
+        policy,
+        java_before_ns: number("java_before_ns")?,
+        java_after_ns: number("java_after_ns")?,
+        xr_target_ns: number("xr_target_ns")?,
+        java_target_ns: number("java_target_ns")?,
+        source_left_sequence_id: number("source_left_sequence_id")?,
+        source_right_sequence_id: number("source_right_sequence_id")?,
+        source_left_host_ns: number("source_left_host_ns")?,
+        source_right_host_ns: number("source_right_host_ns")?,
+        source_left_sensor_ns: number("source_left_sensor_ns")?,
+        source_right_sensor_ns: number("source_right_sensor_ns")?,
+    }
+    .validate()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -175,6 +241,7 @@ struct PolarMeasurementIngress {
     dropped_acc_measurements: u64,
     rr_measurements: VecDeque<PolarRrMeasurement>,
     dropped_rr_measurements: u64,
+    last_rr_received: Option<std::time::Instant>,
 }
 
 impl PolarMeasurementIngress {
@@ -189,7 +256,9 @@ impl PolarMeasurementIngress {
     }
 
     fn submit_acc(&mut self, host_time_ns: u64, sensor_time_ns: u64, xyz_mg: [f32; 3]) -> bool {
-        if !xyz_mg.iter().all(|value| value.is_finite()) { return false; }
+        if !xyz_mg.iter().all(|value| value.is_finite()) {
+            return false;
+        }
         let sequence_id = self.next_acc_sequence_id();
         let measurement = PolarAccMeasurement {
             source_clock_provenance: None,
@@ -217,6 +286,9 @@ impl PolarMeasurementIngress {
     }
 
     fn submit_rr(&mut self, host_time_ns: u64, rr_interval_ms: f32) {
+        #[cfg(feature = "showcase")]
+        if !rr_interval_ms.is_finite() || !(250.0..=2000.0).contains(&rr_interval_ms) { return; }
+        self.last_rr_received=Some(std::time::Instant::now());
         let sequence_id = self.next_rr_sequence_id();
         if self.rr_measurements.len() == RR_QUEUE_CAPACITY {
             self.rr_measurements.pop_front();
@@ -274,8 +346,8 @@ impl PolarMeasurementIngress {
     }
 
     fn reset_presentation_owner(&mut self) {
-        self.presentation_clock_pair=None;
-        self.last_presented_xr_target_ns=None;
+        self.presentation_clock_pair = None;
+        self.last_presented_xr_target_ns = None;
         self.reset_presentation_state();
     }
 
@@ -292,7 +364,8 @@ impl PolarMeasurementIngress {
     ) -> Option<PolarAccMeasurement> {
         let target = self.latest_acc?;
         if target.host_time_ns > observed_host_time_ns
-            || observed_host_time_ns - target.host_time_ns > stale_after_ns {
+            || observed_host_time_ns - target.host_time_ns > stale_after_ns
+        {
             return None;
         }
         if self
@@ -330,37 +403,71 @@ impl PolarMeasurementIngress {
         })
     }
 
-    fn present_at_xr_target(&mut self, observed_xr_time_ns: u64, stale_after_ns: u64) -> Option<PolarAccMeasurement> {
-        let pair=self.presentation_clock_pair.take()?;
+    fn present_at_xr_target(
+        &mut self,
+        observed_xr_time_ns: u64,
+        stale_after_ns: u64,
+    ) -> Option<PolarAccMeasurement> {
+        let pair = self.presentation_clock_pair.take()?;
         // Breath observations have microsecond resolution; retain the exact target
         // in provenance while matching its canonical observation timestamp.
         if pair.xr_target_ns / 1_000 != observed_xr_time_ns / 1_000
-            || self.last_presented_xr_target_ns.is_some_and(|last| pair.xr_target_ns <= last) { return None; }
-        let java_now=pair.java_midpoint();
-        let (mut sample,left,right,java_target,policy,xr_sample)=match self.presentation_mode {
+            || self
+                .last_presented_xr_target_ns
+                .is_some_and(|last| pair.xr_target_ns <= last)
+        {
+            return None;
+        }
+        let java_now = pair.java_midpoint();
+        let (mut sample, left, right, java_target, policy, xr_sample) = match self.presentation_mode
+        {
             PolarAccPresentationMode::LowLatencySmooth => {
-                let source=self.latest_acc?;
-                let sample=self.present_low_latency_acc(java_now,stale_after_ns)?;
-                (sample,source,source,java_now,"latest-java-sample-smoothed-at-xr-target",pair.xr_target_ns)
+                let source = self.latest_acc?;
+                let sample = self.present_low_latency_acc(java_now, stale_after_ns)?;
+                (
+                    sample,
+                    source,
+                    source,
+                    java_now,
+                    "latest-java-sample-smoothed-at-xr-target",
+                    pair.xr_target_ns,
+                )
             }
             PolarAccPresentationMode::TimestampFaithful => {
-                let target=java_now.checked_sub(POLAR_ACC_PRESENTATION_DELAY_NS)?;
-                let xr_sample=pair.xr_target_ns.checked_sub(POLAR_ACC_PRESENTATION_DELAY_NS)?;
-                let sample=self.resample_acc(target)?;
-                let left=*self.acc_measurements.front()?;
-                let right=*self.acc_measurements.get(1)?;
-                (sample,left,right,target,"java-delayed-interpolation-at-xr-delayed-target",xr_sample)
+                let target = java_now.checked_sub(POLAR_ACC_PRESENTATION_DELAY_NS)?;
+                let xr_sample = pair
+                    .xr_target_ns
+                    .checked_sub(POLAR_ACC_PRESENTATION_DELAY_NS)?;
+                let sample = self.resample_acc(target)?;
+                let left = *self.acc_measurements.front()?;
+                let right = *self.acc_measurements.get(1)?;
+                (
+                    sample,
+                    left,
+                    right,
+                    target,
+                    "java-delayed-interpolation-at-xr-delayed-target",
+                    xr_sample,
+                )
             }
         };
-        let provenance=PolarPresentationProvenance { policy,java_before_ns:pair.java_before_ns,
-            java_after_ns:pair.java_after_ns,xr_target_ns:pair.xr_target_ns,java_target_ns:java_target,
-            source_left_sequence_id:left.source_sequence_id,source_right_sequence_id:right.source_sequence_id,
-            source_left_host_ns:left.host_time_ns,source_right_host_ns:right.host_time_ns,
-            source_left_sensor_ns:left.sensor_time_ns,source_right_sensor_ns:right.sensor_time_ns };
+        let provenance = PolarPresentationProvenance {
+            policy,
+            java_before_ns: pair.java_before_ns,
+            java_after_ns: pair.java_after_ns,
+            xr_target_ns: pair.xr_target_ns,
+            java_target_ns: java_target,
+            source_left_sequence_id: left.source_sequence_id,
+            source_right_sequence_id: right.source_sequence_id,
+            source_left_host_ns: left.host_time_ns,
+            source_right_host_ns: right.host_time_ns,
+            source_left_sensor_ns: left.sensor_time_ns,
+            source_right_sensor_ns: right.sensor_time_ns,
+        };
         provenance.validate().ok()?;
-        self.last_presented_xr_target_ns=Some(pair.xr_target_ns);
-        sample.host_time_ns=xr_sample;
-        sample.source_clock_provenance=Some(provenance);
+        self.last_presented_xr_target_ns = Some(pair.xr_target_ns);
+        sample.host_time_ns = xr_sample;
+        sample.source_clock_provenance = Some(provenance);
         Some(sample)
     }
 
@@ -393,17 +500,21 @@ pub(crate) fn submit_polar_acc_measurement(
     xyz_mg: [f32; 3],
 ) -> bool {
     let token = crate::polar_input_health::acquisition_token();
-    crate::polar_input_health::commit_acc(token,
-        || lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg))
+    crate::polar_input_health::commit_acc(token, || {
+        lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg)
+    })
 }
 
 fn submit_polar_acc_observed(
     entered_at: std::time::Instant,
-    host_time_ns: u64, sensor_time_ns: u64, xyz_mg: [f32; 3],
+    host_time_ns: u64,
+    sensor_time_ns: u64,
+    xyz_mg: [f32; 3],
 ) -> bool {
     let token = crate::polar_input_health::acquisition_token_entered(entered_at);
-    crate::polar_input_health::commit_acc(token,
-        || lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg))
+    crate::polar_input_health::commit_acc(token, || {
+        lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg)
+    })
 }
 
 pub(crate) fn submit_polar_acc_measurement_and_advance_composition(
@@ -417,19 +528,26 @@ pub(crate) fn submit_polar_acc_measurement_and_advance_composition(
 /// Called once by a successfully constructed OpenXR action owner. Raw Java
 /// acquisition samples, source ordering and recording remain process-owned.
 pub(crate) fn begin_polar_presentation_owner() {
-    let mut state=lock_ingress();
+    let mut state = lock_ingress();
     state.reset_presentation_owner();
 }
 
 /// Replace the one-use observation. Invalid reads clear any previous pair.
-pub(crate) fn install_polar_presentation_clock_pair(xr_target_ns: u64, java_before_ns: u64, java_after_ns: u64) -> bool {
-    let pair=PolarPresentationClockPair::new(xr_target_ns,java_before_ns,java_after_ns);
-    lock_ingress().presentation_clock_pair=pair;
+pub(crate) fn install_polar_presentation_clock_pair(
+    xr_target_ns: u64,
+    java_before_ns: u64,
+    java_after_ns: u64,
+) -> bool {
+    let pair = PolarPresentationClockPair::new(xr_target_ns, java_before_ns, java_after_ns);
+    lock_ingress().presentation_clock_pair = pair;
     pair.is_some()
 }
 
-pub(crate) fn polar_acc_for_presentation(observed_xr_time_ns: u64, stale_after_ns: u64) -> Option<PolarAccMeasurement> {
-    lock_ingress().present_at_xr_target(observed_xr_time_ns,stale_after_ns)
+pub(crate) fn polar_acc_for_presentation(
+    observed_xr_time_ns: u64,
+    stale_after_ns: u64,
+) -> Option<PolarAccMeasurement> {
+    lock_ingress().present_at_xr_target(observed_xr_time_ns, stale_after_ns)
 }
 
 pub(crate) fn set_polar_acc_presentation_mode(value: &str) -> Result<Value, &'static str> {
@@ -441,6 +559,7 @@ pub(crate) fn set_polar_acc_presentation_mode(value: &str) -> Result<Value, &'st
     }
     let status = state.presentation_status();
     drop(state);
+    #[cfg(not(feature = "showcase"))]
     crate::breath_capture::record_polar_acc_presentation(status.clone());
     Ok(status)
 }
@@ -466,6 +585,11 @@ pub(crate) fn polar_rr_after(sequence_id: Option<u64>) -> Vec<PolarRrMeasurement
         .copied()
         .filter(|sample| sequence_id.is_none_or(|last| sample.sequence_id > last))
         .collect()
+}
+
+#[cfg(feature = "showcase")]
+pub(crate) fn polar_rr_fresh() -> bool {
+    lock_ingress().last_rr_received.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
 }
 
 pub(crate) fn dropped_polar_rr_measurements() -> u64 {
@@ -805,12 +929,17 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
 ) {
     let entered_at = std::time::Instant::now();
     let xyz_mg = [x_mg as f32, y_mg as f32, z_mg as f32];
-    if !submit_polar_acc_observed(entered_at,
+    if !submit_polar_acc_observed(
+        entered_at,
         sample_host_time_ns.max(0) as u64,
         sample_sensor_time_ns.max(0) as u64,
         xyz_mg,
-    ) { return; }
+    ) {
+        return;
+    }
+    #[cfg(not(feature = "showcase"))]
     crate::lsl_panel_runtime::submit_polar_acc(xyz_mg);
+    #[cfg(not(feature = "showcase"))]
     crate::breath_capture::record_polar_acc_sample(
         frame_sequence_id.max(0) as u64,
         sample_index.max(0) as usize,
@@ -821,6 +950,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
         jni_submit_time_ns.max(0) as u64,
         xyz_mg,
     );
+    #[cfg(not(feature = "showcase"))]
     let _ = crate::experiment_session_runtime::record_polar_acc_sample(
         frame_sequence_id.max(0) as u64,
         sample_index.max(0) as u32,
@@ -844,7 +974,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     jni_submit_time_ns: jni::sys::jlong,
     microvolts: jni::sys::jint,
 ) {
+    #[cfg(not(feature = "showcase"))]
     crate::lsl_panel_runtime::submit_polar_ecg(microvolts);
+    #[cfg(not(feature = "showcase"))]
     crate::breath_capture::record_polar_ecg_sample(
         frame_sequence_id.max(0) as u64,
         sample_index.max(0) as usize,
@@ -855,6 +987,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
         jni_submit_time_ns.max(0) as u64,
         microvolts,
     );
+    #[cfg(not(feature = "showcase"))]
     let _ = crate::experiment_session_runtime::record_polar_ecg_sample(
         frame_sequence_id.max(0) as u64,
         sample_index.max(0) as u32,
@@ -882,6 +1015,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     } else {
         "polar_acc_frame"
     };
+    #[cfg(not(feature = "showcase"))]
     crate::breath_capture::record_polar_frame(
         kind,
         frame_sequence_id.max(0) as u64,
@@ -903,9 +1037,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
 ) {
     let bpm = bpm.clamp(0, u16::MAX as i32) as u16;
     LATEST_POLAR_BPM.store(bpm, Ordering::Release);
+    #[cfg(not(feature = "showcase"))]
     crate::lsl_panel_runtime::submit_polar_hr(u32::from(bpm));
+    #[cfg(not(feature = "showcase"))]
     crate::breath_capture::record_polar_hr(host_time_ns.max(0) as u64, u32::from(bpm));
     let host_time_ns = host_time_ns.max(0) as u64;
+    #[cfg(not(feature = "showcase"))]
     let _ = crate::experiment_session_runtime::record_polar_heart_rate(
         host_time_ns,
         host_time_ns,
@@ -924,8 +1061,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
 ) {
     let host_time_ns = host_time_ns.max(0) as u64;
     submit_polar_rr_measurement(host_time_ns, rr_interval_ms);
+    #[cfg(not(feature = "showcase"))]
     crate::lsl_panel_runtime::submit_polar_rr(rr_interval_ms);
+    #[cfg(not(feature = "showcase"))]
     crate::breath_capture::record_polar_rr(host_time_ns, rr_interval_ms);
+    #[cfg(not(feature = "showcase"))]
     let _ = crate::experiment_session_runtime::record_polar_heart_rate(
         host_time_ns,
         host_time_ns,
@@ -989,12 +1129,15 @@ mod tests {
         let token = crate::polar_input_health::acquisition_token();
         let prior = latest_polar_acc_after(None);
         crate::breath_composition_runtime::reset_to_packaged_defaults();
-        let accepted = crate::polar_input_health::commit_acc(token,
-            || lock_ingress().submit_acc(host, host, [0.0, 0.0, 1000.0]));
+        let accepted = crate::polar_input_health::commit_acc(token, || {
+            lock_ingress().submit_acc(host, host, [0.0, 0.0, 1000.0])
+        });
         assert!(!accepted);
         assert_eq!(latest_polar_acc_after(None), prior);
-        assert!(!crate::polar_input_health::status(false, false).0.fresh,
-            "old ingress acceptance must not make a replacement owner fresh");
+        assert!(
+            !crate::polar_input_health::status(false, false).0.fresh,
+            "old ingress acceptance must not make a replacement owner fresh"
+        );
     }
 
     fn acc_settings(enabled: bool) -> PolarAccBreathSourceSettings {
@@ -1017,101 +1160,174 @@ mod tests {
     }
 
     fn pair(ingress: &mut PolarMeasurementIngress, xr: u64, before: u64, after: u64) {
-        ingress.presentation_clock_pair=PolarPresentationClockPair::new(xr,before,after);
+        ingress.presentation_clock_pair = PolarPresentationClockPair::new(xr, before, after);
     }
 
     #[test]
     fn measured_java_pair_projects_distinct_epochs_and_retains_raw_source() {
-        let mut ingress=PolarMeasurementIngress::default();
-        ingress.submit_acc(9_990_000_000,3_000_000_000,[10.0,0.0,0.0]);
-        pair(&mut ingress,100_000_000_000,10_000_000_000,10_000_002_000);
-        let sample=ingress.present_at_xr_target(100_000_000_000,500_000_000).unwrap();
-        assert_eq!(sample.host_time_ns,100_000_000_000);
-        assert_eq!(sample.sensor_time_ns,3_000_000_000);
+        let mut ingress = PolarMeasurementIngress::default();
+        ingress.submit_acc(9_990_000_000, 3_000_000_000, [10.0, 0.0, 0.0]);
+        pair(
+            &mut ingress,
+            100_000_000_000,
+            10_000_000_000,
+            10_000_002_000,
+        );
+        let sample = ingress
+            .present_at_xr_target(100_000_000_000, 500_000_000)
+            .unwrap();
+        assert_eq!(sample.host_time_ns, 100_000_000_000);
+        assert_eq!(sample.sensor_time_ns, 3_000_000_000);
         assert!(sample.held_target_presentation);
-        let provenance=sample.source_clock_provenance.unwrap();
-        assert_eq!(provenance.java_target_ns,10_000_001_000);
-        assert_eq!(provenance.source_left_host_ns,9_990_000_000);
-        assert_eq!(provenance.source_right_host_ns,9_990_000_000);
-        assert_eq!(ingress.latest_acc.unwrap().host_time_ns,9_990_000_000);
+        let provenance = sample.source_clock_provenance.unwrap();
+        assert_eq!(provenance.java_target_ns, 10_000_001_000);
+        assert_eq!(provenance.source_left_host_ns, 9_990_000_000);
+        assert_eq!(provenance.source_right_host_ns, 9_990_000_000);
+        assert_eq!(ingress.latest_acc.unwrap().host_time_ns, 9_990_000_000);
         validate_polar_presentation_provenance(&provenance.encoded_value()).unwrap();
-        assert!(ingress.present_at_xr_target(100_000_000_000,500_000_000).is_none());
-        pair(&mut ingress,100_000_000_000,10_001_000_000,10_001_000_000);
-        assert!(ingress.present_at_xr_target(100_000_000_000,500_000_000).is_none());
+        assert!(ingress
+            .present_at_xr_target(100_000_000_000, 500_000_000)
+            .is_none());
+        pair(
+            &mut ingress,
+            100_000_000_000,
+            10_001_000_000,
+            10_001_000_000,
+        );
+        assert!(ingress
+            .present_at_xr_target(100_000_000_000, 500_000_000)
+            .is_none());
         // Staleness is evaluated in Java's domain, regardless of XR epoch.
-        pair(&mut ingress,101_000_000_000,10_600_000_000,10_600_000_000);
-        assert!(ingress.present_at_xr_target(101_000_000_000,500_000_000).is_none());
+        pair(
+            &mut ingress,
+            101_000_000_000,
+            10_600_000_000,
+            10_600_000_000,
+        );
+        assert!(ingress
+            .present_at_xr_target(101_000_000_000, 500_000_000)
+            .is_none());
     }
 
     #[test]
     fn faithful_projection_brackets_java_samples_and_retains_both_endpoints() {
-        let mut ingress=PolarMeasurementIngress {presentation_mode:PolarAccPresentationMode::TimestampFaithful,..Default::default()};
-        ingress.submit_acc(10_000_000_000,20_000_000_000,[0.0,0.0,0.0]);
-        ingress.submit_acc(10_100_000_000,20_100_000_000,[100.0,0.0,0.0]);
-        pair(&mut ingress,100_000_000_000,10_230_000_000,10_230_000_000);
-        let sample=ingress.present_at_xr_target(100_000_000_000,500_000_000).unwrap();
-        assert_eq!(sample.host_time_ns,99_820_000_000);
-        assert_eq!(sample.sensor_time_ns,20_050_000_000);
-        assert_eq!(sample.xyz_mg,[50.0,0.0,0.0]);
+        let mut ingress = PolarMeasurementIngress {
+            presentation_mode: PolarAccPresentationMode::TimestampFaithful,
+            ..Default::default()
+        };
+        ingress.submit_acc(10_000_000_000, 20_000_000_000, [0.0, 0.0, 0.0]);
+        ingress.submit_acc(10_100_000_000, 20_100_000_000, [100.0, 0.0, 0.0]);
+        pair(
+            &mut ingress,
+            100_000_000_000,
+            10_230_000_000,
+            10_230_000_000,
+        );
+        let sample = ingress
+            .present_at_xr_target(100_000_000_000, 500_000_000)
+            .unwrap();
+        assert_eq!(sample.host_time_ns, 99_820_000_000);
+        assert_eq!(sample.sensor_time_ns, 20_050_000_000);
+        assert_eq!(sample.xyz_mg, [50.0, 0.0, 0.0]);
         assert!(!sample.held_target_presentation);
-        let p=sample.source_clock_provenance.unwrap();
-        assert_eq!(p.java_target_ns,10_050_000_000);
-        assert_eq!((p.source_left_sequence_id,p.source_right_sequence_id),(1,2));
-        assert_eq!((p.source_left_host_ns,p.source_right_host_ns),(10_000_000_000,10_100_000_000));
-        assert_eq!((p.source_left_sensor_ns,p.source_right_sensor_ns),(20_000_000_000,20_100_000_000));
+        let p = sample.source_clock_provenance.unwrap();
+        assert_eq!(p.java_target_ns, 10_050_000_000);
+        assert_eq!(
+            (p.source_left_sequence_id, p.source_right_sequence_id),
+            (1, 2)
+        );
+        assert_eq!(
+            (p.source_left_host_ns, p.source_right_host_ns),
+            (10_000_000_000, 10_100_000_000)
+        );
+        assert_eq!(
+            (p.source_left_sensor_ns, p.source_right_sensor_ns),
+            (20_000_000_000, 20_100_000_000)
+        );
         validate_polar_presentation_provenance(&p.encoded_value()).unwrap();
         // No sample is fabricated when the Java target lacks a real bracket.
-        pair(&mut ingress,101_000_000_000,10_500_000_000,10_500_000_000);
-        assert!(ingress.present_at_xr_target(101_000_000_000,500_000_000).is_none());
+        pair(
+            &mut ingress,
+            101_000_000_000,
+            10_500_000_000,
+            10_500_000_000,
+        );
+        assert!(ingress
+            .present_at_xr_target(101_000_000_000, 500_000_000)
+            .is_none());
     }
 
     #[test]
     fn new_renderer_owner_clears_derived_clock_state_without_rewriting_raw_samples() {
-        let mut ingress=PolarMeasurementIngress::default();
-        ingress.submit_acc(10_000_000_000,20_000_000_000,[10.0,0.0,0.0]);
-        pair(&mut ingress,100_000_000_000,10_000_000_000,10_000_000_000);
-        ingress.present_at_xr_target(100_000_000_000,500_000_000).unwrap();
-        let raw=ingress.latest_acc;
-        let queued=ingress.acc_measurements.clone();
+        let mut ingress = PolarMeasurementIngress::default();
+        ingress.submit_acc(10_000_000_000, 20_000_000_000, [10.0, 0.0, 0.0]);
+        pair(
+            &mut ingress,
+            100_000_000_000,
+            10_000_000_000,
+            10_000_000_000,
+        );
+        ingress
+            .present_at_xr_target(100_000_000_000, 500_000_000)
+            .unwrap();
+        let raw = ingress.latest_acc;
+        let queued = ingress.acc_measurements.clone();
         ingress.reset_presentation_owner();
-        assert_eq!(ingress.latest_acc,raw);
-        assert_eq!(ingress.acc_measurements,queued);
+        assert_eq!(ingress.latest_acc, raw);
+        assert_eq!(ingress.acc_measurements, queued);
         assert!(ingress.presentation_clock_pair.is_none());
         assert!(ingress.last_presented_xr_target_ns.is_none());
         assert!(ingress.low_latency_smoothed_acc.is_none());
-        assert!(ingress.present_at_xr_target(1_000_000_000,500_000_000).is_none());
-        pair(&mut ingress,1_000_000_000,10_010_000_000,10_010_000_000);
-        let fresh=ingress.present_at_xr_target(1_000_000_000,500_000_000).unwrap();
-        assert_eq!(fresh.sensor_time_ns,20_000_000_000);
-        assert_eq!(fresh.host_time_ns,1_000_000_000);
+        assert!(ingress
+            .present_at_xr_target(1_000_000_000, 500_000_000)
+            .is_none());
+        pair(&mut ingress, 1_000_000_000, 10_010_000_000, 10_010_000_000);
+        let fresh = ingress
+            .present_at_xr_target(1_000_000_000, 500_000_000)
+            .unwrap();
+        assert_eq!(fresh.sensor_time_ns, 20_000_000_000);
+        assert_eq!(fresh.host_time_ns, 1_000_000_000);
     }
 
     #[test]
     fn missing_invalid_foreign_or_reused_clock_pair_never_admits_a_sample() {
-        let mut ingress=PolarMeasurementIngress::default();
-        ingress.submit_acc(1_000_000_000,2_000_000_000,[1.0,0.0,0.0]);
-        assert!(ingress.present_at_xr_target(1_000_000_000,500_000_000).is_none());
-        for (xr,before,after) in [(0,1,1),(1,0,1),(1,2,1),(1,1,5_000_002)] {
-            pair(&mut ingress,xr,before,after);
-            assert!(ingress.present_at_xr_target(xr,500_000_000).is_none());
+        let mut ingress = PolarMeasurementIngress::default();
+        ingress.submit_acc(1_000_000_000, 2_000_000_000, [1.0, 0.0, 0.0]);
+        assert!(ingress
+            .present_at_xr_target(1_000_000_000, 500_000_000)
+            .is_none());
+        for (xr, before, after) in [(0, 1, 1), (1, 0, 1), (1, 2, 1), (1, 1, 5_000_002)] {
+            pair(&mut ingress, xr, before, after);
+            assert!(ingress.present_at_xr_target(xr, 500_000_000).is_none());
         }
-        pair(&mut ingress,20_000_000_000,1_000_000_000,1_000_000_000);
-        assert!(ingress.present_at_xr_target(21_000_000_000,500_000_000).is_none());
-        assert!(ingress.present_at_xr_target(20_000_000_000,500_000_000).is_none());
-        pair(&mut ingress,20_000_000_000,999_000_000,999_000_000);
-        assert!(ingress.present_at_xr_target(20_000_000_000,500_000_000).is_none());
+        pair(&mut ingress, 20_000_000_000, 1_000_000_000, 1_000_000_000);
+        assert!(ingress
+            .present_at_xr_target(21_000_000_000, 500_000_000)
+            .is_none());
+        assert!(ingress
+            .present_at_xr_target(20_000_000_000, 500_000_000)
+            .is_none());
+        pair(&mut ingress, 20_000_000_000, 999_000_000, 999_000_000);
+        assert!(ingress
+            .present_at_xr_target(20_000_000_000, 500_000_000)
+            .is_none());
         // Equal epochs remain supported only with an explicit measured/synthetic pair.
-        pair(&mut ingress,1_000_000_000,1_000_000_000,1_000_000_000);
-        let sample=ingress.present_at_xr_target(1_000_000_000,500_000_000).unwrap();
-        assert_eq!(sample.xyz_mg,[1.0,0.0,0.0]);
-        let value=sample.source_clock_provenance.unwrap().encoded_value();
-        for key in ["java_clock","presentation_clock","policy"] {
-            let mut bad=value.clone();bad[key]=json!("invented");
+        pair(&mut ingress, 1_000_000_000, 1_000_000_000, 1_000_000_000);
+        let sample = ingress
+            .present_at_xr_target(1_000_000_000, 500_000_000)
+            .unwrap();
+        assert_eq!(sample.xyz_mg, [1.0, 0.0, 0.0]);
+        let value = sample.source_clock_provenance.unwrap().encoded_value();
+        for key in ["java_clock", "presentation_clock", "policy"] {
+            let mut bad = value.clone();
+            bad[key] = json!("invented");
             assert!(validate_polar_presentation_provenance(&bad).is_err());
         }
-        let mut bad=value.clone();bad["java_target_ns"]=json!(2);
+        let mut bad = value.clone();
+        bad["java_target_ns"] = json!(2);
         assert!(validate_polar_presentation_provenance(&bad).is_err());
-        let mut bad=value.clone();bad["extra"]=json!(true);
+        let mut bad = value.clone();
+        bad["extra"] = json!(true);
         assert!(validate_polar_presentation_provenance(&bad).is_err());
     }
 
@@ -1207,7 +1423,7 @@ mod tests {
         let mut source = PolarAccBreathSource::new(acc_settings(true));
         for (sequence_id, x_mg, expected) in [(1, -1000.0, 0.0), (2, 1000.0, 1.0)] {
             assert!(source.push(PolarAccMeasurement {
-            source_clock_provenance: None,
+                source_clock_provenance: None,
                 sequence_id,
                 source_sequence_id: sequence_id,
                 host_time_ns: sequence_id,
