@@ -140,8 +140,9 @@ pub(super) fn write_projection_scorecard(
     let actual_guide_texture_samples = planned_guide_texture_samples;
     let native_passthrough_real_hand_mesh_visible =
         native_passthrough_requested && hand_mesh_real_hands_visible;
-    let solid_black_real_hand_mesh_visible =
-        render_mode.uses_solid_black_background(native_passthrough_requested) && hand_mesh_real_hands_visible;
+    let solid_black_real_hand_mesh_visible = render_mode
+        .uses_solid_black_background(native_passthrough_requested)
+        && hand_mesh_real_hands_visible;
     let hand_mesh_visual_evidence_rects =
         replay_visual_stats.hand_mesh_screen_rect_marker_fields(projection_metadata);
     let sdf_visual_evidence_rects =

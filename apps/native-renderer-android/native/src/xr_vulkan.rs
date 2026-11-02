@@ -10,6 +10,24 @@ use ash::vk::{self, Handle};
 use openxr as xr;
 use openxr::sys::Handle as _;
 
+#[cfg(not(feature = "showcase"))]
+use crate::{
+    live_hand_joint_capture::LiveHandJointCaptureRecorder,
+    live_hand_mesh_capture::LiveHandMeshCaptureRecorder,
+    native_renderer_diagnostics_contract::write_renderer_focus_state_file,
+};
+#[cfg(feature = "showcase")]
+type LiveHandJointCaptureRecorder = ();
+#[cfg(feature = "showcase")]
+type LiveHandMeshCaptureRecorder = ();
+#[cfg(not(feature = "showcase"))]
+type ProjectionSessionOwner<'a> = Option<(
+    &'a crate::experiment_session_runtime::ExperimentSessionRuntime,
+    u64,
+)>;
+#[cfg(feature = "showcase")]
+type ProjectionSessionOwner<'a> = Option<(&'a (), u64)>;
+
 use crate::gpu_mesh_ui_panel::GpuMeshUiPanel;
 use crate::native_scene_depth::{SceneDepthAttachment, SceneDepthConfig};
 
@@ -42,13 +60,9 @@ use crate::{
     gpu_stimulus_volume::{GpuStimulusVolumeFrameStats, GpuStimulusVolumeRenderer},
     guide_blur_graph::{GuideBlurGraphFrameStats, GuideBlurGraphRenderer},
     live_hand_compact::{LiveHandCompactFrameSet, LiveHandCompactInput, LiveHandCompactStats},
-    live_hand_joint_capture::LiveHandJointCaptureRecorder,
-    live_hand_mesh_capture::LiveHandMeshCaptureRecorder,
     manifold_breath_bridge::ManifoldBreathBridge,
     native_camera::NativeCameraRuntime,
-    native_renderer_diagnostics_contract::{
-        compose_marker_fields, write_renderer_focus_state_file,
-    },
+    native_renderer_diagnostics_contract::compose_marker_fields,
     native_renderer_display_composite_options::{
         NativeDisplayCompositeFeedbackProjection, NativeDisplayCompositeMode,
         NativeDisplayCompositeSettings,
@@ -134,22 +148,25 @@ fn write_renderer_focus_state(
     frame_count: u64,
     submitted: bool,
 ) {
-    let Some(data_path) = app.internal_data_path() else {
-        return;
-    };
-    let updated_at_unix_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    let _ = write_renderer_focus_state_file(
-        &data_path,
-        std::process::id(),
-        activity_name,
-        session_state,
-        frame_count,
-        submitted,
-        updated_at_unix_ms,
-    );
+    #[cfg(not(feature = "showcase"))]
+    {
+        let Some(data_path) = app.internal_data_path() else {
+            return;
+        };
+        let updated_at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+        let _ = write_renderer_focus_state_file(
+            &data_path,
+            std::process::id(),
+            activity_name,
+            session_state,
+            frame_count,
+            submitted,
+            updated_at_unix_ms,
+        );
+    }
 }
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M: f32 = 0.05;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M: f32 = 4.0;
@@ -296,10 +313,7 @@ pub(crate) fn probe(
 
 pub(crate) fn run_projection_loop(
     app: &android_activity::AndroidApp,
-    session_owner: Option<(
-        &crate::experiment_session_runtime::ExperimentSessionRuntime,
-        u64,
-    )>,
+    session_owner: ProjectionSessionOwner<'_>,
     camera_runtime: Option<&NativeCameraRuntime>,
     runtime_options: NativeRendererRuntimeOptions,
     simultaneous_decision: ActivationDecision,
@@ -363,6 +377,7 @@ pub(crate) fn run_projection_loop(
             video_projection_metadata,
         )
     };
+    #[cfg(not(feature = "showcase"))]
     if let Some((runtime, owner)) = session_owner {
         if runtime.renderer_retirement_pending(owner) {
             // inner success means device idle, UI producer retired, and all XR/Vulkan
@@ -398,10 +413,7 @@ fn finish_native_activity(app: &android_activity::AndroidApp) -> Result<(), Stri
 
 unsafe fn run_projection_loop_inner(
     app: &android_activity::AndroidApp,
-    session_owner: Option<(
-        &crate::experiment_session_runtime::ExperimentSessionRuntime,
-        u64,
-    )>,
+    session_owner: ProjectionSessionOwner<'_>,
     camera_runtime: Option<&NativeCameraRuntime>,
     runtime_options: NativeRendererRuntimeOptions,
     simultaneous_decision: ActivationDecision,
@@ -838,6 +850,7 @@ unsafe fn run_projection_loop_inner(
     );
     let (reference_space, reference_space_type) =
         create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
+    #[cfg(not(feature = "showcase"))]
     let mut hand_mesh_capture_recorder = if replay.is_some() {
         Some(LiveHandMeshCaptureRecorder::new(
             app,
@@ -851,6 +864,8 @@ unsafe fn run_projection_loop_inner(
     } else {
         None
     };
+    #[cfg(feature = "showcase")]
+    let mut hand_mesh_capture_recorder: Option<LiveHandMeshCaptureRecorder> = None;
     let color_format =
         choose_swapchain_format(&session, runtime_options.swapchain_color_format_mode)?;
     let scene_depth = if runtime_options.render_mode.uses_scene_depth() {
@@ -1520,6 +1535,7 @@ unsafe fn run_projection_loop_inner(
         ),
     );
 
+    #[cfg(not(feature = "showcase"))]
     let mut hand_joint_capture_recorder = if replay.is_some() {
         Some(LiveHandJointCaptureRecorder::new(
             app,
@@ -1529,6 +1545,8 @@ unsafe fn run_projection_loop_inner(
         None
     };
 
+    #[cfg(feature = "showcase")]
+    let mut hand_joint_capture_recorder: Option<LiveHandJointCaptureRecorder> = None;
     // Start the Android writer only after all fallible frame-resource allocations.
     // From here every frame-loop exit joins the explicit panel/device teardown below.
     let mut mesh_ui_panel = if mesh_ui_enabled {
@@ -1672,9 +1690,11 @@ unsafe fn run_projection_loop_inner(
         &session,
         "projection-loop-finished",
     );
+    #[cfg(not(feature = "showcase"))]
     if let Some(recorder) = hand_joint_capture_recorder.as_mut() {
         recorder.finish_active("projection-loop-ended");
     }
+    #[cfg(not(feature = "showcase"))]
     if let Some(recorder) = hand_mesh_capture_recorder.as_mut() {
         recorder.finish_active("projection-loop-ended");
     }
@@ -2281,10 +2301,7 @@ unsafe fn ensure_openxr_environment_depth_runtime(
 #[allow(clippy::too_many_arguments)]
 unsafe fn run_projection_frames(
     app: &android_activity::AndroidApp,
-    session_owner: Option<(
-        &crate::experiment_session_runtime::ExperimentSessionRuntime,
-        u64,
-    )>,
+    session_owner: ProjectionSessionOwner<'_>,
     xr_instance: &xr::Instance,
     system: xr::SystemId,
     vk_device: &ash::Device,
@@ -2378,7 +2395,10 @@ unsafe fn run_projection_frames(
     let original_product_mesh_panel =
         crate::native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping_installed(
         ) && !crate::native_mesh_ui::neutral_controls_enabled();
+    #[cfg(not(feature = "showcase"))]
     let mut mesh_hold_request: Option<(u64, u64, u64)> = None;
+    #[cfg(feature = "showcase")]
+    let mut showcase_applied_visual_revision: Option<i64> = None;
     // Immutable identity from the actual Activity owning this loop. A failed
     // observation must not publish a fabricated stock-Activity focus claim.
     let renderer_focus_activity =
@@ -2412,9 +2432,12 @@ unsafe fn run_projection_frames(
             compact_hand_input_source_mode.selects_live_frame(), enabled_extensions.meta_simultaneous_hands_and_controllers));
     }
     let mut ui_particle_phase_frame = 0_u64;
+    #[cfg(not(feature = "showcase"))]
     let experiment_frame_gate_clock = Instant::now();
+    #[cfg(not(feature = "showcase"))]
     let mut experiment_frame_gate =
         crate::experiment_session_runtime::SubmittedFrameReadinessGate::default();
+    #[cfg(not(feature = "showcase"))]
     let mut last_experiment_session_route_revision = 0_u64;
     let mut experiment_shutdown_route_armed = false;
     let mut experiment_shutdown_finish_observed = false;
@@ -2429,6 +2452,7 @@ unsafe fn run_projection_frames(
     let mut previous_frame_instant = Instant::now();
     let mut private_particle_world_anchor =
         PrivateParticleWorldAnchor::new_with_runtime_scale(private_particle_world_anchor_scale_m);
+    #[cfg(not(feature = "showcase"))]
     let mut control_panel_command_poller =
         crate::native_renderer_panel_bridge::ControlPanelCommandPoller::default();
     let mut environment_depth_provider_attempts = 0_u32;
@@ -2455,6 +2479,7 @@ unsafe fn run_projection_frames(
             environment_depth_alignment_state.marker_fields()
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
         app,
         "applied",
@@ -2469,23 +2494,29 @@ unsafe fn run_projection_frames(
             Duration::from_millis(0),
             &mut app_running,
         );
-        let (pending_route_action, pending_route_revision) =
-            crate::experiment_session_runtime::current_route_action();
-        if consume_new_shutdown_route(
-            pending_route_action,
-            pending_route_revision,
-            &mut last_experiment_session_route_revision,
-        ) {
-            experiment_shutdown_route_armed = true;
-            crate::marker(
-                "experiment-session-native-shutdown",
-                format!(
+        #[cfg(not(feature = "showcase"))]
+        {
+            let (pending_route_action, pending_route_revision) =
+                crate::experiment_session_runtime::current_route_action();
+            if consume_new_shutdown_route(
+                pending_route_action,
+                pending_route_revision,
+                &mut last_experiment_session_route_revision,
+            ) {
+                experiment_shutdown_route_armed = true;
+                crate::marker(
+                    "experiment-session-native-shutdown",
+                    format!(
                     "status=armed-awaiting-android-finish routeRevision={pending_route_revision}"
                 ),
-            );
+                );
+            }
         }
+        #[cfg(not(feature = "showcase"))]
         let retirement_requested =
             session_owner.is_some_and(|(r, id)| r.renderer_retirement_pending(id));
+        #[cfg(feature = "showcase")]
+        let retirement_requested = false;
         if !app_running || retirement_requested {
             if !app_running
                 && experiment_shutdown_route_armed
@@ -2523,11 +2554,13 @@ unsafe fn run_projection_frames(
                         xr::SessionState::LOSS_PENDING => "LOSS_PENDING",
                         _ => "OTHER",
                     };
+                    #[cfg(not(feature = "showcase"))]
                     if event.state() == xr::SessionState::READY {
                         experiment_frame_gate.begin_session();
                     }
                     let focused = event.state() == xr::SessionState::FOCUSED;
                     if !focused {
+                        #[cfg(not(feature = "showcase"))]
                         crate::experiment_session_runtime::note_preparation_presentation(
                             crate::experiment_session::PresentationState::Unfocused,
                         );
@@ -2536,12 +2569,14 @@ unsafe fn run_projection_frames(
                             panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
                         }
                     }
-                    let lost_frame_admission = experiment_frame_gate.set_focused(focused);
-                    let experiment_generation =
-                        crate::experiment_session_runtime::current_generation();
-                    let current_presentation =
-                        crate::experiment_session_runtime::current_presentation();
-                    if experiment_generation > 0
+                    #[cfg(not(feature = "showcase"))]
+                    {
+                        let lost_frame_admission = experiment_frame_gate.set_focused(focused);
+                        let experiment_generation =
+                            crate::experiment_session_runtime::current_generation();
+                        let current_presentation =
+                            crate::experiment_session_runtime::current_presentation();
+                        if experiment_generation > 0
                         && !focused
                         && (lost_frame_admission
                             || current_presentation
@@ -2562,6 +2597,7 @@ unsafe fn run_projection_frames(
                                     crate::experiment_session::PresentationState::Unfocused,
                                 );
                         }
+                    }
                     }
                     crate::marker(
                         "openxr-session",
@@ -2818,6 +2854,7 @@ unsafe fn run_projection_frames(
             continue;
         }
         trace_startup_frame(frame_count, "after-locate-views");
+        #[cfg(not(feature = "showcase"))]
         crate::lsl_panel_runtime::submit_headset_views(
             [
                 views[0].pose.position.x,
@@ -2861,6 +2898,7 @@ unsafe fn run_projection_frames(
             private_particle_world_anchor.refresh_scale_from_android_properties(frame_count);
             private_particle_world_anchor
                 .capture_startup_if_needed(particle_sort_eye_projection, frame_count);
+            #[cfg(not(feature = "showcase"))]
             if let Some(recenter) =
                 crate::native_renderer_stimulus_panel::poll_spatial_camera_panel_session_icosphere_recenter(
                     frame_count,
@@ -2884,7 +2922,9 @@ unsafe fn run_projection_frames(
                 );
             }
         }
+        #[cfg(not(feature = "showcase"))]
         control_panel_command_poller.poll_and_apply(app, frame_count);
+        #[cfg(not(feature = "showcase"))]
         if let Some(open) =
             crate::native_renderer_stimulus_panel::poll_spatial_camera_panel_open(frame_count)
         {
@@ -2910,50 +2950,69 @@ unsafe fn run_projection_frames(
             runtime.update_audio_reactive_style(session, dt_seconds, frame_count);
         }
 
-        if let Some(candidate) = crate::native_renderer_stimulus_panel::take_live_candidate() {
-            apply_live_stimulus_candidate(
-                app,
-                vk_device,
-                render_mode,
-                &mut stimulus_volume_settings,
-                gpu_stimulus_volume_renderer.as_deref_mut(),
-                stimulus_actions.as_deref_mut(),
-                candidate,
-                frame_count,
-            );
-        }
-        if let Some(selection) =
-            crate::native_renderer_stimulus_panel::take_live_private_layer_selection()
+        #[cfg(not(feature = "showcase"))]
         {
-            apply_live_private_layer_selection(
-                app,
-                &mut private_layer_settings,
-                selection,
-                frame_count,
-            );
+            if let Some(candidate) = crate::native_renderer_stimulus_panel::take_live_candidate() {
+                apply_live_stimulus_candidate(
+                    app,
+                    vk_device,
+                    render_mode,
+                    &mut stimulus_volume_settings,
+                    gpu_stimulus_volume_renderer.as_deref_mut(),
+                    stimulus_actions.as_deref_mut(),
+                    candidate,
+                    frame_count,
+                );
+            }
+            if let Some(selection) =
+                crate::native_renderer_stimulus_panel::take_live_private_layer_selection()
+            {
+                apply_live_private_layer_selection(
+                    app,
+                    &mut private_layer_settings,
+                    selection,
+                    frame_count,
+                );
+            }
+            if let Some(candidate) =
+                crate::native_renderer_stimulus_panel::take_live_environment_depth_alignment()
+            {
+                apply_live_environment_depth_alignment(
+                    app,
+                    &mut environment_depth_alignment_state,
+                    candidate,
+                    frame_count,
+                );
+            }
+            if let Some(candidate) =
+                crate::native_renderer_stimulus_panel::take_live_private_particle_dynamics()
+            {
+                apply_live_private_particle_dynamics(
+                    app,
+                    gpu_private_particle_renderer.as_deref_mut(),
+                    &mut private_particle_world_anchor,
+                    candidate,
+                    frame_count,
+                );
+            }
         }
-        if let Some(candidate) =
-            crate::native_renderer_stimulus_panel::take_live_environment_depth_alignment()
-        {
-            apply_live_environment_depth_alignment(
-                app,
-                &mut environment_depth_alignment_state,
-                candidate,
-                frame_count,
-            );
+        #[cfg(feature = "showcase")]
+        if let Some(candidate) = crate::showcase_runtime::particle_candidate() {
+            if showcase_applied_visual_revision != Some(candidate.revision) {
+                let revision = candidate.revision;
+                if gpu_private_particle_renderer.is_some() {
+                    apply_live_private_particle_dynamics(
+                        app,
+                        gpu_private_particle_renderer.as_deref_mut(),
+                        &mut private_particle_world_anchor,
+                        candidate,
+                        frame_count,
+                    );
+                    showcase_applied_visual_revision = Some(revision);
+                    crate::showcase_runtime::note_visual_applied(revision);
+                }
+            }
         }
-        if let Some(candidate) =
-            crate::native_renderer_stimulus_panel::take_live_private_particle_dynamics()
-        {
-            apply_live_private_particle_dynamics(
-                app,
-                gpu_private_particle_renderer.as_deref_mut(),
-                &mut private_particle_world_anchor,
-                candidate,
-                frame_count,
-            );
-        }
-
         let (live_hand_frames, live_hand_stats) = if let Some(replay) =
             replay.filter(|_| compact_hand_input_source_mode.selects_live_frame())
         {
@@ -3148,6 +3207,7 @@ unsafe fn run_projection_frames(
                     );
                 }
             }
+            #[cfg(not(feature = "showcase"))]
             if controller_events.experimenter_restart_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
@@ -3190,6 +3250,7 @@ unsafe fn run_projection_frames(
                     }
                 }
             }
+            #[cfg(not(feature = "showcase"))]
             if controller_events.developer_panel_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
@@ -3263,37 +3324,39 @@ unsafe fn run_projection_frames(
                 }
             }
         }
-        let (route_action, route_revision) =
-            crate::experiment_session_runtime::current_route_action();
-        if route_revision > last_experiment_session_route_revision {
-            last_experiment_session_route_revision = route_revision;
-            match route_action {
-                crate::experiment_session_runtime::RouteAction::OpenDeveloper => {
-                    if let Some(panel) = mesh_ui_panel
-                        .as_ref()
-                        .filter(|_| !original_product_mesh_panel)
-                    {
-                        panel.request_visibility(true);
-                    } else {
-                        crate::native_renderer_panel_bridge::open_developer_panel_with_route_generation(
-                            app,
-                            frame_count,
-                            "experiment-session-menu-recall",
-                            route_revision,
-                        );
-                    }
-                }
-                crate::experiment_session_runtime::RouteAction::ShowExperimenter => {
-                    if let Some((session_generation, operation_id)) =
-                        crate::experiment_session_runtime::current_terminal_route_receipt()
-                    {
+        #[cfg(not(feature = "showcase"))]
+        {
+            let (route_action, route_revision) =
+                crate::experiment_session_runtime::current_route_action();
+            if route_revision > last_experiment_session_route_revision {
+                last_experiment_session_route_revision = route_revision;
+                match route_action {
+                    crate::experiment_session_runtime::RouteAction::OpenDeveloper => {
                         if let Some(panel) = mesh_ui_panel
                             .as_ref()
                             .filter(|_| !original_product_mesh_panel)
                         {
                             panel.request_visibility(true);
                         } else {
-                            crate::native_renderer_panel_bridge::open_experimenter_panel_with_receipt(
+                            crate::native_renderer_panel_bridge::open_developer_panel_with_route_generation(
+                            app,
+                            frame_count,
+                            "experiment-session-menu-recall",
+                            route_revision,
+                        );
+                        }
+                    }
+                    crate::experiment_session_runtime::RouteAction::ShowExperimenter => {
+                        if let Some((session_generation, operation_id)) =
+                            crate::experiment_session_runtime::current_terminal_route_receipt()
+                        {
+                            if let Some(panel) = mesh_ui_panel
+                                .as_ref()
+                                .filter(|_| !original_product_mesh_panel)
+                            {
+                                panel.request_visibility(true);
+                            } else {
+                                crate::native_renderer_panel_bridge::open_experimenter_panel_with_receipt(
                                 app,
                                 frame_count,
                                 "experiment-session-finalization-receipt",
@@ -3304,19 +3367,20 @@ unsafe fn run_projection_frames(
                                     operation_id: Some(&operation_id),
                                 },
                             );
-                        }
-                    } else {
-                        crate::marker(
+                            }
+                        } else {
+                            crate::marker(
                             "experiment-session-panel-route",
                             format!(
                                 "status=rejected reason=durable-route-receipt-missing routeGeneration={} frame={}",
                                 route_revision, frame_count
                             ),
                         );
+                        }
                     }
+                    crate::experiment_session_runtime::RouteAction::None
+                    | crate::experiment_session_runtime::RouteAction::ShutdownApp => {}
                 }
-                crate::experiment_session_runtime::RouteAction::None
-                | crate::experiment_session_runtime::RouteAction::ShutdownApp => {}
             }
         }
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
@@ -3325,6 +3389,7 @@ unsafe fn run_projection_frames(
                 dt_seconds,
                 frame_count,
             );
+            #[cfg(not(feature = "showcase"))]
             if let Some(observed_at) = breath_observed_at {
                 renderer.update_breath_composition_driver(
                     crate::breath_composition_runtime::snapshot(),
@@ -3333,6 +3398,12 @@ unsafe fn run_projection_frames(
                     frame_count,
                 );
             }
+            #[cfg(feature = "showcase")]
+            crate::showcase_runtime::tick(
+                crate::breath_composition_runtime::snapshot(),
+                dt_seconds,
+                crate::polar_composition_adapters::polar_rr_fresh(),
+            );
             renderer.update_heartbeat_pulse_adapter(dt_seconds, frame_count);
         }
         if let Some(bridge) = breath_bridge.as_mut() {
@@ -3364,6 +3435,7 @@ unsafe fn run_projection_frames(
                     environment_depth_alignment_state.marker_fields(),
                 ),
             );
+            #[cfg(not(feature = "showcase"))]
             crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
                 app,
                 "applied",
@@ -3714,6 +3786,7 @@ unsafe fn run_projection_frames(
             );
         }
         frame_timings.live_hand_ms = elapsed_ms(stage_started);
+        #[cfg(not(feature = "showcase"))]
         if let Some(recorder) = hand_joint_capture_recorder.as_deref_mut() {
             recorder.update_and_record(
                 frame_count,
@@ -3722,6 +3795,7 @@ unsafe fn run_projection_frames(
                 hand_mesh_visual_material_settings,
             );
         }
+        #[cfg(not(feature = "showcase"))]
         if let Some(recorder) = hand_mesh_capture_recorder.as_deref_mut() {
             recorder.update_and_record(
                 reference_space,
@@ -4585,6 +4659,7 @@ unsafe fn run_projection_frames(
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
+        #[cfg(not(feature = "showcase"))]
         control_panel_command_poller.after_current_session_frame_submitted(
             app,
             openxr_session_generation,
@@ -4601,129 +4676,132 @@ unsafe fn run_projection_frames(
             mesh_ui_frame_controls.map(crate::native_mesh_ui::renderer_observed_visibility);
         let submitted_mesh_visibility =
             mesh_ui_frame_controls.and_then(crate::native_mesh_ui::renderer_submitted_visibility);
-        let experiment_generation = crate::experiment_session_runtime::current_generation();
-        if mesh_hold_request.is_some_and(|key| key.0 != experiment_generation) {
-            mesh_hold_request = None;
-        }
-        let mesh_unavailable_or_visible =
-            original_product_mesh_panel && submitted_mesh_visibility != Some(false);
-        // A hide may race a previously queued hold. Wait until that existing
-        // hold reaches the reducer before admitting two fresh hidden frames.
-        let mesh_hold_pending = original_product_mesh_panel
-            && mesh_hold_request.is_some()
-            && matches!(
-                crate::experiment_session_runtime::current_presentation(),
-                crate::experiment_session::PresentationState::ImmersiveActive
-                    | crate::experiment_session::PresentationState::Developer
-            );
-        let mesh_holds_presentation = mesh_unavailable_or_visible || mesh_hold_pending;
-        if mesh_holds_presentation {
-            // Match the original 2D panel's loss of immersive presentation,
-            // using the existing reducer rather than changing timing policy.
-            let lost_frame_admission = experiment_frame_gate.set_focused(false);
-            if experiment_generation == 0 {
-                crate::experiment_session_runtime::note_preparation_presentation(
-                    crate::experiment_session::PresentationState::Unfocused,
+        #[cfg(not(feature = "showcase"))]
+        {
+            let experiment_generation = crate::experiment_session_runtime::current_generation();
+            if mesh_hold_request.is_some_and(|key| key.0 != experiment_generation) {
+                mesh_hold_request = None;
+            }
+            let mesh_unavailable_or_visible =
+                original_product_mesh_panel && submitted_mesh_visibility != Some(false);
+            // A hide may race a previously queued hold. Wait until that existing
+            // hold reaches the reducer before admitting two fresh hidden frames.
+            let mesh_hold_pending = original_product_mesh_panel
+                && mesh_hold_request.is_some()
+                && matches!(
+                    crate::experiment_session_runtime::current_presentation(),
+                    crate::experiment_session::PresentationState::ImmersiveActive
+                        | crate::experiment_session::PresentationState::Developer
                 );
-            } else if mesh_unavailable_or_visible {
-                let (producer, revision, evidence) =
-                    match (submitted_mesh_visibility, mesh_ui_frame_controls) {
-                        (Some(true), Some(controls)) => (
-                            controls.generation,
-                            controls.visibility_revision,
-                            "submitted-visible",
-                        ),
-                        _ => (0, 0, "panel-admission-unavailable"),
-                    };
-                let key = (experiment_generation, producer, revision);
-                if mesh_hold_request.is_none()
-                    && (lost_frame_admission
-                        || crate::experiment_session_runtime::current_presentation()
-                            == crate::experiment_session::PresentationState::ImmersiveActive)
-                {
-                    if let Some(at) =
-                        crate::experiment_session_runtime::current_elapsed_realtime_ns()
+            let mesh_holds_presentation = mesh_unavailable_or_visible || mesh_hold_pending;
+            if mesh_holds_presentation {
+                // Match the original 2D panel's loss of immersive presentation,
+                // using the existing reducer rather than changing timing policy.
+                let lost_frame_admission = experiment_frame_gate.set_focused(false);
+                if experiment_generation == 0 {
+                    crate::experiment_session_runtime::note_preparation_presentation(
+                        crate::experiment_session::PresentationState::Unfocused,
+                    );
+                } else if mesh_unavailable_or_visible {
+                    let (producer, revision, evidence) =
+                        match (submitted_mesh_visibility, mesh_ui_frame_controls) {
+                            (Some(true), Some(controls)) => (
+                                controls.generation,
+                                controls.visibility_revision,
+                                "submitted-visible",
+                            ),
+                            _ => (0, 0, "panel-admission-unavailable"),
+                        };
+                    let key = (experiment_generation, producer, revision);
+                    if mesh_hold_request.is_none()
+                        && (lost_frame_admission
+                            || crate::experiment_session_runtime::current_presentation()
+                                == crate::experiment_session::PresentationState::ImmersiveActive)
                     {
-                        // Retain one request for this interruption episode even
-                        // if its producer changes. Pending/unknown is not replayed.
-                        mesh_hold_request = Some(key);
-                        let id = format!(
-                            "native-mesh-panel-hold-{}-{}-{}-{}",
-                            key.0, key.1, key.2, frame_count
-                        );
-                        let response =
-                            crate::experiment_session_runtime::request_presentation_from_native(
-                                &id,
-                                experiment_generation,
-                                at,
-                                crate::experiment_session::PresentationState::Unfocused,
+                        if let Some(at) =
+                            crate::experiment_session_runtime::current_elapsed_realtime_ns()
+                        {
+                            // Retain one request for this interruption episode even
+                            // if its producer changes. Pending/unknown is not replayed.
+                            mesh_hold_request = Some(key);
+                            let id = format!(
+                                "native-mesh-panel-hold-{}-{}-{}-{}",
+                                key.0, key.1, key.2, frame_count
                             );
-                        crate::marker("experiment-session-panel-presentation", format!(
+                            let response =
+                                crate::experiment_session_runtime::request_presentation_from_native(
+                                    &id,
+                                    experiment_generation,
+                                    at,
+                                    crate::experiment_session::PresentationState::Unfocused,
+                                );
+                            crate::marker("experiment-session-panel-presentation", format!(
                             "generation={} producerGeneration={} visibilityRevision={} submittedFrame={} evidence={} requested=unfocused response={}",
                             key.0, key.1, key.2, frame_count, evidence, crate::sanitize(&response)));
+                        }
                     }
                 }
+            } else if original_product_mesh_panel {
+                mesh_hold_request = None;
+                // A real focused session still needs the ordinary two advancing
+                // hidden submissions after panel presentation interrupted it.
+                experiment_frame_gate.set_focused(renderer_focus_session_state == "FOCUSED");
             }
-        } else if original_product_mesh_panel {
-            mesh_hold_request = None;
-            // A real focused session still needs the ordinary two advancing
-            // hidden submissions after panel presentation interrupted it.
-            experiment_frame_gate.set_focused(renderer_focus_session_state == "FOCUSED");
-        }
-        if experiment_generation == 0
-            && !mesh_holds_presentation
-            && frame_count % 30 == 0
-            && renderer_focus_session_state == "FOCUSED"
-        {
-            crate::experiment_session_runtime::note_preparation_presentation(
-                crate::experiment_session::PresentationState::ImmersiveActive,
-            );
-        }
-        if experiment_generation > 0 {
-            let _ = crate::experiment_session_runtime::note_current_session_submitted_frame(
-                experiment_generation,
-                frame_count,
-            );
-            let observed_host_ns = experiment_frame_gate_clock
-                .elapsed()
-                .as_nanos()
-                .min(u128::from(u64::MAX)) as u64;
-            if !mesh_holds_presentation
-                && experiment_frame_gate.note_submitted(frame_count, observed_host_ns)
+            if experiment_generation == 0
+                && !mesh_holds_presentation
+                && frame_count % 30 == 0
+                && renderer_focus_session_state == "FOCUSED"
             {
-                let presentation = crate::experiment_session_runtime::current_presentation();
-                if matches!(
-                    presentation,
-                    crate::experiment_session::PresentationState::Transition
-                        | crate::experiment_session::PresentationState::Unfocused
-                ) {
-                    if let Some(elapsed_realtime_ns) =
-                        crate::experiment_session_runtime::current_elapsed_realtime_ns()
-                    {
-                        let operation_id = format!(
+                crate::experiment_session_runtime::note_preparation_presentation(
+                    crate::experiment_session::PresentationState::ImmersiveActive,
+                );
+            }
+            if experiment_generation > 0 {
+                let _ = crate::experiment_session_runtime::note_current_session_submitted_frame(
+                    experiment_generation,
+                    frame_count,
+                );
+                let observed_host_ns = experiment_frame_gate_clock
+                    .elapsed()
+                    .as_nanos()
+                    .min(u128::from(u64::MAX)) as u64;
+                if !mesh_holds_presentation
+                    && experiment_frame_gate.note_submitted(frame_count, observed_host_ns)
+                {
+                    let presentation = crate::experiment_session_runtime::current_presentation();
+                    if matches!(
+                        presentation,
+                        crate::experiment_session::PresentationState::Transition
+                            | crate::experiment_session::PresentationState::Unfocused
+                    ) {
+                        if let Some(elapsed_realtime_ns) =
+                            crate::experiment_session_runtime::current_elapsed_realtime_ns()
+                        {
+                            let operation_id = format!(
                             "native-openxr-submitted-ready-{experiment_generation}-{frame_count}"
                         );
-                        let response =
-                            crate::experiment_session_runtime::request_presentation_from_native(
-                                &operation_id,
-                                experiment_generation,
-                                elapsed_realtime_ns,
-                                crate::experiment_session::PresentationState::ImmersiveActive,
-                            );
-                        if !response.contains("\"command_status\":\"queued\"") {
-                            experiment_frame_gate.reject_activation();
-                            crate::marker(
-                                "experiment-session-frame-admission",
-                                format!(
-                                    "status=rejected generation={} frame={} response={}",
+                            let response =
+                                crate::experiment_session_runtime::request_presentation_from_native(
+                                    &operation_id,
                                     experiment_generation,
-                                    frame_count,
-                                    crate::sanitize(&response)
-                                ),
-                            );
+                                    elapsed_realtime_ns,
+                                    crate::experiment_session::PresentationState::ImmersiveActive,
+                                );
+                            if !response.contains("\"command_status\":\"queued\"") {
+                                experiment_frame_gate.reject_activation();
+                                crate::marker(
+                                    "experiment-session-frame-admission",
+                                    format!(
+                                        "status=rejected generation={} frame={} response={}",
+                                        experiment_generation,
+                                        frame_count,
+                                        crate::sanitize(&response)
+                                    ),
+                                );
+                            }
+                        } else {
+                            experiment_frame_gate.reject_activation();
                         }
-                    } else {
-                        experiment_frame_gate.reject_activation();
                     }
                 }
             }
@@ -4835,6 +4913,7 @@ unsafe fn run_projection_frames(
     Ok(())
 }
 
+#[cfg(not(feature = "showcase"))]
 fn consume_new_shutdown_route(
     action: crate::experiment_session_runtime::RouteAction,
     revision: u64,
@@ -5102,6 +5181,7 @@ fn apply_live_stimulus_candidate(
                     stimulus_volume_settings.marker_fields()
                 ),
             );
+            #[cfg(not(feature = "showcase"))]
             crate::native_renderer_stimulus_panel::write_live_status(
                 app,
                 "applied",
@@ -5140,6 +5220,7 @@ fn apply_live_private_layer_selection(
             private_layer_settings.marker_fields()
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_private_layer_selection_status(
         app,
         "applied",
@@ -5177,6 +5258,7 @@ fn apply_live_environment_depth_alignment(
             environment_depth_alignment_state.marker_fields()
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
         app,
         "applied",
@@ -5249,6 +5331,7 @@ fn apply_live_private_particle_dynamics(
             crate::sanitize(effective.settings.heartbeat_pulse_parameter_source)
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_private_particle_dynamics_status(
         app,
         "applied",
@@ -5276,6 +5359,7 @@ fn reject_live_environment_depth_alignment(
             environment_depth_alignment_state.marker_fields()
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
         app,
         "rejected",
@@ -5303,6 +5387,7 @@ fn reject_live_private_particle_dynamics(
             crate::sanitize(reason)
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_private_particle_dynamics_status(
         app, "rejected", revision, reason, candidate, None,
     );
@@ -5323,6 +5408,7 @@ fn reject_live_private_layer_selection(
             crate::sanitize(reason)
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_private_layer_selection_status(
         app, "rejected", revision, reason, None,
     );
@@ -5343,6 +5429,7 @@ fn reject_live_stimulus_candidate(
             crate::sanitize(reason)
         ),
     );
+    #[cfg(not(feature = "showcase"))]
     crate::native_renderer_stimulus_panel::write_live_status(
         app, "rejected", revision, reason, None,
     );
@@ -8046,6 +8133,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "showcase"))]
     fn shutdown_route_is_consumed_once_without_consuming_other_routes() {
         let mut last_revision = 4;
         assert!(!consume_new_shutdown_route(
