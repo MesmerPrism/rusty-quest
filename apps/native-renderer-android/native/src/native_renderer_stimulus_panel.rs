@@ -3,6 +3,7 @@
 //! The panel is a low-rate requester. Rust remains the validator and the
 //! effective runtime authority.
 
+use crate::private_particle_orbit_settings::OrbitDistanceSettings;
 use std::collections::BTreeMap;
 #[cfg(target_os = "android")]
 use std::{
@@ -86,6 +87,7 @@ pub(crate) struct PrivateParticlePanelUpdateMask {
     pub(crate) color_facing_attenuation_strength: bool,
     pub(crate) material: bool,
     pub(crate) polar_rr_orbit_boost: bool,
+    pub(crate) orbit_distance: [bool; 4],
 }
 
 impl PrivateParticlePanelUpdateMask {
@@ -111,6 +113,7 @@ impl PrivateParticlePanelUpdateMask {
             color_facing_attenuation_strength: false,
             material: false,
             polar_rr_orbit_boost: false,
+            orbit_distance: [false; 4],
         }
     }
 
@@ -136,6 +139,7 @@ impl PrivateParticlePanelUpdateMask {
             color_facing_attenuation_strength: true,
             material: true,
             polar_rr_orbit_boost: true,
+            orbit_distance: [false; 4],
         }
     }
 
@@ -159,6 +163,7 @@ impl PrivateParticlePanelUpdateMask {
             || self.color_facing_attenuation_strength
             || self.material
             || self.polar_rr_orbit_boost
+            || self.orbit_distance.iter().any(|field| *field)
     }
 
     pub(crate) fn merge(&mut self, newer: Self) {
@@ -185,6 +190,9 @@ impl PrivateParticlePanelUpdateMask {
         self.color_facing_attenuation_strength |= newer.color_facing_attenuation_strength;
         self.material |= newer.material;
         self.polar_rr_orbit_boost |= newer.polar_rr_orbit_boost;
+        for index in 0..4 {
+            self.orbit_distance[index] |= newer.orbit_distance[index];
+        }
     }
 }
 const PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR: u32 = 0;
@@ -251,6 +259,7 @@ pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
     pub(crate) material_override_enabled: bool,
     pub(crate) polar_rr_orbit_boost_enabled: bool,
+    pub(crate) orbit_distance: OrbitDistanceSettings,
 }
 
 #[cfg(target_os = "android")]
@@ -294,6 +303,7 @@ impl PrivateParticleDynamicsPanelCandidate {
             material_preset: self.material_preset,
             material_override_enabled: self.material_override_enabled,
             polar_rr_orbit_boost_enabled: self.polar_rr_orbit_boost_enabled,
+            orbit_distance: self.orbit_distance,
         }
     }
 }
@@ -1598,9 +1608,11 @@ pub(crate) fn parse_private_particle_dynamics_json(
         ];
         const HEARTBEAT: &str = "heartbeat_pulse";
         if let Some(key) = private_particles.as_object().and_then(|object| {
-            object
-                .keys()
-                .find(|key| !ALLOWED.contains(&key.as_str()) && key.as_str() != HEARTBEAT)
+            object.keys().find(|key| {
+                !ALLOWED.contains(&key.as_str())
+                    && key.as_str() != HEARTBEAT
+                    && key.as_str() != "orbit_distance"
+            })
         }) {
             return Err(format!("unsupported_private_particle_patch_field:{key}"));
         }
@@ -1615,6 +1627,13 @@ pub(crate) fn parse_private_particle_dynamics_json(
     if field_patch && private_particles.get("visual_scale").is_some() {
         update_mask.visual_scale = true;
     }
+    let orbit_distance = if let Some(orbit) = private_particles.get("orbit_distance") {
+        let (settings, mask) = OrbitDistanceSettings::parse_patch(orbit)?;
+        update_mask.orbit_distance = mask;
+        settings
+    } else {
+        OrbitDistanceSettings::defaults(false)
+    };
     let particle_size = private_particle_size_config(private_particles)?;
     if field_patch {
         if let Some(size) = private_particles.get("size").and_then(Value::as_object) {
@@ -1778,6 +1797,7 @@ pub(crate) fn parse_private_particle_dynamics_json(
         particle_size_oscillation_percent: particle_size.4,
         world_anchor_scale_m,
         driver_values01,
+        orbit_distance,
         driver_control_modes: driver_controls.0,
         driver_control_source_slots: driver_controls.1,
         driver_control_curve_codes: driver_controls.2,
@@ -2743,6 +2763,7 @@ pub(crate) fn write_private_particle_dynamics_status(
                         .unwrap_or("packaged-default"),
                     "parameter_source": effective.settings.material_parameter_source
                 },
+                "orbit_distance": effective.settings.orbit_distance.status(),
                 "heartbeat_pulse": {
                     "mode": if effective.settings.polar_rr_orbit_boost_enabled {
                         "polar-rr-orbit-boost"
@@ -2803,6 +2824,7 @@ pub(crate) fn write_private_particle_dynamics_status(
                         .unwrap_or("packaged-default"),
                     "parameter_source": "requested"
                 },
+                "orbit_distance": candidate.orbit_distance.status(),
                 "heartbeat_pulse": {
                     "mode": if candidate.polar_rr_orbit_boost_enabled {
                         "polar-rr-orbit-boost"
@@ -3315,6 +3337,47 @@ mod tests {
             .driver_values01
             .iter()
             .all(|selected| *selected));
+    }
+
+    #[test]
+    fn orbit_distance_source_patch_accepts_all_closed_sources() {
+        for source in [
+            "static-minimum",
+            "oscillator",
+            "polar-heartbeat",
+            "synthetic-heartbeat",
+        ] {
+            let request = json!({
+                "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+                "revision": 41,
+                "update_mode": "field-patch",
+                "private_particles": {"orbit_distance": {"source": source}},
+                "apply": {"mode": "apply-on-next-safe-frame"}
+            });
+            assert!(
+                parse_private_particle_dynamics_json(&request.to_string()).is_ok(),
+                "source {source} must be admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn orbit_distance_partial_patch_does_not_select_other_fields() {
+        let request = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA, "revision": 42,
+            "update_mode": "field-patch",
+            "private_particles": {"orbit_distance": {"synthetic_bpm": 90.0}},
+            "apply": {"mode": "apply-on-next-safe-frame"}
+        });
+        let candidate = parse_private_particle_dynamics_json(&request.to_string()).unwrap();
+        assert_eq!(
+            candidate.update_mask.orbit_distance,
+            [false, false, false, true]
+        );
+        assert!(!candidate.update_mask.polar_rr_orbit_boost);
+        assert!(!candidate.update_mask.tracer_draw_slots_per_oscillator);
+        assert!(!candidate.update_mask.particle_size_oscillation_percent);
+        assert_eq!(candidate.orbit_distance.synthetic_bpm, 90.0);
     }
 
     #[test]

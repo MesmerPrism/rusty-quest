@@ -1133,6 +1133,14 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     private SliderControl privateParticleTracerCopies;
     private Spinner privateParticleMaterialPreset;
     private CheckBox privateParticlePolarRrOrbitBoost;
+    private Spinner privateParticleOrbitSource;
+    private int privateParticleOrbitSourceSelection = -1;
+    private CheckBox privateParticleOrbitScaleWithSize;
+    private SliderControl privateParticleOrbitReference;
+    private SliderControl privateParticleSyntheticBpm;
+    private static final String[] ORBIT_SOURCE_WIRE = {
+        "static-minimum", "oscillator", "polar-heartbeat", "synthetic-heartbeat"
+    };
     private TextView privateParticleEffectiveReadback;
     // This is deliberately separate from the legacy liveAutoApply control.  The
     // Breath-composition panel always sends one closed, debounced JSON candidate for
@@ -2846,6 +2854,11 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         privateParticleTracerCopies = null;
         privateParticleMaterialPreset = null;
         privateParticlePolarRrOrbitBoost = null;
+        privateParticleOrbitSource = null;
+        privateParticleOrbitSourceSelection = -1;
+        privateParticleOrbitScaleWithSize = null;
+        privateParticleOrbitReference = null;
+        privateParticleSyntheticBpm = null;
         privateParticleEffectiveReadback = null;
     }
 
@@ -3957,19 +3970,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         );
         privateParticleMaterialSelection = privateParticleMaterialPreset.getSelectedItemPosition();
         material.addView(privateParticleMaterialPreset);
-        privateParticlePolarRrOrbitBoost = checkBox(
-            "Enable Polar RR orbit boost",
-            heartbeatStatus != null
-                && "polar-rr-orbit-boost".equals(heartbeatStatus.optString("mode", "disabled"))
-        );
-        material.addView(privateParticlePolarRrOrbitBoost);
-        material.addView(
-            text(
-                "Uses only valid Polar RR events. No synthetic beat, custom threshold, amplitude, or decay control is exposed here; those remain in the private GPU envelope.",
-                12,
-                PANEL_MUTED
-            )
-        );
+        addPrivateParticleOrbitControls(particle, privateParticles, controlEpoch);
 
         privateParticleMaterialPreset.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
@@ -3981,12 +3982,6 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
 
             @Override
             public void onNothingSelected(AdapterView<?> parent) {
-            }
-        });
-        privateParticlePolarRrOrbitBoost.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                schedulePrivateParticleDynamicsApplyFromControl(controlEpoch, "heartbeat_pulse");
             }
         });
 
@@ -4773,6 +4768,84 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         );
     }
 
+    private void addPrivateParticleOrbitControls(LinearLayout parent, JSONObject particles, final long epoch) {
+        JSONObject orbit = particles == null ? null : particles.optJSONObject("orbit_distance");
+        String source = orbit == null ? "static-minimum" : orbit.optString("source", "static-minimum");
+        privateParticleOrbitSourceSelection = 0;
+        for (int i = 0; i < ORBIT_SOURCE_WIRE.length; i++) {
+            if (ORBIT_SOURCE_WIRE[i].equals(source)) privateParticleOrbitSourceSelection = i;
+        }
+        LinearLayout card = panelCard("Orbit distance");
+        parent.addView(card);
+        card.addView(text("Distance source", 12, PANEL_MUTED));
+        privateParticleOrbitSource = spinner(new String[]{
+            "Static minimum", "Oscillator", "Polar heartbeat", "Synthetic heartbeat"
+        }, privateParticleOrbitSourceSelection);
+        card.addView(privateParticleOrbitSource);
+        privateParticleOrbitScaleWithSize = checkBox("Scale distance with particle size",
+            orbit != null && orbit.optBoolean("scale_with_particle_size", false));
+        card.addView(privateParticleOrbitScaleWithSize);
+        privateParticleOrbitReference = privateParticleSlider("Fixed reference radius", 0.001, 0.25,
+            orbit == null ? 0.03 : orbit.optDouble("reference_radius_m", 0.03), 249, " m", false,
+            "orbit_distance.reference_radius_m");
+        card.addView(privateParticleOrbitReference.view);
+        privateParticleSyntheticBpm = privateParticleSlider("Synthetic heartbeat", 30.0, 240.0,
+            orbit == null ? 60.0 : orbit.optDouble("synthetic_bpm", 60.0), 210, " BPM", true,
+            "orbit_distance.synthetic_bpm");
+        card.addView(privateParticleSyntheticBpm.view);
+        card.addView(text("Scaling off uses the fixed reference in meters. Polar and synthetic beats share the same pulse shape; Polar loss never substitutes synthetic beats.", 12, PANEL_MUTED));
+        updatePrivateParticleOrbitControlVisibility();
+        privateParticleOrbitSource.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (privateParticleControlsHydrating || position == privateParticleOrbitSourceSelection) {
+                    privateParticleOrbitSourceSelection = position; return;
+                }
+                privateParticleOrbitSourceSelection = position;
+                updatePrivateParticleOrbitControlVisibility();
+                schedulePrivateParticleDynamicsApplyFromControl(epoch, "orbit_distance.source");
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        });
+        privateParticleOrbitScaleWithSize.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                updatePrivateParticleOrbitControlVisibility();
+                schedulePrivateParticleDynamicsApplyFromControl(epoch, "orbit_distance.scale_with_particle_size");
+            }
+        });
+    }
+
+    private void updatePrivateParticleOrbitControlVisibility() {
+        if (privateParticleOrbitReference != null && privateParticleOrbitScaleWithSize != null)
+            privateParticleOrbitReference.view.setVisibility(privateParticleOrbitScaleWithSize.isChecked() ? View.GONE : View.VISIBLE);
+        if (privateParticleSyntheticBpm != null)
+            privateParticleSyntheticBpm.view.setVisibility(privateParticleOrbitSourceSelection == 3 ? View.VISIBLE : View.GONE);
+    }
+
+    private JSONObject privateParticleOrbitJson() throws Exception {
+        int source = privateParticleOrbitSource == null ? 0 : privateParticleOrbitSource.getSelectedItemPosition();
+        if (source < 0 || source >= ORBIT_SOURCE_WIRE.length) throw new IllegalArgumentException("orbit source");
+        return new JSONObject().put("source", ORBIT_SOURCE_WIRE[source])
+            .put("scale_with_particle_size", privateParticleOrbitScaleWithSize != null && privateParticleOrbitScaleWithSize.isChecked())
+            .put("reference_radius_m", privateParticleOrbitReference == null ? 0.03 : privateParticleOrbitReference.value())
+            .put("synthetic_bpm", privateParticleSyntheticBpm == null ? 60.0 : privateParticleSyntheticBpm.value());
+    }
+
+    private void hydratePrivateParticleOrbit(JSONObject orbit) {
+        if (orbit == null || privateParticleOrbitSource == null) return;
+        String source = orbit.optString("source", "static-minimum");
+        for (int i = 0; i < ORBIT_SOURCE_WIRE.length; i++) {
+            if (ORBIT_SOURCE_WIRE[i].equals(source)) {
+                privateParticleOrbitSourceSelection = i;
+                if (privateParticleOrbitSource.getSelectedItemPosition() != i) privateParticleOrbitSource.setSelection(i);
+                break;
+            }
+        }
+        privateParticleOrbitScaleWithSize.setChecked(orbit.optBoolean("scale_with_particle_size", false));
+        setSliderValue(privateParticleOrbitReference, orbit.optDouble("reference_radius_m", privateParticleOrbitReference.value()));
+        setSliderValue(privateParticleSyntheticBpm, orbit.optDouble("synthetic_bpm", privateParticleSyntheticBpm.value()));
+        updatePrivateParticleOrbitControlVisibility();
+    }
+
     private SliderControl privateParticleSizeSlider(
         String title,
         double min,
@@ -4990,6 +5063,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         JSONObject driverValues = new JSONObject();
         JSONArray driverControls = new JSONArray();
         JSONObject tracer = new JSONObject();
+        JSONObject orbit = new JSONObject();
         for (String field : patchFields) {
             if ("visual_scale".equals(field)) {
                 privateParticles.put("visual_scale", privateParticleVisualScale.value());
@@ -5044,6 +5118,11 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                     "material",
                     new JSONObject().put("preset", privateParticleMaterialPresetWire())
                 );
+            } else if (field.startsWith("orbit_distance.")) {
+                String key = field.substring("orbit_distance.".length());
+                JSONObject values = privateParticleOrbitJson();
+                if (!values.has(key)) throw new IllegalArgumentException("unsupported orbit field");
+                orbit.put(key, values.get(key));
             } else if ("heartbeat_pulse".equals(field)) {
                 privateParticles.put(
                     "heartbeat_pulse",
@@ -5062,6 +5141,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         if (size.length() > 0) {
             privateParticles.put("size", size);
         }
+        if (orbit.length() > 0) privateParticles.put("orbit_distance", orbit);
         if (driverValues.length() > 0) {
             privateParticles.put("driver_values01", driverValues);
             privateParticles.put("driver_controls", driverControls);
@@ -5127,6 +5207,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                 )
             );
         }
+        if (privateParticleOrbitSource != null)
+            candidate.getJSONObject("private_particles").put("orbit_distance", privateParticleOrbitJson());
         return candidate;
     }
 
@@ -5311,11 +5393,13 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         JSONObject materialStatus = privateParticles.optJSONObject("material");
         JSONObject heartbeatStatus = privateParticles.optJSONObject("heartbeat_pulse");
         JSONObject sizeStatus = privateParticles.optJSONObject("size");
+        JSONObject orbitStatus = privateParticles.optJSONObject("orbit_distance");
         boolean hydrateControls = isCurrentPrivateParticleControlSurface(privateParticleControlEpoch);
         if (hydrateControls) {
             boolean wasHydrating = privateParticleControlsHydrating;
             privateParticleControlsHydrating = true;
             try {
+                hydratePrivateParticleOrbit(orbitStatus);
                 if (privateParticleVisualScale != null) {
                     setSliderValue(
                         privateParticleVisualScale,
@@ -5462,6 +5546,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                 "Effective: size " + effectiveSize
                     + " · material " + material
                     + " · RR orbit boost " + heartbeat
+                    + (orbitStatus == null ? "" : " · orbit " + orbitStatus.optString("source", "unknown")
+                        + " · size scaling " + (orbitStatus.optBoolean("scale_with_particle_size", false) ? "on" : "off"))
                     + " · revision " + statusJson.optLong("effective_revision", 0L)
                     + " · status " + statusJson.optString("status", "unknown")
             );

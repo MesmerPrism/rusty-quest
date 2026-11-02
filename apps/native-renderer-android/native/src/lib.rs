@@ -18,8 +18,8 @@ mod breath_capture;
 mod breath_composition_driver;
 mod breath_composition_runtime;
 mod breath_guidance;
-mod breath_monitor;
 mod breath_input_selection;
+mod breath_monitor;
 
 #[cfg(target_os = "android")]
 mod acamera_sys;
@@ -115,11 +115,11 @@ mod native_geometry_selection;
 mod native_hybrid_panel;
 #[cfg(any(test, target_os = "android"))]
 mod native_mesh_ui;
-mod native_panel_interaction;
+mod native_page;
 mod native_panel_info;
+mod native_panel_interaction;
 mod native_panel_model;
 mod native_panel_resolution;
-mod native_page;
 mod native_panel_text;
 mod native_panel_text_layout;
 mod native_panel_toolbar;
@@ -177,8 +177,10 @@ mod polar_input_health;
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
 mod private_particle_heartbeat_pulse_adapter;
+mod private_particle_orbit_settings;
 #[cfg(any(target_os = "android", test))]
 mod private_particle_push_abi;
+mod private_particle_tracer_budget;
 mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
