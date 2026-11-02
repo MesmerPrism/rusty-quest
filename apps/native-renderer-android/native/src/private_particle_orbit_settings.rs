@@ -1,4 +1,5 @@
 //! Bounded orbit control transport. The private payload owns visual placement.
+use crate::private_particle_heartbeat_pulse_adapter::PrivateParticleHeartbeatPulseAdapter;
 use serde_json::{json, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +48,41 @@ pub(crate) struct OrbitDistanceSettings {
 }
 
 impl OrbitDistanceSettings {
+    pub(crate) fn protect_event_bank(
+        self,
+        adapter: &PrivateParticleHeartbeatPulseAdapter,
+        bank: &mut [f32],
+    ) {
+        if self.enabled
+            && matches!(
+                self.source,
+                OrbitDistanceSource::PolarHeartbeat | OrbitDistanceSource::SyntheticHeartbeat
+            )
+        {
+            // The selected event producer has final authority after manual,
+            // inlet and panel value overlays. Other routes keep their values.
+            adapter.apply_to_driver_values(bank);
+        }
+    }
+    pub(crate) fn normalize_legacy_source(
+        &mut self,
+        mask: &mut [bool; 4],
+        requested: Option<bool>,
+        route_enabled: bool,
+    ) {
+        if !route_enabled || mask[0] {
+            return;
+        }
+        if let Some(enabled) = requested {
+            self.enabled = true;
+            self.source = if enabled {
+                OrbitDistanceSource::PolarHeartbeat
+            } else {
+                OrbitDistanceSource::StaticMinimum
+            };
+            mask[0] = true;
+        }
+    }
     pub(crate) const fn defaults(enabled: bool) -> Self {
         Self {
             enabled,
@@ -130,6 +166,55 @@ fn bounded(value: &Value, min: f64, max: f64, name: &str) -> Result<f32, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::private_particle_heartbeat_pulse_adapter::PrivateParticleHeartbeatPulseAdapterSettings;
+    #[test]
+    fn final_event_bank_cannot_be_suppressed_or_held_by_manual_overrides() {
+        let orbit = OrbitDistanceSettings {
+            source: OrbitDistanceSource::SyntheticHeartbeat,
+            ..OrbitDistanceSettings::defaults(true)
+        };
+        let mut adapter = PrivateParticleHeartbeatPulseAdapter::new(
+            PrivateParticleHeartbeatPulseAdapterSettings::panel_synthetic_orbit_boost(60.0),
+        );
+        adapter.update_frame(0.01);
+        let mut bank = [0.0; 8];
+        orbit.protect_event_bank(&adapter, &mut bank);
+        assert_eq!(bank[5], 1.0, "manual zero must not suppress a fresh event");
+        adapter.update_frame(0.1);
+        bank[5] = 1.0;
+        orbit.protect_event_bank(&adapter, &mut bank);
+        assert_eq!(bank[5], 0.0, "manual one must not hold a heartbeat peak");
+        let ordinary = OrbitDistanceSettings {
+            source: OrbitDistanceSource::Oscillator,
+            ..orbit
+        };
+        bank[5] = 0.72;
+        ordinary.protect_event_bank(&adapter, &mut bank);
+        assert_eq!(bank[5], 0.72);
+    }
+    #[test]
+    fn newer_legacy_json_source_supersedes_an_older_canonical_selection() {
+        let mut current = OrbitDistanceSettings {
+            source: OrbitDistanceSource::SyntheticHeartbeat,
+            ..OrbitDistanceSettings::defaults(true)
+        };
+        let mut patch = OrbitDistanceSettings::defaults(false);
+        let mut mask = [false; 4];
+        patch.normalize_legacy_source(&mut mask, Some(true), current.enabled);
+        current.apply_mask(patch, mask);
+        assert_eq!(current.source, OrbitDistanceSource::PolarHeartbeat);
+        let mut explicit = OrbitDistanceSettings {
+            source: OrbitDistanceSource::Oscillator,
+            ..patch
+        };
+        let mut explicit_mask = [true, false, false, false];
+        explicit.normalize_legacy_source(&mut explicit_mask, Some(true), true);
+        assert_eq!(
+            explicit.source,
+            OrbitDistanceSource::Oscillator,
+            "simultaneous canonical field wins"
+        );
+    }
     #[test]
     fn defaults_are_explicitly_opt_in() {
         assert!(!OrbitDistanceSettings::defaults(false).enabled);

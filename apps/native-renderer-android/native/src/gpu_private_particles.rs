@@ -3411,7 +3411,15 @@ impl GpuPrivateParticleRenderer {
         frame_count: u64,
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
-        let settings = settings.clamped();
+        let mut settings = settings.clamped();
+        settings.orbit_distance.normalize_legacy_source(
+            &mut settings.update_mask.orbit_distance,
+            settings
+                .update_mask
+                .polar_rr_orbit_boost
+                .then_some(settings.polar_rr_orbit_boost_enabled),
+            self.runtime_settings.orbit_distance.enabled || settings.orbit_distance.enabled,
+        );
         if revision > 0 {
             self.settings_revision = revision as u64;
         }
@@ -3860,6 +3868,15 @@ impl GpuPrivateParticleRenderer {
             next.driver_bank_values01[5] = 0.0;
             self.driver_source_values01[5] = 0.0;
         }
+        orbit.protect_event_bank(&self.heartbeat_pulse_adapter, &mut next.driver_values01);
+        orbit.protect_event_bank(
+            &self.heartbeat_pulse_adapter,
+            &mut next.driver_bank_values01,
+        );
+        orbit.protect_event_bank(
+            &self.heartbeat_pulse_adapter,
+            &mut self.driver_source_values01,
+        );
     }
 
     unsafe fn record_sort_frame(
