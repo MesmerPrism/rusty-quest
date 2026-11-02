@@ -23,6 +23,7 @@ $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
 $BreathCompositionFeatureId = "breath.composition.closed_world"
 $ControllerOnlyBreathCompositionFeatureId = "breath.composition.controller_only"
+$VisualShowcaseFeatureId = 'ui.visual_showcase'
 $BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
 $BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
 $BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver"
@@ -718,7 +719,8 @@ function New-GeneratedAndroidManifestText {
             # Polar's existing scan adapter requires location on modern Android.
             # A new optional Wi-Fi route must preserve that selected permission.
             if ($permission -ceq 'android.permission.ACCESS_FINE_LOCATION' -and
-                $SelectedFeatureIds -cnotcontains 'sensor.polar_h10_ble') { $attributes = ' android:maxSdkVersion="32"' }
+                $SelectedFeatureIds -cnotcontains 'sensor.polar_h10_ble' -and
+                $SelectedFeatureIds -cnotcontains 'ui.visual_showcase') { $attributes = ' android:maxSdkVersion="32"' }
         }
         [void]$lines.Add("    <uses-permission android:name=""$([System.Security.SecurityElement]::Escape($permission))""$attributes />")
     }
@@ -1576,7 +1578,7 @@ if ($simultaneousHandsControllersSelected) {
     }
 }
 $breathCompositionActivationBinding = $null
-if ($selectedFeatureIds -contains $BreathCompositionFeatureId -or $selectedFeatureIds -contains $ControllerOnlyBreathCompositionFeatureId) {
+if ($selectedFeatureIds -contains $BreathCompositionFeatureId -or $selectedFeatureIds -contains $ControllerOnlyBreathCompositionFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) {
     $bindingInputs = [ordered]@{
         schema = "rusty.quest.breath_composition.activation_binding_inputs.v1"
         app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
@@ -1593,7 +1595,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId -or $selectedFeatu
         throw "Breath composition activation binding is resolver-derived and must not be supplied by a feature or app spec"
     }
     $runtimeSet[$BreathCompositionActivationBindingProperty] = $breathCompositionActivationBinding
-    $runtimeSources[$BreathCompositionActivationBindingProperty] = "resolver:$BreathCompositionFeatureId"
+    $runtimeSources[$BreathCompositionActivationBindingProperty] = if ($selectedFeatureIds -contains $VisualShowcaseFeatureId) { "resolver:$VisualShowcaseFeatureId" } else { "resolver:$BreathCompositionFeatureId" }
     if ($envByName.Contains($BreathCompositionExpectedBindingBuildEnv)) {
         throw "Breath composition packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
     }
@@ -1601,7 +1603,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId -or $selectedFeatu
         name = $BreathCompositionExpectedBindingBuildEnv
         value = $breathCompositionActivationBinding
     }
-    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId) {
+    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) {
         Assert-NativeRendererPropertyValue `
             -Name $BreathCompositionDriverActivationBindingProperty `
             -Value $breathCompositionActivationBinding `
@@ -1610,7 +1612,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId -or $selectedFeatu
             throw "Breath composition driver activation binding is resolver-derived and must not be supplied by a feature or app spec"
         }
         $runtimeSet[$BreathCompositionDriverActivationBindingProperty] = $breathCompositionActivationBinding
-        $runtimeSources[$BreathCompositionDriverActivationBindingProperty] = "resolver:$BreathCompositionDriverFeatureId"
+        $runtimeSources[$BreathCompositionDriverActivationBindingProperty] = if ($selectedFeatureIds -contains $VisualShowcaseFeatureId) { "resolver:$VisualShowcaseFeatureId" } else { "resolver:$BreathCompositionDriverFeatureId" }
         if ($envByName.Contains($BreathCompositionDriverExpectedBindingBuildEnv)) {
             throw "Breath composition driver packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
         }
@@ -1917,7 +1919,7 @@ $featureLock = [ordered]@{
             sha256 = $breathCompositionActivationBinding
         }
     } else { $null }
-    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId) {
+    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) {
         [ordered]@{
             schema = "rusty.quest.breath_composition_driver.activation_binding.v1"
             property = $BreathCompositionDriverActivationBindingProperty
@@ -2079,7 +2081,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
         breath_composition_activation_sha256 = $breathCompositionActivationBinding
-        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId) { $breathCompositionActivationBinding } else { $null }
+        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) { $breathCompositionActivationBinding } else { $null }
         simultaneous_hands_controllers_activation_sha256 = $simultaneousHandsControllersActivationBinding
         audit_path = [System.IO.Path]::GetFullPath($auditPath)
         audit_sha256 = Get-FileSha256 -Path $auditPath

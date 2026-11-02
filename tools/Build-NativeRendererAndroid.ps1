@@ -792,6 +792,24 @@ if ($standaloneExperimentOwner) {
     if ($manifest -match '(?i)BLUETOOTH|FOREGROUND_SERVICE|RECEIVE_BOOT_COMPLETED|ACCESS_NETWORK_STATE|ACCESS_WIFI_STATE|SelfKiosk|SoftKiosk|BootReceiver|Gateway|Relay|Stream|Video') { throw 'Standalone experiment owner manifest contains an excluded transport/runtime declaration.' }
 }
 $generatedControlPanelActivityPath = ""
+$showcaseSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.visual_showcase'
+if ($showcaseSelected) {
+    if ($selectedPanelModuleId -cne 'visual-showcase-controls' -or $selectedPanelEntrySimpleName -cne 'ShowcasePanelModule') { throw 'Showcase requires its exact panel source closure.' }
+    $excludedShowcaseFeatures = @($appBuildLockObject.selected_feature_ids | Where-Object { $_ -match '(?i)experiment|recording|questionnaire|condition_audio|lsl|soft_kiosk|boot_autostart|sensor\.polar_h10_ble|ui\.native_mesh_panel' })
+    if ($excludedShowcaseFeatures.Count -gt 0) { throw "Showcase selected excluded features: $($excludedShowcaseFeatures -join ', ')" }
+    if (-not $appBuildEnvByName.ContainsKey('RUSTY_QUEST_NATIVE_RENDERER_SHOWCASE') -or $appBuildEnvByName['RUSTY_QUEST_NATIVE_RENDERER_SHOWCASE'] -cne 'true') { throw 'Showcase requires authenticated explicit capability selection.' }
+    if (@($appBuildLockObject.android_manifest.providers).Count -gt 0 -or @($appBuildLockObject.android_manifest.receivers).Count -gt 0 -or @($appBuildLockObject.android_manifest.services).Count -gt 0) { throw 'Showcase does not admit background services, debug providers or command receivers.' }
+    $projectionRoot = Join-Path $generatedEmbeddedPackageDir 'showcase-acquisition'
+    & python (Join-Path $repoRoot 'tools/produce_showcase_java.py') --repo $repoRoot --output $projectionRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Showcase acquisition source projection failed.' }
+    $projection = Get-Content -LiteralPath (Join-Path $projectionRoot 'projection.json') -Raw | ConvertFrom-Json
+    foreach ($record in $projection.sources) {
+        $canonical = Resolve-RepoPath -Path ([string]$record.input) -RepoRoot $repoRoot
+        if (@($panelSourceFiles | Where-Object { $_ -ceq $canonical }).Count -ne 1) { throw "Showcase projection input not bound by selected source closure: $($record.input)" }
+        $panelSourceFiles = @($panelSourceFiles | Where-Object { $_ -cne $canonical }) + @(Join-Path $projectionRoot ([string]$record.output))
+    }
+    Copy-Item -LiteralPath (Join-Path $projectionRoot 'projection.json') -Destination (Join-Path $assetsDir 'showcase-java-projection.json')
+}
 # Generate the inert bridge before panel selection, including no-panel APKs.
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererAppStatusBridge.psm1') -Force
 $generatedAppStatusBridgePath = Join-Path $generatedEmbeddedPackageDir 'NativeRendererAppStatusBridge.java'
@@ -1850,6 +1868,12 @@ $panelNativeMethods
             '(?s)    // EXPERIMENT_SESSION_SHELL_BEGIN\r?\n.*?    // EXPERIMENT_SESSION_SHELL_END\r?\n',
             '')
     }
+    if ($showcaseSelected) {
+        # Independent facade: do not inherit the experiment/audio/kiosk facade
+        # and rely on late removal of its methods.
+        Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererShowcaseFacade.psm1') -Force
+        $generatedControlPanelActivitySource = New-NativeRendererShowcaseFacadeSource
+    }
     [System.IO.File]::WriteAllText(
         $generatedControlPanelActivityPath,
         $generatedControlPanelActivitySource,
@@ -1939,6 +1963,10 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
+if ($showcaseSelected) {
+    $sourceFiles = @($sourceFiles | Where-Object { [IO.Path]::GetFileName($_) -ceq 'PanelModule.java' })
+    if ($sourceFiles.Count -ne 1) { throw 'Showcase base Java source closure is incomplete.' }
+}
 if ($standaloneExperimentOwner) {
     $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java','NativePageSnapshot.java','NativeSystemKeyboard.java','NativePanelFont.java',
         'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java','NativeRendererActivityComponents.java','NativeRendererBootObservation.java',
@@ -1966,7 +1994,7 @@ $sourceFiles = @($sourceFiles) +
     @($sharedBrokerClientJava) +
     @($sharedBrokerTransportJava) +
     @($generatedEmbeddedRuntimeConfigPath)
-if ($standaloneExperimentOwner) {
+if ($standaloneExperimentOwner -or $showcaseSelected) {
     # Embedded transport/media Java remains outside the independent owner package.
     $sourceFiles = @($sourceFiles | Where-Object { $_ -notin $sharedBrokerClientJava -and $_ -notin $sharedBrokerTransportJava -and $_ -cne $generatedEmbeddedRuntimeConfigPath })
 }
@@ -2004,6 +2032,24 @@ if ($sourceFiles.Count -eq 0) {
 $sourceList = Join-Path $OutDir "sources.rsp"
 $sourceFiles = @($sourceFiles | Select-Object -Unique)
 $sourceFiles = @(Write-NativeRendererJavaSourceResponse -SourceFiles $sourceFiles -GeneratedAppStatusBridgePath $generatedAppStatusBridgePath -Path $sourceList)
+if ($showcaseSelected) {
+    $allowedShowcaseJava = @('PanelModule.java','ControlPanelActivity.java','NativeRendererAppStatusBridge.java',
+        'ShowcaseNativeBridge.java','ShowcasePanelModule.java','ShowcaseVisualForm.java','ShowcaseGateway.java',
+        'ShowcaseDiscoveryServer.java','ShowcaseGatewayProtocol.java','ShowcaseGatewayHttpServer.java','ShowcaseGuestRegistry.java',
+        'PolarSensorPanel.java','PolarSensorRuntime.java','PolarBleRuntimeSupport.java')
+    if ($sourceFiles.Count -ne $allowedShowcaseJava.Count) { throw 'Showcase selected Java inventory differs from the closed composition.' }
+    $selectedJavaRecords = @()
+    foreach ($source in $sourceFiles) {
+        $name = [IO.Path]::GetFileName($source)
+        if ($allowedShowcaseJava -cnotcontains $name) { throw "Showcase contains unlisted Java source: $name" }
+        $body = [IO.File]::ReadAllText($source)
+        if ($body -match 'ExperimentSession|ConditionAudio|Questionnaire|RecordingExport|nativeStartParallelBreathCapture|nativeStopParallelBreathCapture|nativeReadParallelBreathCaptureStatus|StereoVideo|EmbeddedManifold') { throw "Showcase Java source contains excluded capability: $name" }
+        if ($name -cin @('PolarSensorPanel.java','PolarSensorRuntime.java') -and $body -match 'openFileOutput\(|FileOutputStream|new File\(|getFilesDir\(') { throw "Showcase sensor source contains a persistent sink: $name" }
+        $selectedJavaRecords += [ordered]@{ name = $name; sha256 = Get-FileSha256 -Path $source }
+    }
+    [ordered]@{ schema = 'rusty.quest.visual_showcase.selected_java.v1'; sources = @($selectedJavaRecords | Sort-Object name) } |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $assetsDir 'showcase-selected-java.json') -Encoding utf8
+}
 
 Invoke-Checked "javac" $javac @(
     "-encoding", "UTF-8",
@@ -2034,6 +2080,9 @@ $cargoBuildArguments = @(
 )
 if ($rustyLslBackendPackaged) {
     $cargoBuildArguments += @("--features", "rusty-lsl-backend")
+}
+if ($showcaseSelected) {
+    $cargoBuildArguments += @('--features', 'showcase')
 }
 try {
     $env:ANDROID_HOME = $AndroidHome

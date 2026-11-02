@@ -1,0 +1,126 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.visual_showcase",
+  "module_path": "ui/visual-showcase",
+  "module_kind": "same-apk-panel-composition",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in generic settings showcase with closed no-recording acquisition projection and authenticated local control.",
+  "provides": [
+    "ui.visual_showcase",
+    "sensor.polar_h10_ble.memory_only",
+    "breath.assessment.polar_acc.volume",
+    "breath.assessment.polar_acc.phase",
+    "breath.composition.direct_four_way",
+    "input.private_particle_driver.breath_composition_closed_world"
+  ],
+  "depends_on": [
+    "ui.same_apk_control_panel",
+    "renderer.private_particles",
+    "input.breath.controller_assessment",
+    "mapping.breath.state",
+    "mapping.breath.volume",
+    "input.right_secondary_same_apk_panel_triple_press"
+  ],
+  "incompatible_with": [
+    "ui.breath_composition_control_panel",
+    "ui.experiment_session_owner",
+    "sensor.polar_h10_ble",
+    "ui.native_mesh_panel",
+    "ui.native_mesh_panel.original_product"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.ACCESS_WIFI_STATE",
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.BLUETOOTH",
+      "android.permission.BLUETOOTH_ADMIN",
+      "android.permission.BLUETOOTH_SCAN",
+      "android.permission.BLUETOOTH_CONNECT",
+      "android.permission.BLUETOOTH_ADVERTISE"
+    ],
+    "uses_features": [
+      "android.hardware.bluetooth_le"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.breath_composition.enabled": "true",
+      "debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled": "true",
+      "debug.rustyquest.native_renderer.breath_composition.controller_projection": "dynamic-axis",
+      "debug.rustyquest.native_renderer.breath_composition.polar_projection": "xz",
+      "debug.rustyquest.native_renderer.breath_composition.stale_millis": "500",
+      "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled": "true"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_SHOWCASE",
+        "value": "true"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1",
+        "value": "true"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL",
+        "value": "off"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "panel_composition": {
+    "schema": "rusty.quest.native_renderer.panel_composition.v1",
+    "selected_module_id": "visual-showcase-controls",
+    "denied_module_ids": [
+      "breath-composition-controls",
+      "experiment-session-owner",
+      "polar-controls"
+    ],
+    "modules": [
+      {
+        "module_id": "visual-showcase-controls",
+        "entry_class": "io.github.mesmerprism.rustyquest.native_renderer.ShowcasePanelModule",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseNativeBridge.java",
+          "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcasePanelModule.java",
+          "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseGateway.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarBleRuntimeSupport.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorPanel.java",
+          "apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PolarSensorRuntime.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionDiscoveryServer.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionGatewayProtocol.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionGatewayHttpServer.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionGuestRegistry.java",
+          "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseVisualForm.java"
+        ]
+      }
+    ]
+  },
+  "public_private_boundary": "Generic settings, platform acquisition and transport only; downstream visual defaults, names and shader formulas remain app-owned. Selected Java producers remove recording and persistent sensor sinks."
+}
