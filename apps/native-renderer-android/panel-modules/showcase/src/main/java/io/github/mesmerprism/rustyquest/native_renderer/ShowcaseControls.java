@@ -117,6 +117,10 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     static boolean isMain(String page){for(String tab:TABS)if(tab.equals(page))return true;return false;}
     private void reload()throws Exception {state.observe(ShowcaseNativeBridge.status());readbackAvailable=true;state.reload();pages.clear();forms.clear();message="Applied settings read";buildPage();}
     private static String operationLabel(String op){if(op.equals("set-inputs"))return "input settings";if(op.equals("apply-visual"))return "visual settings";if(op.equals("apply-profile"))return "visual profile";if(op.equals("set-phone-control"))return "phone control";if(op.equals("save-profile"))return "profile save";if(op.equals("delete-profile"))return "profile deletion";if(op.equals("calibrate"))return "calibration";return op.replace("polar-","Polar ").replace('-',' ');}
+    /** Availability is a transient overlay; successful polls never replace action outcomes. */
+    static String currentReadMessage(String previous,boolean wasAvailable,String pending,boolean unknown){
+        return !wasAvailable&&pending.isEmpty()&&!unknown&&previous.equals("Waiting for current headset settings")?"Applied settings":previous;
+    }
     private void updateFrame(){
         if(frame==null)return;
         JSONObject s=state.applied;
@@ -126,7 +130,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
             if(awaitingRendered>0&&s.optLong("rendered_visual_revision")>=awaitingRendered){awaitingRendered=0;message="Applied visual settings";}
             if(lastRadius!=null)lastRadius.setText("Last applied sphere radius: "+(s.isNull("rendered_radius_m")?"unavailable":s.opt("rendered_radius_m")+" m"));
         }
-        outcome.setText(message+(state.inputDirty?" · Unapplied input edits":"")+(state.visualDirty?" · Unapplied visual edits":"")+((state.inputDirty&&state.conflict(false))||(state.visualDirty&&state.conflict(true))?" · Settings changed elsewhere — read applied settings":""));
+        outcome.setText((!readbackAvailable&&s!=null?(pendingId.isEmpty()?"Waiting for current headset settings · ":"Waiting for the headset; the earlier action will not be sent again · "):"")+message+(state.inputDirty?" · Unapplied input edits":"")+(state.visualDirty?" · Unapplied visual edits":"")+((state.inputDirty&&state.conflict(false))||(state.visualDirty&&state.conflict(true))?" · Settings changed elsewhere — read applied settings":""));
         String selected=page.startsWith("Visual / ")?"Visuals":page.equals("Polar")||page.equals("Calibration")?"Inputs":page;
         for(Map.Entry<String,Button> tab:tabButtons.entrySet())tab.getValue().setTextColor(tab.getKey().equals(selected)?ACCENT:FG);
         enableEditors(body,readbackAvailable&&pendingId.isEmpty()&&!unknown);enableEditors(actions,readbackAvailable&&pendingId.isEmpty()&&!unknown);
@@ -214,5 +218,5 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     public void closePanelAndReturnToImmersive(){host.closePanel();}
     public void onPolarStreamEvent(JSONObject event){}
     void permissions(int request,String[] permissions,int[] results){ShowcaseNativeBridge.discoveryPermissionResult();if(polar!=null)polar.onRequestPermissionsResult(request,permissions,results);}
-    private final Runnable poll=new Runnable(){public void run(){if(!resumed||retired)return;try{boolean first=state.applied==null;JSONObject status=ShowcaseNativeBridge.status();state.observe(status);readbackAvailable=true;if(first&&frame!=null)buildPage();if(!pendingId.isEmpty())settle(new JSONObject(ShowcaseNativeBridge.nativeShowcaseReceipt(pendingId)));updateFrame();}catch(Exception|UnsatisfiedLinkError unavailable){readbackAvailable=false;message=pendingId.isEmpty()?"Waiting for current headset settings":"Waiting for the headset; the earlier action will not be sent again";updateFrame();}main.postDelayed(this,500);}};
+    private final Runnable poll=new Runnable(){public void run(){if(!resumed||retired)return;try{boolean first=state.applied==null;JSONObject status=ShowcaseNativeBridge.status();state.observe(status);message=currentReadMessage(message,readbackAvailable,pendingId,unknown);readbackAvailable=true;if(first&&frame!=null)buildPage();if(!pendingId.isEmpty())settle(new JSONObject(ShowcaseNativeBridge.nativeShowcaseReceipt(pendingId)));updateFrame();}catch(Exception|UnsatisfiedLinkError unavailable){readbackAvailable=false;updateFrame();}main.postDelayed(this,500);}};
 }
