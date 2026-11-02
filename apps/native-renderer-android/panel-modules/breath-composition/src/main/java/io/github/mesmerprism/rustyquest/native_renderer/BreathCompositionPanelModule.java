@@ -3911,7 +3911,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             readPrivateParticleStatusTracerDouble(
                 tracerStatus,
                 "draw_slots_per_oscillator",
-                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS, 7.0)
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS, 0.0)
             ),
             1024,
             "",
