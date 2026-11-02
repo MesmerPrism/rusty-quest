@@ -8,6 +8,10 @@ use std::{
 
 use ash::vk;
 
+#[cfg(feature = "showcase")]
+#[path = "private_particle_material_overlay.rs"]
+mod material_overlay;
+
 use crate::breath_composition_driver::{BreathCompositionDriver, BreathCompositionDriverSettings};
 use crate::gpu_hand_mesh_visual::HandMeshVisualEyeProjection;
 use crate::manifold_scalar_driver_bridge::{
@@ -521,6 +525,63 @@ fn generated_private_particle_material_default() -> Option<PrivateParticleMateri
 }
 
 impl PrivateParticleRuntimeSettings {
+    #[cfg(feature = "showcase")]
+    fn showcase_material_state(&self) -> material_overlay::Material {
+        material_overlay::Material {
+            coefficients: [
+                self.transparency_opacity,
+                self.transparency_output_alpha_scale,
+                self.transparency_depth_suppression_strength,
+                self.transparency_rgb_alpha_coupling,
+                self.color_facing_attenuation_strength,
+            ],
+            premultiplied: self.transparency_blend_mode
+                == PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver,
+        }
+    }
+
+    #[cfg(feature = "showcase")]
+    fn apply_showcase_explicit_material(&mut self, panel: GpuPrivateParticlePanelSettings) {
+        let panel = panel.clamped();
+        let mask = panel.update_mask;
+        let selected = [
+            mask.transparency_opacity,
+            mask.transparency_output_alpha_scale,
+            mask.transparency_depth_suppression_strength,
+            mask.transparency_rgb_alpha_coupling,
+            mask.color_facing_attenuation_strength,
+        ];
+        let effective = material_overlay::resolve(
+            true,
+            self.showcase_material_state(),
+            [
+                panel.transparency_opacity,
+                panel.transparency_output_alpha_scale,
+                panel.transparency_depth_suppression_strength,
+                panel.transparency_rgb_alpha_coupling,
+                panel.color_facing_attenuation_strength,
+            ],
+            selected,
+        );
+        [
+            self.transparency_opacity,
+            self.transparency_output_alpha_scale,
+            self.transparency_depth_suppression_strength,
+            self.transparency_rgb_alpha_coupling,
+            self.color_facing_attenuation_strength,
+        ] = effective.coefficients;
+        if selected[..4].iter().any(|selected| *selected) {
+            self.transparency_parameter_source = "showcase-profile-explicit";
+        }
+        if selected[4] {
+            self.color_parameter_source = "showcase-profile-explicit";
+        }
+        if selected.iter().any(|selected| *selected) {
+            self.material_parameter_source = "showcase-profile-template-and-explicit-coefficients";
+        }
+        // No blend, template, driver/event-bank or other visual field is replayed.
+    }
+
     fn from_generated_defaults() -> Self {
         let driver_values01 = private_particle_driver_values01_from_generated();
         let visual_scale = PRIVATE_PARTICLE_VISUAL_SCALE.clamp(0.05, 1.0);
@@ -1361,6 +1422,49 @@ pub(crate) struct GpuPrivateParticleFrameStats {
 }
 
 impl GpuPrivateParticleFrameStats {
+    /// Actual consuming-frame values. The caller owns the successful xrEndFrame
+    /// acknowledgement and associates this projection with that frame's revision.
+    #[cfg(feature = "showcase")]
+    pub(crate) fn showcase_material_projection(&self) -> serde_json::Value {
+        let settings = self.runtime_settings;
+        let actual = settings.showcase_material_state();
+        let (template, canonical) = match settings.material_preset {
+            Some(preset) => {
+                let parameters = preset.parameters();
+                (
+                    preset.marker_name(),
+                    material_overlay::Material {
+                        coefficients: [
+                            parameters.opacity,
+                            parameters.output_alpha_scale,
+                            parameters.depth_suppression_strength,
+                            parameters.rgb_alpha_coupling,
+                            parameters.facing_attenuation_strength,
+                        ],
+                        premultiplied: parameters.uses_premultiplied_alpha_over,
+                    },
+                )
+            }
+            None => (
+                "packaged-default",
+                PrivateParticleRuntimeSettings::from_generated_defaults().showcase_material_state(),
+            ),
+        };
+        serde_json::json!({
+            "template": template,
+            "modified": material_overlay::modified(actual, canonical),
+            "blend": settings.transparency_blend_mode.marker_name(),
+            "transparency": {
+                "opacity": settings.transparency_opacity,
+                "output_alpha_scale": settings.transparency_output_alpha_scale,
+                "depth_suppression_strength": settings.transparency_depth_suppression_strength,
+                "rgb_alpha_coupling": settings.transparency_rgb_alpha_coupling,
+            },
+            "color": {"facing_attenuation_strength": settings.color_facing_attenuation_strength},
+            "source": "submitted-private-particle-frame",
+        })
+    }
+
     pub(crate) fn unavailable() -> Self {
         Self::default()
     }
@@ -3778,6 +3882,8 @@ impl GpuPrivateParticleRenderer {
             }
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_material_override(panel_override, material_defaults);
+                #[cfg(feature = "showcase")]
+                next.apply_showcase_explicit_material(panel_override);
             }
             if let Some(preset) = self.render_experiment_request_state.active_preset() {
                 next.apply_render_experiment_preset(preset);
@@ -3856,6 +3962,8 @@ impl GpuPrivateParticleRenderer {
             next.apply_driver_source_values(self.driver_source_values01, driver_parameter_source);
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_override(panel_override, self.driver_source_values01);
+                #[cfg(feature = "showcase")]
+                next.apply_showcase_explicit_material(panel_override);
             }
             next.apply_heartbeat_orbit_control(self.heartbeat_orbit_control());
             self.configure_orbit_adapter(&mut next);
