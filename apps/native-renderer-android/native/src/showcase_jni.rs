@@ -76,11 +76,13 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Sh
     _: JClass,
     defaults: JString,
     persisted: JString,
+    migrations: JString,
 ) -> jstring {
     reply(env, |env| {
         let result = crate::showcase_runtime::initialize(
             &defaults.try_to_string(env)?,
             &persisted.try_to_string(env)?,
+            &migrations.try_to_string(env)?,
         );
         Ok(match result{Ok(())=>crate::showcase_runtime::status_json(),Err(reason)=>json!({"schema":"rusty.quest.visual_showcase.status.v1","product":"visual-showcase","ready":false,"reason":reason}).to_string()})
     })

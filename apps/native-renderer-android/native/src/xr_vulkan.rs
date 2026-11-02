@@ -4672,6 +4672,7 @@ unsafe fn run_projection_frames(
                 private_particle_stats.ready,
                 private_particle_stats.visible,
                 private_particle_stats.draw_count,
+                private_particle_stats.showcase_material_projection(),
             );
         }
 

@@ -23,6 +23,8 @@ pub(crate) struct ShowcaseRuntime {
     epoch: String,
     revision: u64,
     rendered_visual_revision: Option<u64>,
+    rendered_radius_m: Option<f32>,
+    rendered_material: Option<Value>,
     inputs: Value,
     visual: Option<Value>,
     profiles: BTreeMap<String, Value>,
@@ -41,6 +43,8 @@ impl ShowcaseRuntime {
             epoch,
             revision: 0,
             rendered_visual_revision: None,
+            rendered_radius_m: None,
+            rendered_material: None,
             inputs: json!({"breath_source":"automatic","breath_mapping":"state","heartbeat_source":"synthetic","synthetic_bpm":60.0,"controller_projection":"dynamic-axis","polar_projection":"xz","inverted":false}),
             visual: None,
             profiles: BTreeMap::new(),
@@ -54,7 +58,23 @@ impl ShowcaseRuntime {
         }
     }
     fn status(&self) -> Value {
-        json!({"schema":STATUS,"product":PRODUCT,"epoch":self.epoch,"revision":self.revision,"rendered_visual_revision":self.rendered_visual_revision,"o":{"e":self.epoch,"s":"observed"},"observed_at_ns":monotonic_ns().to_string(),"ready":self.visual.is_some(),"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles,"availability":{"breath":self.breath_available,"heartbeat":self.heartbeat_available,"polar_required":self.inputs["breath_source"]=="polar-acc" || self.inputs["heartbeat_source"]=="polar","selected_polar_unavailable":(self.inputs["breath_source"]=="polar-acc" && !self.breath_available)||(self.inputs["heartbeat_source"]=="polar" && !self.heartbeat_available)},"applied_progress":self.progress,"automatic_phase":self.automatic.phase(self.last_tick_ns)})
+        json!({"schema":STATUS,"product":PRODUCT,"epoch":self.epoch,"revision":self.revision,"rendered_visual_revision":self.rendered_visual_revision,"rendered_radius_m":self.rendered_radius_m,"rendered_material":self.rendered_material,"material_presets":self.material_presets(),"o":{"e":self.epoch,"s":"observed"},"observed_at_ns":monotonic_ns().to_string(),"ready":self.visual.is_some(),"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles,"availability":{"breath":self.breath_available,"heartbeat":self.heartbeat_available,"polar_required":self.inputs["breath_source"]=="polar-acc" || self.inputs["heartbeat_source"]=="polar","selected_polar_unavailable":(self.inputs["breath_source"]=="polar-acc" && !self.breath_available)||(self.inputs["heartbeat_source"]=="polar" && !self.heartbeat_available)},"applied_progress":self.progress,"automatic_phase":self.automatic.phase(self.last_tick_ns)})
+    }
+    fn material_presets(&self) -> Value {
+        use crate::native_renderer_private_particle_material_request::PrivateParticleMaterialPreset;
+        let mut map = serde_json::Map::new();
+        for preset in [
+            PrivateParticleMaterialPreset::CurrentAdditive,
+            PrivateParticleMaterialPreset::PremultipliedAlphaOver,
+            PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFade,
+            PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFacingFade,
+            PrivateParticleMaterialPreset::ReferenceMaterialEmulation,
+        ] {
+            let p = preset.parameters();
+            map.insert(preset.marker_name().into(),json!({"transparency":{"opacity":p.opacity,"output_alpha_scale":p.output_alpha_scale,"depth_suppression_strength":p.depth_suppression_strength,"rgb_alpha_coupling":p.rgb_alpha_coupling},"color":{"facing_attenuation_strength":p.facing_attenuation_strength}}));
+        }
+        map.insert("packaged-default".into(),self.profiles.get("default").map(|builtin|json!({"transparency":builtin["transparency"],"color":builtin["color"]})).unwrap_or(Value::Null));
+        Value::Object(map)
     }
     fn settings(&self) -> Value {
         json!({"schema":SETTINGS,"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles})
@@ -520,12 +540,13 @@ pub(crate) fn reconcile_receipt(
     }
     receipt_json(id)
 }
-pub(crate) fn initialize(defaults: &str, persisted: &str) -> Result<(), String> {
+pub(crate) fn initialize(defaults: &str, persisted: &str, migrations: &str) -> Result<(), String> {
     if defaults.len() > 16384 || persisted.len() > MAX_BYTES * 4 {
         return Err("settings_too_large".into());
     }
     let visual: Value = serde_json::from_str(defaults).map_err(|_| "default_json")?;
     validate_visual(&visual)?;
+    let trusted = parse_builtin_migrations(migrations)?;
     let mut s = lock();
     if s.visual.is_some() {
         return Ok(());
@@ -535,34 +556,104 @@ pub(crate) fn initialize(defaults: &str, persisted: &str) -> Result<(), String> 
     candidate.profiles.insert("default".into(), visual);
     if !persisted.is_empty() {
         let p: Value = serde_json::from_str(persisted).map_err(|_| "settings_json")?;
-        exact(&p, &["schema", "inputs", "visual", "profiles"])?;
-        if p["schema"] != SETTINGS {
-            return Err("settings_schema".into());
-        }
-        validate_inputs(&p["inputs"])?;
-        validate_visual(&p["visual"])?;
-        let profiles = p["profiles"].as_object().ok_or("profiles_required")?;
-        if profiles.len() > MAX_PROFILES {
-            return Err("profile_limit".into());
-        }
-        let mut restored = BTreeMap::new();
-        for (name, profile) in profiles {
-            token(&Value::String(name.clone()), 64)?;
-            validate_visual(profile)?;
-            if name != "default" {
-                restored.insert(name.clone(), profile.clone());
-            }
-        }
-        restored.insert("default".into(), candidate.profiles["default"].clone());
-        candidate.inputs = p["inputs"].clone();
-        candidate.visual = Some(p["visual"].clone());
-        candidate.profiles = restored;
+        restore_persisted_settings(&mut candidate, &p, &trusted)?;
     }
     *s = candidate;
     drop(s);
     select_breath_input();
     Ok(())
 }
+#[derive(Clone, Debug)]
+struct TrustedBuiltin {
+    settings_schema: String,
+    visual: Value,
+}
+
+fn parse_builtin_migrations(text: &str) -> Result<Vec<TrustedBuiltin>, String> {
+    if text.len() > 131072 {
+        return Err("builtin_migrations_too_large".into());
+    }
+    let value: Value = serde_json::from_str(text).map_err(|_| "builtin_migrations_json")?;
+    exact(&value, &["schema", "entries"])?;
+    if value["schema"] != "rusty.quest.visual_showcase.builtin_migrations.v1" {
+        return Err("builtin_migrations_schema".into());
+    }
+    let entries = value["entries"]
+        .as_array()
+        .ok_or("builtin_migrations_entries")?;
+    if entries.len() > 8 {
+        return Err("builtin_migrations_limit".into());
+    }
+    let mut trusted = Vec::new();
+    for entry in entries {
+        exact(
+            entry,
+            &[
+                "settings_schema",
+                "source_version",
+                "source_visual_sha256",
+                "visual",
+            ],
+        )?;
+        let settings_schema = token(&entry["settings_schema"], 128)?.to_owned();
+        token(&entry["source_version"], 96)?;
+        let digest = entry["source_visual_sha256"]
+            .as_str()
+            .ok_or("builtin_migration_digest")?;
+        if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("builtin_migration_digest".into());
+        }
+        validate_visual(&entry["visual"])?;
+        trusted.push(TrustedBuiltin {
+            settings_schema,
+            visual: entry["visual"].clone(),
+        });
+    }
+    Ok(trusted)
+}
+
+fn restore_persisted_settings(
+    candidate: &mut ShowcaseRuntime,
+    p: &Value,
+    trusted: &[TrustedBuiltin],
+) -> Result<(), String> {
+    exact(&p, &["schema", "inputs", "visual", "profiles"])?;
+    if p["schema"] != SETTINGS {
+        return Err("settings_schema".into());
+    }
+    validate_inputs(&p["inputs"])?;
+    validate_visual(&p["visual"])?;
+    let profiles = p["profiles"].as_object().ok_or("profiles_required")?;
+    if profiles.len() > MAX_PROFILES {
+        return Err("profile_limit".into());
+    }
+    let mut restored = BTreeMap::new();
+    for (name, profile) in profiles {
+        token(&Value::String(name.clone()), 64)?;
+        validate_visual(profile)?;
+        if name != "default" {
+            restored.insert(name.clone(), profile.clone());
+        }
+    }
+    restored.insert("default".into(), candidate.profiles["default"].clone());
+    // The reserved builtin follows the provided release asset. Only a still-
+    // identical old builtin may follow it automatically; user edits stay owned.
+    let recognized = trusted.iter().any(|entry| {
+        p["schema"] == entry.settings_schema
+            && entry.visual == p["visual"]
+            && profiles.get("default") == Some(&entry.visual)
+    });
+    let active = if recognized {
+        candidate.profiles["default"].clone()
+    } else {
+        p["visual"].clone()
+    };
+    candidate.inputs = p["inputs"].clone();
+    candidate.visual = Some(active);
+    candidate.profiles = restored;
+    Ok(())
+}
+
 fn select_breath_input() {
     let input = lock().inputs.clone();
     let source = if input["breath_source"] == "polar-acc" {
@@ -701,6 +792,7 @@ pub(crate) fn confirm_visual_frame_submission(
     ready: bool,
     visible: bool,
     draw_count: u32,
+    material: Value,
 ) {
     if !submitted || !ready || !visible || draw_count == 0 {
         return;
@@ -708,6 +800,8 @@ pub(crate) fn confirm_visual_frame_submission(
     let mut s = lock();
     if frame.epoch == s.epoch && frame.revision() >= 0 && frame.revision() as u64 <= s.revision {
         s.rendered_visual_revision = Some(frame.revision() as u64);
+        s.rendered_radius_m = Some(frame.radius_m());
+        s.rendered_material = Some(material);
     }
 }
 pub(crate) fn command_with_executor(
@@ -1137,7 +1231,14 @@ mod tests {
             (true, true, false, 10),
             (true, true, true, 0),
         ] {
-            confirm_visual_frame_submission(&prepared, submitted, ready, visible, count);
+            confirm_visual_frame_submission(
+                &prepared,
+                submitted,
+                ready,
+                visible,
+                count,
+                json!({"source":"test-submitted-frame"}),
+            );
             assert_eq!(lock().rendered_visual_revision, None);
         }
         let mut next = visual();
@@ -1152,14 +1253,28 @@ mod tests {
             command_json(&raw).parse::<Value>().unwrap()["status"],
             "accepted"
         );
-        confirm_visual_frame_submission(&prepared, true, true, true, 10);
+        confirm_visual_frame_submission(
+            &prepared,
+            true,
+            true,
+            true,
+            10,
+            json!({"source":"test-submitted-frame"}),
+        );
         let s = lock();
         assert_eq!(s.revision, 1);
         assert_eq!(s.rendered_visual_revision, Some(0));
         assert_eq!(s.visual.as_ref().unwrap()["visual_scale"], 0.9);
         drop(s);
         let next_frame = prepare_visual_frame().unwrap();
-        confirm_visual_frame_submission(&next_frame, true, true, true, 10);
+        confirm_visual_frame_submission(
+            &next_frame,
+            true,
+            true,
+            true,
+            10,
+            json!({"source":"test-submitted-frame"}),
+        );
         assert_eq!(lock().rendered_visual_revision, Some(1));
     }
     #[test]
@@ -1173,8 +1288,249 @@ mod tests {
         let _restore = Restore(Some(std::mem::replace(&mut *lock(), state())));
         let prepared = prepare_visual_frame().unwrap();
         lock().epoch = "replacement-owner".into();
-        confirm_visual_frame_submission(&prepared, true, true, true, 10);
+        confirm_visual_frame_submission(
+            &prepared,
+            true,
+            true,
+            true,
+            10,
+            json!({"source":"test-submitted-frame"}),
+        );
         assert_eq!(lock().rendered_visual_revision, None);
+    }
+    #[test]
+    fn release_default_refreshes_active_builtin_without_changing_user_settings() {
+        let old = state();
+        let mut saved = old.settings();
+        saved["inputs"]["breath_source"] = json!("controller");
+        saved["inputs"]["heartbeat_source"] = json!("polar");
+        let mut custom = visual();
+        custom["visual_scale"] = json!(0.6);
+        saved["profiles"]["mine"] = custom.clone();
+        let mut release = state();
+        let mut new_default = visual();
+        new_default["visual_scale"] = json!(0.8);
+        release.visual = Some(new_default.clone());
+        release
+            .profiles
+            .insert("default".into(), new_default.clone());
+        restore_persisted_settings(
+            &mut release,
+            &saved,
+            &[TrustedBuiltin {
+                settings_schema: SETTINGS.into(),
+                visual: visual(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(release.visual, Some(new_default.clone()));
+        assert_eq!(release.profiles["default"], new_default);
+        assert_eq!(release.profiles["mine"], custom);
+        assert_eq!(release.inputs, saved["inputs"]);
+    }
+    #[test]
+    fn release_default_preserves_custom_active_visual_and_profiles() {
+        let mut saved = state().settings();
+        let mut custom = visual();
+        custom["visual_scale"] = json!(0.6);
+        saved["visual"] = custom.clone();
+        saved["profiles"]["mine"] = custom.clone();
+        let mut release = state();
+        let mut new_default = visual();
+        new_default["visual_scale"] = json!(0.8);
+        release.visual = Some(new_default.clone());
+        release
+            .profiles
+            .insert("default".into(), new_default.clone());
+        restore_persisted_settings(
+            &mut release,
+            &saved,
+            &[TrustedBuiltin {
+                settings_schema: SETTINGS.into(),
+                visual: visual(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(release.visual, Some(custom.clone()));
+        assert_eq!(release.profiles["mine"], custom);
+        assert_eq!(release.profiles["default"], new_default);
+        assert_eq!(release.inputs, saved["inputs"]);
+    }
+    #[test]
+    fn release_default_never_migrates_an_unrecognized_modified_builtin() {
+        let mut saved = state().settings();
+        let mut edited = visual();
+        edited["visual_scale"] = json!(0.6);
+        saved["visual"] = edited.clone();
+        saved["profiles"]["default"] = edited.clone();
+        let mut release = state();
+        let mut new_default = visual();
+        new_default["visual_scale"] = json!(0.8);
+        release.visual = Some(new_default.clone());
+        release.profiles.insert("default".into(), new_default);
+        restore_persisted_settings(
+            &mut release,
+            &saved,
+            &[TrustedBuiltin {
+                settings_schema: SETTINGS.into(),
+                visual: visual(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(release.visual, Some(edited));
+    }
+    #[test]
+    fn trusted_builtin_metadata_is_closed_and_bounded() {
+        let entry = json!({"settings_schema":SETTINGS,"source_version":"release-a","source_visual_sha256":"a".repeat(64),"visual":visual()});
+        let metadata = json!({"schema":"rusty.quest.visual_showcase.builtin_migrations.v1","entries":[entry.clone()]});
+        assert_eq!(
+            parse_builtin_migrations(&metadata.to_string())
+                .unwrap()
+                .len(),
+            1
+        );
+        let mut bad = metadata.clone();
+        bad["entries"][0]["source_visual_sha256"] = json!("not-a-digest");
+        assert!(parse_builtin_migrations(&bad.to_string()).is_err());
+        let mut bad = metadata.clone();
+        bad["entries"][0]["unexpected"] = json!(true);
+        assert!(parse_builtin_migrations(&bad.to_string()).is_err());
+        let mut bad = metadata.clone();
+        bad["entries"] = json!(vec![entry; 9]);
+        assert!(parse_builtin_migrations(&bad.to_string()).is_err());
+        assert!(parse_builtin_migrations(&" ".repeat(131073)).is_err());
+    }
+    #[test]
+    fn migration_requires_trusted_schema_and_persisted_builtin_identity() {
+        let saved = state().settings();
+        for trusted in [
+            vec![],
+            vec![TrustedBuiltin {
+                settings_schema: "other-settings".into(),
+                visual: visual(),
+            }],
+        ] {
+            let mut release = state();
+            let mut new_default = visual();
+            new_default["visual_scale"] = json!(0.8);
+            release.profiles.insert("default".into(), new_default);
+            restore_persisted_settings(&mut release, &saved, &trusted).unwrap();
+            assert_eq!(release.visual, Some(saved["visual"].clone()));
+        }
+        let mut mismatch = saved.clone();
+        mismatch["profiles"]["default"]["visual_scale"] = json!(0.6);
+        let mut release = state();
+        restore_persisted_settings(
+            &mut release,
+            &mismatch,
+            &[TrustedBuiltin {
+                settings_schema: SETTINGS.into(),
+                visual: visual(),
+            }],
+        )
+        .unwrap();
+        assert_eq!(release.visual, Some(saved["visual"].clone()));
+    }
+    #[test]
+    fn material_metadata_uses_shared_presets_and_release_builtin() {
+        use crate::native_renderer_private_particle_material_request::PrivateParticleMaterialPreset;
+        let s = state();
+        let status = s.status();
+        let map = status["material_presets"]
+            .as_object()
+            .expect("bounded material catalogue");
+        assert_eq!(map.len(), 6);
+        for preset in [
+            PrivateParticleMaterialPreset::CurrentAdditive,
+            PrivateParticleMaterialPreset::PremultipliedAlphaOver,
+            PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFade,
+            PrivateParticleMaterialPreset::PremultipliedAlphaOverDepthFacingFade,
+            PrivateParticleMaterialPreset::ReferenceMaterialEmulation,
+        ] {
+            let value = &map[preset.marker_name()];
+            let expected = preset.parameters();
+            assert_eq!(
+                value["transparency"]["opacity"].as_f64(),
+                Some(expected.opacity as f64)
+            );
+            assert_eq!(
+                value["transparency"]["output_alpha_scale"].as_f64(),
+                Some(expected.output_alpha_scale as f64)
+            );
+            assert_eq!(
+                value["transparency"]["depth_suppression_strength"].as_f64(),
+                Some(expected.depth_suppression_strength as f64)
+            );
+            assert_eq!(
+                value["transparency"]["rgb_alpha_coupling"].as_f64(),
+                Some(expected.rgb_alpha_coupling as f64)
+            );
+            assert_eq!(
+                value["color"]["facing_attenuation_strength"].as_f64(),
+                Some(expected.facing_attenuation_strength as f64)
+            );
+        }
+        assert_eq!(
+            map["packaged-default"]["transparency"],
+            s.profiles["default"]["transparency"]
+        );
+        assert_eq!(
+            map["packaged-default"]["color"],
+            s.profiles["default"]["color"]
+        );
+    }
+    #[test]
+    fn rendered_radius_is_submission_evidence_not_requested_visual_state() {
+        struct Restore(Option<ShowcaseRuntime>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                *lock() = self.0.take().unwrap();
+            }
+        }
+        let _restore = Restore(Some(std::mem::replace(&mut *lock(), state())));
+        lock().progress = 0.25;
+        let frame = prepare_visual_frame().unwrap();
+        assert!(lock().status()["rendered_radius_m"].is_null());
+        assert!(lock().status()["rendered_material"].is_null());
+        confirm_visual_frame_submission(
+            &frame,
+            false,
+            true,
+            true,
+            10,
+            json!({"source":"test-submitted-frame"}),
+        );
+        assert!(lock().status()["rendered_radius_m"].is_null());
+        assert!(lock().status()["rendered_material"].is_null());
+        let mut next = visual();
+        next["radius"] = json!({"minimum_m":2.0,"maximum_m":3.0});
+        let raw = command(
+            &lock(),
+            "pending-radius",
+            "apply-visual",
+            json!({"visual":next}),
+        );
+        assert_eq!(
+            command_json(&raw).parse::<Value>().unwrap()["status"],
+            "accepted"
+        );
+        confirm_visual_frame_submission(
+            &frame,
+            true,
+            true,
+            true,
+            10,
+            json!({"source":"test-submitted-frame"}),
+        );
+        assert_eq!(
+            lock().status()["rendered_radius_m"].as_f64(),
+            Some(frame.radius_m() as f64)
+        );
+        assert_eq!(lock().rendered_visual_revision, Some(0));
+        assert_eq!(
+            lock().status()["rendered_material"]["source"],
+            "test-submitted-frame"
+        );
     }
 }
 

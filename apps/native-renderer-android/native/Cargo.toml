@@ -17,6 +17,8 @@ crate-type = ["cdylib", "rlib"]
 default = []
 # Closed native product composition; selected only by the locked APK builder.
 showcase = []
+# Same-owner Vulkan presentation; never activates the experiment controller.
+showcase-vulkan-ui = ["showcase"]
 rusty-lsl-backend = ["dep:rusty-lsl"]
 
 [dependencies]

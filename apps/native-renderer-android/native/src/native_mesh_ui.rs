@@ -270,7 +270,7 @@ fn geometry_readback(state: ControlSnapshot, generation: u64) -> serde_json::Val
 }
 
 #[cfg(target_os = "android")]
-#[cfg(not(feature = "showcase"))]
+#[cfg(any(not(feature = "showcase"), feature = "showcase-vulkan-ui"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelGeometry(
     mut env: jni::EnvUnowned,
@@ -352,7 +352,7 @@ fn visibility_status(state: ControlSnapshot, generation: u64, revision: u64) -> 
 }
 
 #[cfg(target_os = "android")]
-#[cfg(not(feature = "showcase"))]
+#[cfg(any(not(feature = "showcase"), feature = "showcase-vulkan-ui"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeSetPanelVisible(
     _env: *mut jni::sys::JNIEnv,
@@ -367,7 +367,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
 }
 
 #[cfg(target_os = "android")]
-#[cfg(not(feature = "showcase"))]
+#[cfg(any(not(feature = "showcase"), feature = "showcase-vulkan-ui"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelVisibility(
     mut env: jni::EnvUnowned,
@@ -529,7 +529,8 @@ fn render_selection(mode: &str, packaged: bool, original_scene: bool, scene_dept
 /// The original product panel owns its existing settings handlers. The neutral
 /// mesh test panel's defaults never become that product's rendering settings.
 pub(crate) fn neutral_controls_enabled() -> bool {
-    option_env!("RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS") != Some("false")
+    !cfg!(feature = "showcase-vulkan-ui")
+        && option_env!("RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS") != Some("false")
 }
 
 pub(crate) fn neutral_frame_controls(frame: Option<ControlSnapshot>) -> Option<ControlSnapshot> {
@@ -1419,6 +1420,12 @@ pub(crate) mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "showcase-vulkan-ui")]
+    #[test]
+    fn showcase_ui_cannot_project_neutral_diagnostic_stimulus_controls() {
+        assert!(!neutral_controls_enabled());
+        assert!(neutral_frame_controls(Some(ControlSnapshot::default())).is_none());
+    }
     #[test]
     fn recenter_uses_current_head_preserves_size_and_rejects_stale_generation() {
         let mut state = ControlSnapshot {

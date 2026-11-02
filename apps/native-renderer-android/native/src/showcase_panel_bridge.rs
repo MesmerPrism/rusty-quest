@@ -3,16 +3,29 @@
 use crate::native_app_settings::NativeAppSettingsDefaults;
 pub(crate) fn install_packaged_control_panel_mode(_: &NativeAppSettingsDefaults) {}
 pub(crate) fn packaged_control_panel_mode_is_breath_mapping(_: &NativeAppSettingsDefaults) -> bool {
-    false
+    cfg!(feature = "showcase-vulkan-ui")
 }
 pub(crate) fn packaged_control_panel_mode_is_breath_mapping_installed() -> bool {
-    false
+    // Compatibility query used only for same-owner presentation/input routing.
+    // This does not select an experiment owner or session policy.
+    cfg!(feature = "showcase-vulkan-ui")
 }
 pub(crate) fn right_primary_opens_control_panel() -> bool {
     false
 }
 pub(crate) fn right_primary_control_panel_source() -> &'static str {
     "showcase"
+}
+
+#[cfg(test)]
+mod presentation_selection_tests {
+    #[test]
+    fn showcase_ui_selects_same_owner_product_pointer_routing_only_when_opted_in() {
+        assert_eq!(
+            super::packaged_control_panel_mode_is_breath_mapping_installed(),
+            cfg!(feature = "showcase-vulkan-ui")
+        );
+    }
 }
 #[derive(Default)]
 pub(crate) struct ControlPanelCommandPoller;
