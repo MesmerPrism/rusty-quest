@@ -860,6 +860,10 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
 @"
     static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
 "@
+    } elseif ($showcaseSelected -and $selectedPanelModuleId -ceq 'visual-showcase-controls') {
+        # Showcase JNI belongs exclusively to ShowcaseNativeBridge. Its
+        # independent ControlPanelActivity facade declares no native methods.
+        ""
     } elseif ($selectedPanelModuleId -ceq "polar-controls") {
         ""
     } elseif ($standaloneExperimentOwner) {
