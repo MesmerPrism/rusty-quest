@@ -23,6 +23,7 @@ public class ShowcasePanelModule extends Activity implements PanelModule,PolarSe
     private PolarSensorPanel polar;
     private boolean resumed;
     private long editRevision=-1;
+    static JSONObject visualPayload(JSONObject snapshot)throws Exception{return new JSONObject().put("visual",snapshot);}
     public String panelModuleId(){return MODULE_ID;}
     protected void onCreate(Bundle saved){
         super.onCreate(saved);ShowcaseNativeBridge.initialize(getApplicationContext());ShowcaseNativeBridge.attach(this);
@@ -47,7 +48,7 @@ public class ShowcasePanelModule extends Activity implements PanelModule,PolarSe
             visual=new ShowcaseVisualForm(this,new JSONObject(bytes.toString("UTF-8")),visualFields);
         }catch(Exception unavailable){status.setText("Visual settings schema unavailable");}
         button("Read effective settings",new Action(){public void run(){readEffective();}});
-        button("Apply visual settings",new Action(){public void run()throws Exception{send("apply-visual",visual.read());}});
+        button("Apply visual settings",new Action(){public void run()throws Exception{send("apply-visual",visualPayload(visual.read()));}});
         text("Visual profiles",18);profiles=choices("default");button("Apply selected profile",new Action(){public void run()throws Exception{send("apply-profile",new JSONObject().put("name",selected(profiles)));readEffective();}});
         name=edit("My profile");name.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(64)});
         button("Save visual profile",new Action(){public void run()throws Exception{send("save-profile",new JSONObject().put("name",name.getText().toString()).put("visual",visual.read()));}});

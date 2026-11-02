@@ -38,6 +38,7 @@ class ShowcaseProjectionTest(unittest.TestCase):
         text=panel.read_text(encoding='utf-8')
         self.assertIn('ShowcaseNativeBridge.command(command)',text)
         self.assertIn('expected_revision',text)
+        self.assertIn('send("apply-visual",visualPayload(visual.read()))',text)
         self.assertNotIn('polar.buildView()',text)
         self.assertNotIn('handleCommand(',text)
 

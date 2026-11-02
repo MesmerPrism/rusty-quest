@@ -60,6 +60,13 @@ impl ShowcaseRuntime {
         json!({"schema":SETTINGS,"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles})
     }
     fn execute(&mut self, raw: &str) -> Value {
+        self.execute_with_clock(raw, monotonic_ns)
+    }
+    #[cfg(test)]
+    fn execute_at(&mut self, raw: &str, accepted_at_ns: u64) -> Value {
+        self.execute_with_clock(raw, || accepted_at_ns)
+    }
+    fn execute_with_clock(&mut self, raw: &str, mut accepted_at: impl FnMut() -> u64) -> Value {
         let result = (|| -> Result<(String, Value), String> {
             if raw.len() > MAX_BYTES {
                 return Err("command_too_large".into());
@@ -106,7 +113,7 @@ impl ShowcaseRuntime {
                     let changed = self.inputs["breath_source"] != payload["breath_source"];
                     self.inputs = payload.clone();
                     if changed {
-                        self.automatic = AutomaticBreath::new(self.last_tick_ns, self.progress);
+                        self.automatic = AutomaticBreath::new(accepted_at(), self.progress);
                         self.integrator.reset(self.progress);
                     }
                 }
@@ -487,8 +494,9 @@ pub(crate) fn reconcile_receipt(
                 if r["status"] != "pending" {
                     return None;
                 }
-                r["effective"]["acquisition_receipt"]["id"]
+                r["acquisition_id"]
                     .as_str()
+                    .or_else(|| r["effective"]["acquisition_receipt"]["id"].as_str())
                     .map(|key| (s.epoch.clone(), key.to_owned()))
             })
     };
@@ -771,6 +779,14 @@ pub(crate) fn command_with_executor(
     if let Some((_, _, receipt)) = s.receipts.iter_mut().find(|(key, _, _)| key == &id) {
         match outcome {
             Ok(value) => {
+                // This key belongs to the original executor result, independent
+                // of later replacement observations. Polling can never retarget it.
+                if let Some(key) = value["acquisition_receipt"]["id"]
+                    .as_str()
+                    .filter(|key| !key.is_empty() && key.len() <= 128)
+                {
+                    receipt["acquisition_id"] = json!(key);
+                }
                 receipt["status"] = json!(match value["status"].as_str() {
                     Some("applied") => "accepted",
                     Some("pending") => "pending",
@@ -938,7 +954,7 @@ mod tests {
         let mut inputs = s.inputs.clone();
         inputs["breath_source"] = json!("automatic");
         let raw = command(&s, "auto", "set-inputs", inputs.clone());
-        assert_eq!(s.execute(&raw)["status"], "accepted");
+        assert_eq!(s.execute_at(&raw, 2_000_000_000)["status"], "accepted");
         let snapshot = crate::breath_composition_runtime::snapshot();
         assert_eq!(
             advance_frame(&mut s, snapshot, 0.1, false, 4_000_000_000),
@@ -947,6 +963,71 @@ mod tests {
         assert_eq!(s.automatic.phase(5_000_000_000), "inhale");
         inputs["breath_mapping"] = json!("volume");
         assert!(validate_inputs(&inputs).is_err());
+    }
+    #[test]
+    fn automatic_activation_during_render_suspend_starts_at_command_acceptance() {
+        let mut s = state();
+        s.inputs["breath_source"] = json!("controller");
+        s.progress = 0.5;
+        s.last_tick_ns = 1_000_000_000;
+        let mut inputs = s.inputs.clone();
+        inputs["breath_source"] = json!("automatic");
+        let raw = command(&s, "activate-after-suspend", "set-inputs", inputs);
+        assert_eq!(s.execute_at(&raw, 100_000_000_000)["status"], "accepted");
+        let snapshot = crate::breath_composition_runtime::snapshot();
+        assert_eq!(
+            advance_frame(&mut s, snapshot, 0.1, false, 100_000_000_000),
+            0.5
+        );
+        assert_eq!(
+            advance_frame(&mut s, snapshot, 0.1, false, 102_000_000_000),
+            1.0
+        );
+        assert_eq!(s.automatic.phase(103_999_999_999), "inhale");
+        assert_eq!(s.automatic.phase(104_000_000_000), "full-hold");
+        // Ordinary suspension keeps the already-active pacer clock.
+        advance_frame(&mut s, snapshot, 0.1, false, 110_000_000_000);
+        assert_eq!(s.automatic.phase(110_000_000_000), "exhale");
+    }
+    #[test]
+    fn repeated_pending_acquisition_observations_keep_original_identity_and_reconcile() {
+        struct Restore(Option<ShowcaseRuntime>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                *lock() = self.0.take().unwrap();
+            }
+        }
+        let _restore = Restore(Some(std::mem::replace(&mut *lock(), state())));
+        let raw = command(&lock(), "stop-original", "polar-stop-acc", json!({}));
+        let mut effects = 0;
+        let initial:Value=serde_json::from_str(&command_with_executor(&raw,|_,_|{effects+=1;Ok(json!({"status":"pending","acquisition_receipt":{"id":"acquisition-original","state":"pending"},"effective":{"acc_requested":true}}))})).unwrap();
+        assert_eq!(initial["status"], "pending");
+        assert_eq!(effects, 1);
+        let mut observations = Vec::new();
+        let first:Value=serde_json::from_str(&reconcile_receipt("stop-original",|id|{observations.push(id.to_owned());Ok(json!({"status":"pending","acquisition_receipt":{"id":"unexpected-observation-key"},"effective":{"acc_requested":false,"acc_ack":true}}))})).unwrap();
+        assert_eq!(first["status"], "pending");
+        let second: Value = serde_json::from_str(&reconcile_receipt("stop-original", |id| {
+            observations.push(id.to_owned());
+            Ok(json!({"status":"applied","effective":{"acc_requested":false,"acc_ack":false}}))
+        }))
+        .unwrap();
+        assert_eq!(
+            observations,
+            vec!["acquisition-original", "acquisition-original"]
+        );
+        assert_eq!(second["status"], "accepted");
+        assert_eq!(second["acquisition_id"], "acquisition-original");
+        for field in ["id", "epoch", "revision", "product"] {
+            assert_eq!(second[field], initial[field]);
+        }
+        assert_eq!(
+            command_with_executor(&raw, |_, _| {
+                effects += 1;
+                panic!("uncertain command was replayed")
+            }),
+            second.to_string()
+        );
+        assert_eq!(effects, 1);
     }
 }
 

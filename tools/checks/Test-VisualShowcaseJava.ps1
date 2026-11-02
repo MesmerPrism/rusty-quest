@@ -45,12 +45,21 @@ New-Item -ItemType Directory -Path $hostClasses | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Showcase host protocol test compilation failed.' }
 & (Join-Path $JavaHome 'bin/java.exe') -cp "$hostClasses$([IO.Path]::PathSeparator)$JsonJar" io.github.mesmerprism.rustyquest.native_renderer.ShowcaseGatewayProtocolTest
 if ($LASTEXITCODE -ne 0) { throw 'Showcase host protocol tests failed.' }
+# Execute the production panel's pure payload adapter without constructing an
+# Android Activity. This catches a correctly compiled but rejected UI command.
+$panelTestClasspath = "$classes$([IO.Path]::PathSeparator)$JsonJar$([IO.Path]::PathSeparator)$AndroidJar"
+& (Join-Path $JavaHome 'bin/javac.exe') --release 8 -encoding UTF-8 -cp $panelTestClasspath -d $hostClasses `
+    (Join-Path $RepoRoot "apps/native-renderer-android/panel-modules/showcase/src/test/java/$package/ShowcaseVisualPayloadTest.java")
+if ($LASTEXITCODE -ne 0) { throw 'Showcase production visual payload test compilation failed.' }
+& (Join-Path $JavaHome 'bin/java.exe') -cp "$hostClasses$([IO.Path]::PathSeparator)$panelTestClasspath" io.github.mesmerprism.rustyquest.native_renderer.ShowcaseVisualPayloadTest
+if ($LASTEXITCODE -ne 0) { throw 'Showcase production visual payload test failed.' }
 $receipt = [ordered]@{
     schema = 'rusty.quest.visual_showcase.java_check.v1'
     source_count = $sources.Count
     sources = @($sourceRecords | Sort-Object name)
     java_compilation = 'passed'
     host_protocol_and_guest_tests = 'passed'
+    host_visual_apply_payload_test = 'passed'
     compiled_class_count = $compiled.Count
     compiled_classes = @($compiled | Sort-Object)
     toolchain = [ordered]@{
