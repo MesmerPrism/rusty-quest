@@ -53,6 +53,11 @@ $panelTestClasspath = "$classes$([IO.Path]::PathSeparator)$JsonJar$([IO.Path]::P
 if ($LASTEXITCODE -ne 0) { throw 'Showcase production visual payload test compilation failed.' }
 & (Join-Path $JavaHome 'bin/java.exe') -cp "$hostClasses$([IO.Path]::PathSeparator)$panelTestClasspath" io.github.mesmerprism.rustyquest.native_renderer.ShowcaseVisualPayloadTest
 if ($LASTEXITCODE -ne 0) { throw 'Showcase production visual payload test failed.' }
+& (Join-Path $JavaHome 'bin/javac.exe') --release 8 -encoding UTF-8 -cp $panelTestClasspath -d $hostClasses `
+    (Join-Path $RepoRoot "apps/native-renderer-android/panel-modules/showcase/src/test/java/$package/ShowcasePanelKeyTest.java")
+if ($LASTEXITCODE -ne 0) { throw 'Showcase production key counter test compilation failed.' }
+& (Join-Path $JavaHome 'bin/java.exe') -cp "$hostClasses$([IO.Path]::PathSeparator)$panelTestClasspath" io.github.mesmerprism.rustyquest.native_renderer.ShowcasePanelKeyTest
+if ($LASTEXITCODE -ne 0) { throw 'Showcase production key counter test failed.' }
 $receipt = [ordered]@{
     schema = 'rusty.quest.visual_showcase.java_check.v1'
     source_count = $sources.Count
@@ -60,6 +65,7 @@ $receipt = [ordered]@{
     java_compilation = 'passed'
     host_protocol_and_guest_tests = 'passed'
     host_visual_apply_payload_test = 'passed'
+    host_triple_b_counter_test = 'passed'
     compiled_class_count = $compiled.Count
     compiled_classes = @($compiled | Sort-Object)
     toolchain = [ordered]@{

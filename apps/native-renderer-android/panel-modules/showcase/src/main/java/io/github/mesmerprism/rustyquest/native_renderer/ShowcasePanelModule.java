@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.KeyEvent;
 import android.widget.*;
 import org.json.JSONObject;
 
@@ -23,10 +24,12 @@ public class ShowcasePanelModule extends Activity implements PanelModule,PolarSe
     private PolarSensorPanel polar;
     private boolean resumed;
     private long editRevision=-1;
+    private TripleBSequence tripleB=new TripleBSequence(5000);
     static JSONObject visualPayload(JSONObject snapshot)throws Exception{return new JSONObject().put("visual",snapshot);}
     public String panelModuleId(){return MODULE_ID;}
     protected void onCreate(Bundle saved){
         super.onCreate(saved);ShowcaseNativeBridge.initialize(getApplicationContext());ShowcaseNativeBridge.attach(this);
+        tripleB=new TripleBSequence(panelPressWindowMillis());
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(24,24,24,24);scroll.addView(root);setContentView(scroll);
         text(getApplicationInfo().loadLabel(getPackageManager()).toString(),24);button("Return to immersive",new Action(){public void run(){finish();}});
@@ -85,8 +88,54 @@ public class ShowcasePanelModule extends Activity implements PanelModule,PolarSe
         if(visual!=null)visual.show(current.getJSONObject("visual"));status.setText(summary(current));
     }catch(Exception|UnsatisfiedLinkError unavailable){status.setText("Native settings unavailable: "+unavailable.getMessage());}}
     private void showPolar(){if(polar==null)polar=PolarSensorRuntime.forApplication(getApplicationContext()).attachPanel(this,this);polar.requestStartupPermissions(this);polar.onHostResume();}
-    protected void onResume(){super.onResume();resumed=true;ShowcaseNativeBridge.attach(this);ShowcaseNativeBridge.requestDiscoveryPermissions(this);main.post(poll);if(polar!=null)polar.onHostResume();}
-    protected void onPause(){resumed=false;main.removeCallbacks(poll);super.onPause();}
+    protected void onResume(){super.onResume();tripleB.reset();resumed=true;ShowcaseNativeBridge.attach(this);ShowcaseNativeBridge.requestDiscoveryPermissions(this);main.post(poll);if(polar!=null)polar.onHostResume();}
+    protected void onPause(){resumed=false;tripleB.reset();main.removeCallbacks(poll);super.onPause();}
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);tripleB.reset();}
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        if(event.getKeyCode()!=KeyEvent.KEYCODE_BUTTON_B)return super.dispatchKeyEvent(event);
+        if(!resumed||!hasWindowFocus()||event.isCanceled()){tripleB.reset();return true;}
+        if(event.getAction()==KeyEvent.ACTION_DOWN)tripleB.down(event.getEventTime(),event.getDownTime(),event.getRepeatCount());
+        else if(event.getAction()==KeyEvent.ACTION_UP){if(tripleB.up(event.getEventTime(),event.getDownTime()))closePanelAndReturnToImmersive();}
+        else tripleB.reset();
+        return true;
+    }
+    private long panelPressWindowMillis(){
+        // Same packaged property/default/bounds as SameApkPanelActionSettings.
+        try(java.io.InputStream input=getAssets().open("native-app-settings.json")){
+            java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;
+            while((n=input.read(buffer))!=-1){bytes.write(buffer,0,n);if(bytes.size()>1048576)return 5000;}
+            JSONObject values=new JSONObject(bytes.toString("UTF-8")).getJSONObject("values");
+            JSONObject entry=values.optJSONObject("debug.rustyquest.native_renderer.control_panel.right_secondary_action.window_seconds");
+            if(entry==null)return 5000;
+            float seconds=Float.parseFloat(entry.getString("value").trim());
+            if(Float.isNaN(seconds)||Float.isInfinite(seconds))return 5000;
+            return (long)(Math.max(0.25f,Math.min(30f,seconds))*1000f);
+        }catch(Exception unavailable){return 5000;}
+    }
+    /** Pure paired-press counter; it owns no Android or native effects. */
+    static final class TripleBSequence {
+        private final long windowMillis;
+        private long firstDown=-1,pressedDown=-1,lastTime=-1;
+        private int complete;
+        TripleBSequence(long windowMillis){if(windowMillis<250||windowMillis>30000)throw new IllegalArgumentException("panel-window-bound");this.windowMillis=windowMillis;}
+        void reset(){firstDown=-1;pressedDown=-1;lastTime=-1;complete=0;}
+        private boolean observe(long now){if(now<0||lastTime>now){reset();return false;}lastTime=now;return true;}
+        void down(long now,long downTime,int repeats){
+            if(!observe(now)||repeats!=0||pressedDown>=0)return;
+            if(downTime<0||downTime>now){reset();return;}
+            if(firstDown>=0&&now-firstDown>windowMillis){complete=0;firstDown=-1;}
+            if(firstDown<0)firstDown=now;
+            pressedDown=downTime;
+        }
+        boolean up(long now,long downTime){
+            if(!observe(now))return false;
+            if(pressedDown<0)return false; // Includes the opening press's orphan key-up.
+            if(downTime!=pressedDown||now-firstDown>windowMillis){reset();return false;}
+            pressedDown=-1;
+            if(++complete<3)return false;
+            reset();return true;
+        }
+    }
     protected void onDestroy(){main.removeCallbacksAndMessages(null);if(polar!=null)PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(this);ShowcaseNativeBridge.detach(this);super.onDestroy();}
     public void onRequestPermissionsResult(int code,String[] permissions,int[] results){super.onRequestPermissionsResult(code,permissions,results);ShowcaseNativeBridge.discoveryPermissionResult();if(polar!=null)polar.onRequestPermissionsResult(code,permissions,results);}
     public void closePanelAndReturnToImmersive(){finish();}

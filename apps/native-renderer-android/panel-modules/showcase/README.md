@@ -7,6 +7,13 @@ submit the same revisioned commands. Visual defaults and schema are app-owned
 assets, `showcase-default-visual.json` and `showcase-visual-schema.json`; the
 public module contains no downstream defaults or effect formulas.
 
+The ordinary native triple-B gesture opens the panel. While the Android panel
+owns focus, it consumes B down/up events and closes after three complete presses.
+Its window reads the same packaged native setting: five seconds by default,
+bounded to0.25–30seconds. Repeats and orphan releases do not count; focus changes,
+resume and pause reset the sequence. Android delivery on a physical headset still
+requires attended validation.
+
 The builder selects Cargo `showcase`, derives the ordinary breath-composition
 and bounded-driver activation bindings from the exact feature/app inputs, and
 uses a separate minimal Java facade. Existing experiment compositions are
