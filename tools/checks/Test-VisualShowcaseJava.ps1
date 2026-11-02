@@ -23,8 +23,9 @@ $sources = @(Get-ChildItem -LiteralPath $projected -Filter *.java | ForEach-Obje
     @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "apps/native-renderer-android/panel-modules/showcase/src/main/java/$package") -Filter *.java | ForEach-Object FullName) +
     @(Get-ChildItem -LiteralPath $generated -Filter *.java | ForEach-Object FullName) +
     @(Join-Path $RepoRoot "apps/native-renderer-android/src/main/java/$package/PanelModule.java") +
+    @(Join-Path $RepoRoot "apps/native-renderer-android/src/main/java/$package/NativeAppSettingsReader.java") +
     @(Join-Path $RepoRoot "apps/native-renderer-android/panel-modules/polar/src/main/java/$package/PolarBleRuntimeSupport.java")
-if ($sources.Count -ne 14) { throw 'Showcase exact Java source closure must have 14 files.' }
+if ($sources.Count -ne 15) { throw 'Showcase exact Java source closure must have 15 files.' }
 $sourceRecords = @()
 foreach ($source in $sources) {
     $body = [IO.File]::ReadAllText($source)
@@ -35,6 +36,7 @@ $response = Join-Path $OutputRoot 'sources.rsp'
 $sources | Set-Content -LiteralPath $response -Encoding ascii
 & (Join-Path $JavaHome 'bin/javac.exe') -encoding UTF-8 -source 1.8 -target 1.8 -bootclasspath $AndroidJar -d $classes "@$response"
 if ($LASTEXITCODE -ne 0) { throw 'Showcase exact Java compilation failed.' }
+& (Join-Path $PSScriptRoot 'Test-ShowcaseSettingsReaderClosure.ps1') -RepoRoot $RepoRoot -ClassesDir $classes -JavaHome $JavaHome
 $compiled = @(Get-ChildItem -LiteralPath $classes -Recurse -Filter *.class | ForEach-Object Name)
 if (@($compiled | Where-Object { $_ -match 'ExperimentSession|ConditionAudio|Questionnaire|Recording|StereoVideo|EmbeddedManifold|Kiosk' }).Count -gt 0) { throw 'Compiled Java closure contains excluded classes.' }
 $hostClasses = Join-Path $OutputRoot 'host-classes'
@@ -63,6 +65,7 @@ $receipt = [ordered]@{
     source_count = $sources.Count
     sources = @($sourceRecords | Sort-Object name)
     java_compilation = 'passed'
+    native_settings_reader_class_and_descriptor = 'passed'
     host_protocol_and_guest_tests = 'passed'
     host_visual_apply_payload_test = 'passed'
     host_triple_b_counter_test = 'passed'
@@ -77,4 +80,4 @@ $receipt = [ordered]@{
     device_validation = $false
 }
 $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputRoot 'RESULT.json') -Encoding utf8
-Write-Output "PASS exact 14-source showcase Java compilation and excluded-class inventory. Result: $(Join-Path $OutputRoot 'RESULT.json')"
+Write-Output "PASS exact 15-source showcase Java compilation and excluded-class inventory. Result: $(Join-Path $OutputRoot 'RESULT.json')"

@@ -1987,8 +1987,8 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
 if ($showcaseSelected) {
-    $sourceFiles = @($sourceFiles | Where-Object { [IO.Path]::GetFileName($_) -ceq 'PanelModule.java' })
-    if ($sourceFiles.Count -ne 1) { throw 'Showcase base Java source closure is incomplete.' }
+    $sourceFiles = @($sourceFiles | Where-Object { [IO.Path]::GetFileName($_) -cin @('PanelModule.java','NativeAppSettingsReader.java') })
+    if ($sourceFiles.Count -ne 2) { throw 'Showcase base Java source closure is incomplete.' }
 }
 if ($standaloneExperimentOwner) {
     $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java','NativePageSnapshot.java','NativeSystemKeyboard.java','NativePanelFont.java',
@@ -2056,7 +2056,7 @@ $sourceList = Join-Path $OutDir "sources.rsp"
 $sourceFiles = @($sourceFiles | Select-Object -Unique)
 $sourceFiles = @(Write-NativeRendererJavaSourceResponse -SourceFiles $sourceFiles -GeneratedAppStatusBridgePath $generatedAppStatusBridgePath -Path $sourceList)
 if ($showcaseSelected) {
-    $allowedShowcaseJava = @('PanelModule.java','ControlPanelActivity.java','NativeRendererAppStatusBridge.java',
+    $allowedShowcaseJava = @('PanelModule.java','NativeAppSettingsReader.java','ControlPanelActivity.java','NativeRendererAppStatusBridge.java',
         'ShowcaseNativeBridge.java','ShowcasePanelModule.java','ShowcaseVisualForm.java','ShowcaseGateway.java',
         'ShowcaseDiscoveryServer.java','ShowcaseGatewayProtocol.java','ShowcaseGatewayHttpServer.java','ShowcaseGuestRegistry.java',
         'PolarSensorPanel.java','PolarSensorRuntime.java','PolarBleRuntimeSupport.java')
