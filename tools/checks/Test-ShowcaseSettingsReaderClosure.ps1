@@ -1,7 +1,8 @@
 param(
     [string]$RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
     [string]$ClassesDir,
-    [string]$JavaHome
+    [string]$JavaHome,
+    [switch]$Vulkan
 )
 $ErrorActionPreference = 'Stop'
 $tokens = $null
@@ -31,7 +32,10 @@ if ($sourceFiles.Count -ne 3) { throw 'Showcase selection changed an unselected 
 $allowlist = @($ast.FindAll({param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$allowedShowcaseJava'}, $true))
 if ($allowlist.Count -ne 1) { throw 'Expected exact production selected Java allowlist.' }
 . ([scriptblock]::Create($allowlist[0].Extent.Text))
-if ($allowedShowcaseJava.Count -ne 15 -or $allowedShowcaseJava -cnotcontains 'NativeAppSettingsReader.java') { throw 'Selected Java allowlist omits the settings reader.' }
+$showcaseVulkanSelected = [bool]$Vulkan
+. ([scriptblock]::Create($allowlist[0].Extent.Text))
+$expectedCount=if($Vulkan){22}else{16}
+if ($allowedShowcaseJava.Count -ne $expectedCount -or $allowedShowcaseJava -cnotcontains 'NativeAppSettingsReader.java') { throw 'Selected Java allowlist omits the settings reader.' }
 if (@($allowedShowcaseJava | Where-Object { $_ -match 'ExperimentSession|ConditionAudio|Questionnaire|Recording|Kiosk' }).Count -ne 0) { throw 'Showcase reader fix widened the capability allowlist.' }
 if ($ClassesDir) {
     if (-not $JavaHome) { throw 'Compiled signature inspection requires JavaHome.' }
@@ -42,4 +46,4 @@ if ($ClassesDir) {
     if ($descriptor -notmatch 'public static java\.lang\.String readAsset\(android\.app\.Activity, java\.lang\.String\)[^\r\n]*\r?\n\s*descriptor: \(Landroid/app/Activity;Ljava/lang/String;\)Ljava/lang/String;') { throw 'Compiled native settings reader class/method descriptor does not match the native loader.' }
     Write-Output 'PASS actual compiled NativeAppSettingsReader.readAsset(Activity,String)->String signature.'
 }
-Write-Output 'PASS production AST base selection and exact 15-source capability allowlist retain the native settings reader.'
+Write-Output "PASS production AST base selection and exact $expectedCount-source capability allowlist retain the native settings reader."

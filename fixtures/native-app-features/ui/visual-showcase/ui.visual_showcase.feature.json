@@ -117,7 +117,8 @@
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionGatewayProtocol.java",
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionGatewayHttpServer.java",
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionGuestRegistry.java",
-          "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseVisualForm.java"
+          "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseVisualForm.java",
+          "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseControls.java"
         ]
       }
     ]

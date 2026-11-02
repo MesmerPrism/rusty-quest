@@ -28,10 +28,11 @@ $temporary = Join-Path ([IO.Path]::GetTempPath()) ('showcase-panel-source-' + [g
 New-Item -ItemType Directory -Path $temporary | Out-Null
 $script:cases = 0
 function Invoke-SourceCase {
-    param([string]$Module, [bool]$Selected, [bool]$Accept, [string]$ExpectedJni, [bool]$Standalone = $false)
+    param([string]$Module, [bool]$Selected, [bool]$Accept, [string]$ExpectedJni, [bool]$Standalone = $false, [bool]$Vulkan = $false)
     $selectedPanelModuleId = $Module
     $selectedPanelEntrySimpleName = if ($Module -ceq 'visual-showcase-controls') { 'ShowcasePanelModule' } else { 'TestPanelModule' }
     $showcaseSelected = $Selected
+    $showcaseVulkanSelected = $Vulkan
     $standaloneExperimentOwner = $Standalone
     $appBuildLockObject = $lock
     $appBuildEnvByName = @{}
@@ -50,7 +51,7 @@ function Invoke-SourceCase {
         if ($Selected) {
             if (-not [string]::IsNullOrEmpty($panelNativeMethods)) { throw 'Showcase facade inherited ControlPanel JNI declarations.' }
             $facade = [IO.File]::ReadAllText($generatedControlPanelActivityPath)
-            if ($facade -cne (New-NativeRendererShowcaseFacadeSource)) { throw 'Builder did not select the exact independent showcase facade.' }
+            if ($facade -cne (New-NativeRendererShowcaseFacadeSource -Vulkan:$Vulkan)) { throw 'Builder did not select the exact independent showcase facade.' }
             $combined = $facade + [IO.File]::ReadAllText($generatedAppStatusBridgePath)
             if ($combined -match 'ExperimentSession|ConditionAudio|Questionnaire|nativeInitializeExperiment|nativeApplyBreathComposition|NativeRendererSelfKiosk') { throw 'Showcase generated an excluded adapter.' }
             if ($isExperimentSessionPanel -or $usesPolarSessionRuntime -or $appHubSelected -or $appBleSelected -or $sharedOriginalPanel) { throw 'Showcase inherited an original composition branch.' }
@@ -59,6 +60,7 @@ function Invoke-SourceCase {
     $script:cases++
 }
 Invoke-SourceCase 'visual-showcase-controls' $true $true ''
+Invoke-SourceCase 'visual-showcase-controls' $true $true '' $false $true
 Invoke-SourceCase 'visual-showcase-controls' $false $false ''
 Invoke-SourceCase 'unknown-controls' $false $false ''
 Invoke-SourceCase 'unknown-controls' $true $false ''

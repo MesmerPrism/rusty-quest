@@ -34,11 +34,11 @@ class ShowcaseProjectionTest(unittest.TestCase):
         with self.assertRaises(ValueError):PRODUCER.project(source.name,text)
 
     def test_native_panel_uses_same_command_authority(self):
-        panel=ROOT/'apps/native-renderer-android/panel-modules/showcase/src/main/java'/PRODUCER.PACKAGE/'ShowcasePanelModule.java'
+        panel=ROOT/'apps/native-renderer-android/panel-modules/showcase/src/main/java'/PRODUCER.PACKAGE/'ShowcaseControls.java'
         text=panel.read_text(encoding='utf-8')
         self.assertIn('ShowcaseNativeBridge.command(command)',text)
         self.assertIn('expected_revision',text)
-        self.assertIn('send("apply-visual",visualPayload(visual.read()))',text)
+        self.assertIn('send("apply-visual",visualPayload(state.visual),true)',text)
         self.assertNotIn('polar.buildView()',text)
         self.assertNotIn('handleCommand(',text)
 

@@ -1,0 +1,105 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.native_mesh_panel.showcase",
+  "module_path": "ui/native-mesh-panel-showcase",
+  "module_kind": "mesh-ui",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Selected showcase retained NativeActivity owner and maintained original-scene hybrid/full native-page presentation.",
+  "provides": [
+    "ui.showcase_native_page",
+    "ui.native_vector_toolbar",
+    "ui.native_form_presentation"
+  ],
+  "depends_on": [
+    "ui.visual_showcase"
+  ],
+  "incompatible_with": [
+    "ui.native_mesh_panel",
+    "ui.native_mesh_panel.original_product",
+    "ui.native_mesh_panel.hybrid",
+    "ui.native_mesh_panel.native_page",
+    "ui.breath_composition_control_panel"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [
+      "com.oculus.feature.VIRTUAL_KEYBOARD",
+      "oculus.software.overlay_keyboard"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED",
+        "value": "true"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ORIGINAL_SCENE",
+        "value": "true"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS",
+        "value": "false"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID",
+        "value": "true"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_NATIVE_PAGE",
+        "value": "true"
+      }
+    ],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/mesh_ui_panel.vert.glsl",
+      "apps/native-renderer-android/native/shaders/mesh_ui_panel.frag.glsl",
+      "apps/native-renderer-android/native/shaders/native_panel_ui.vert.glsl",
+      "apps/native-renderer-android/native/shaders/native_panel_ui.frag.glsl",
+      "apps/native-renderer-android/native/shaders/native_panel_text.vert.glsl",
+      "apps/native-renderer-android/native/shaders/native_panel_text.frag.glsl"
+    ]
+  },
+  "panel_source_module": {
+    "module_id": "showcase-native-presentation",
+    "entry_class": "",
+    "dependencies": [],
+    "source_files": [
+      "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeMeshUiProducer.java",
+      "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativePageSnapshot.java",
+      "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativePanelFont.java",
+      "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeSystemKeyboard.java",
+      "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeRendererActivityComponents.java",
+      "apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseNativeActivity.java"
+    ]
+  },
+  "markers": {
+    "required": [
+      "nativePageSelected=true",
+      "nativeMeshUiHybrid=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Maintained generic presentation only; private showcase data and native app command authority remain separate. Missing attachment never falls back to diagnostic controls."
+}

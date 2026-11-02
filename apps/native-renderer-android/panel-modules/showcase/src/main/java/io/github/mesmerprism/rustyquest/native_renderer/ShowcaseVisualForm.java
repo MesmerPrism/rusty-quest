@@ -16,14 +16,67 @@ final class ShowcaseVisualForm {
     private final LinearLayout container;
     private final List<Binding> bindings=new ArrayList<>();
     private JSONObject model;
+    private boolean sectionMode;
+    private Runnable changed;
+    private JSONObject materialPresets;
+    private TextView presetLabel;
     private interface Binding {void read()throws Exception;}
     ShowcaseVisualForm(Context context,JSONObject schema,LinearLayout container){this.context=context;this.schema=schema;this.container=container;}
     void show(JSONObject value)throws Exception {
+        sectionMode=false;changed=null;
         model=new JSONObject(value.toString());bindings.clear();container.removeAllViews();
         object(model,schema,container,"");
     }
+    void setMaterialPresets(JSONObject presets){materialPresets=presets;}
+    static String[] sectionKeys(String section){
+        if(section.equals("Scale & radius"))return new String[]{"radius","visual_scale","world_anchor_scale_m"};
+        if(section.equals("Particle size"))return new String[]{"size"};
+        if(section.equals("Orbit geometry"))return new String[]{"orbit_distance"};
+        if(section.equals("Tracers"))return new String[]{"tracer"};
+        if(section.equals("Material & transparency"))return new String[]{"material","transparency","color"};
+        if(section.equals("Radius coupling"))return new String[]{"frame_extension"};
+        if(section.equals("Visual drivers"))return new String[]{"driver_controls","driver_values01"};
+        throw new IllegalArgumentException("unknown-visual-section");
+    }
+    void showSection(JSONObject value,String section,int target,Runnable changed)throws Exception {
+        this.model=value;this.sectionMode=true;this.changed=changed;bindings.clear();container.removeAllViews();presetLabel=null;
+        JSONObject properties=schema.getJSONObject("properties");
+        if(section.equals("Visual drivers")){
+            if(target<0||target>7)throw new IllegalArgumentException("driver-target-bound");
+            JSONObject driver=value.getJSONArray("driver_controls").getJSONObject(target),definition=properties.getJSONObject("driver_controls").getJSONArray("prefixItems").getJSONObject(target).getJSONObject("properties");
+            TextView identity=new TextView(context);identity.setText("Channel "+target+" (fixed)");identity.setTextColor(ShowcaseControls.MUTED);
+            for(String name:new String[]{"mode","curve","range_min","range_max","cycle_multiplier"})field(driver,name,driver.get(name),definition.getJSONObject(name),container,"driver_controls / "+target+" / "+name);
+            LinearLayout advanced=foldout(container,"Source and manual/base details");advanced.addView(identity);
+            field(driver,"source_slot",driver.get("source_slot"),definition.getJSONObject("source_slot"),advanced,"driver_controls / "+target+" / source_slot");
+            field(value.getJSONArray("driver_values01"),target,value.getJSONArray("driver_values01").get(target),properties.getJSONObject("driver_values01").getJSONObject("items"),advanced,"driver_values01 / "+target);
+            return;
+        }
+        LinearLayout advanced=null;
+        for(String key:sectionKeys(section)){
+            JSONObject definition=properties.getJSONObject(key);Object current=value.get(key);
+            if(current instanceof JSONObject){JSONObject nested=(JSONObject)current,fields=definition.getJSONObject("properties");Iterator<String> keys=fields.keys();while(keys.hasNext()){
+                String name=keys.next();LinearLayout destination=container;
+                if(section.equals("Material & transparency")&&(name.equals("depth_suppression_strength")||name.equals("rgb_alpha_coupling")||name.equals("facing_attenuation_strength"))){if(advanced==null)advanced=foldout(container,"Advanced appearance");destination=advanced;}
+                field(nested,name,nested.get(name),fields.getJSONObject(name),destination,key+" / "+name);
+            }}else field(value,key,current,definition,container,key);
+        }
+        if(section.equals("Material & transparency")){presetLabel=new TextView(context);presetLabel.setTextColor(ShowcaseControls.MUTED);container.addView(presetLabel);refreshPresetLabel();}
+    }
+    private LinearLayout foldout(LinearLayout parent,String title){final LinearLayout body=new LinearLayout(context);body.setOrientation(LinearLayout.VERTICAL);body.setVisibility(View.GONE);Button toggle=new Button(context);toggle.setText("▸ "+title);toggle.setAllCaps(false);toggle.setOnClickListener(new View.OnClickListener(){public void onClick(View view){body.setVisibility(body.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE);}});parent.addView(toggle);parent.addView(body);return body;}
+    void writeInto(JSONObject destination)throws Exception {if(destination!=model)throw new IllegalStateException("stale-visual-form-generation");for(Binding binding:bindings)binding.read();}
+    static void fillPreset(JSONObject visual,JSONObject presets,String name)throws Exception {
+        if(presets==null||!presets.has(name))throw new IllegalArgumentException("preset-metadata-unavailable");
+        JSONObject preset=presets.getJSONObject(name),transparency=preset.getJSONObject("transparency"),color=preset.getJSONObject("color");
+        if(preset.length()!=2||transparency.length()!=4||color.length()!=1)throw new IllegalArgumentException("closed-preset-metadata-required");
+        for(String key:new String[]{"opacity","output_alpha_scale","depth_suppression_strength","rgb_alpha_coupling"})if(!(transparency.get(key) instanceof Number)||!Double.isFinite(transparency.getDouble(key)))throw new IllegalArgumentException("finite-preset-coefficients-required");
+        if(!(color.get("facing_attenuation_strength") instanceof Number)||!Double.isFinite(color.getDouble("facing_attenuation_strength")))throw new IllegalArgumentException("finite-preset-coefficients-required");
+        visual.put("transparency",new JSONObject(transparency.toString()));visual.put("color",new JSONObject(color.toString()));visual.getJSONObject("material").put("preset",name);
+    }
+    static boolean presetMatches(JSONObject visual,JSONObject presets)throws Exception {if(presets==null)return false;JSONObject preset=presets.optJSONObject(visual.getJSONObject("material").getString("preset"));if(preset==null)return false;for(String group:new String[]{"transparency","color"}){JSONObject values=preset.getJSONObject(group);Iterator<String> keys=values.keys();while(keys.hasNext()){String key=keys.next();if(Float.compare((float)values.getDouble(key),(float)visual.getJSONObject(group).getDouble(key))!=0)return false;}}return true;}
+    private void refreshPresetLabel(){if(presetLabel==null)return;try{presetLabel.setText(materialPresets==null?"Preset choices are waiting for the headset. Manual values remain editable.":presetMatches(model,materialPresets)?"Preset coefficients":"Preset (modified)");}catch(Exception unavailable){presetLabel.setText("Preset metadata unavailable");}}
+    private void notifyChanged(){refreshPresetLabel();if(changed!=null)changed.run();}
     JSONObject read()throws Exception {if(model==null)throw new IllegalStateException("Read effective visuals first");for(Binding binding:bindings)binding.read();return new JSONObject(model.toString());}
-    private String label(String name){String text=name.replace('_',' ');return text.isEmpty()?text:Character.toUpperCase(text.charAt(0))+text.substring(1);}
+    private String label(String name){String key=name.contains(" / ")?name.substring(name.lastIndexOf(" / ")+3):name;if(key.equals("minimum_m"))return "Minimum radius (m)";if(key.equals("maximum_m"))return "Maximum radius (m)";if(key.equals("world_anchor_scale_m"))return "Stored anchor size (m)";if(key.equals("world_meters"))return "World size (m)";if(key.equals("sphere_radius_percent"))return "Sphere radius (%)";if(key.equals("oscillation_percent"))return "Size oscillation (%)";if(key.equals("reference_radius_m"))return "Reference radius (m)";if(key.equals("lifetime_seconds"))return "Lifetime (s)";if(key.equals("draw_slots_per_oscillator"))return "Tracers per particle";if(key.equals("source_slot"))return "Source channel";String text=key.replace('_',' ');return text.isEmpty()?text:Character.toUpperCase(text.charAt(0))+text.substring(1);}
     private void object(JSONObject value,JSONObject description,LinearLayout parent,String path)throws Exception {
         JSONObject properties=description.getJSONObject("properties");
         Iterator<String> keys=properties.keys();while(keys.hasNext()){
@@ -43,20 +96,23 @@ final class ShowcaseVisualForm {
             }
             return;
         }
-        TextView title=new TextView(context);title.setText(label(path));parent.addView(title);
-        if(description.has("const")){TextView fixed=new TextView(context);fixed.setText(String.valueOf(value));parent.addView(fixed);return;}
+        TextView title=new TextView(context);title.setText(label(path));title.setTextSize(13);title.setTextColor(ShowcaseControls.MUTED);
+        if(sectionMode){LinearLayout line=new LinearLayout(context);line.setOrientation(LinearLayout.HORIZONTAL);line.addView(title,new LinearLayout.LayoutParams(0,-2,1));parent.addView(line);parent=line;}else parent.addView(title);
+        if(description.has("const")||sectionMode&&(path.equals("world_anchor_scale_m")||path.startsWith("driver_values01")&&(Integer.valueOf(0).equals(key)||Integer.valueOf(5).equals(key)))){TextView fixed=new TextView(context);fixed.setText(String.valueOf(value)+(path.equals("world_anchor_scale_m")?" · stored; sphere radius controls the current scale":Integer.valueOf(0).equals(key)?" · controlled by breathing input":" · controlled by heartbeat"));fixed.setTextColor(ShowcaseControls.FG);parent.addView(fixed);return;}
         JSONArray choices=description.optJSONArray("enum");
         if(choices!=null){
             String[] names=new String[choices.length()];int selected=-1;
             for(int i=0;i<names.length;i++){names[i]=choices.getString(i);if(names[i].equals(value))selected=i;}
             if(selected<0)throw new IllegalArgumentException("Unknown effective choice: "+path);
-            Spinner spinner=new Spinner(context);spinner.setAdapter(new ArrayAdapter<String>(context,android.R.layout.simple_spinner_dropdown_item,names));spinner.setSelection(selected);parent.addView(spinner);
+            final int selectedIndex=selected;
+            Spinner spinner=new Spinner(context);spinner.setAdapter(ShowcaseControls.adapter(context,names));spinner.setSelection(selected);parent.addView(spinner);
+            if(sectionMode){final Spinner selectedSpinner=spinner;final String currentPath=path;spinner.setEnabled(!path.equals("material / preset")||materialPresets!=null);if(!spinner.isEnabled())spinner.setTag(Boolean.FALSE);spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){boolean initial=true;public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int position,long id){if(initial){initial=false;return;}try{String next=selectedSpinner.getSelectedItem().toString();if(currentPath.equals("material / preset")){fillPreset(model,materialPresets,next);final JSONObject value=model;final Runnable callback=changed;container.post(new Runnable(){public void run(){try{showSection(value,"Material & transparency",0,callback);}catch(Exception ignored){}}});}else put(owner,key,next);notifyChanged();}catch(Exception rejected){selectedSpinner.setSelection(selectedIndex);}}});}
             bindings.add(new Binding(){public void read()throws Exception{put(owner,key,spinner.getSelectedItem().toString());}});
         } else if(value instanceof Boolean){
-            CheckBox checkbox=new CheckBox(context);checkbox.setText("Enabled");checkbox.setChecked((Boolean)value);parent.addView(checkbox);bindings.add(new Binding(){public void read()throws Exception{put(owner,key,checkbox.isChecked());}});
+            CheckBox checkbox=new CheckBox(context);checkbox.setText("Enabled");checkbox.setTextColor(ShowcaseControls.FG);checkbox.setChecked((Boolean)value);parent.addView(checkbox);bindings.add(new Binding(){public void read()throws Exception{put(owner,key,checkbox.isChecked());}});if(sectionMode)checkbox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener(){public void onCheckedChanged(CompoundButton view,boolean next){try{put(owner,key,next);notifyChanged();}catch(Exception ignored){}}});
         } else if(value instanceof Number){
-            EditText number=new EditText(context);number.setSingleLine(true);number.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);number.setText(value.toString());parent.addView(number);
-            if(description.has("minimum")||description.has("maximum")){TextView range=new TextView(context);range.setText("Range "+description.opt("minimum")+" to "+description.opt("maximum"));parent.addView(range);}
+            EditText number=new EditText(context);number.setTextColor(ShowcaseControls.FG);number.setSingleLine(true);number.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);number.setText(value.toString());parent.addView(number);
+            if(sectionMode)number.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence text,int a,int c,int f){}public void onTextChanged(CharSequence text,int a,int b,int c){try{double n=Double.parseDouble(text.toString());if(Double.isFinite(n))put(owner,key,n);}catch(Exception ignored){}notifyChanged();}public void afterTextChanged(android.text.Editable value){}});
             bindings.add(new Binding(){public void read()throws Exception{double n=Double.parseDouble(number.getText().toString());if(!Double.isFinite(n)||description.has("minimum")&&n<description.getDouble("minimum")||description.has("maximum")&&n>description.getDouble("maximum"))throw new IllegalArgumentException("Out of range: "+label(path));if("integer".equals(description.optString("type"))){if(n!=Math.rint(n))throw new IllegalArgumentException("Whole number required: "+label(path));put(owner,key,(long)n);}else put(owner,key,n);}});
         } else throw new IllegalArgumentException("Unrepresented visual field: "+path);
     }

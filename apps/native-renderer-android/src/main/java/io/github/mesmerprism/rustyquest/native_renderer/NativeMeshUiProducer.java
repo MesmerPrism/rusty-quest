@@ -51,6 +51,11 @@ import org.json.JSONArray;
 
 /** App-owned Android widgets rendered into the native OpenXR mesh texture, not another Activity. */
 public final class NativeMeshUiProducer {
+    /** Closed selected-route admission; old neutral consumers retain fallback. */
+    static final class AttachmentAdmission {
+        static boolean allowNeutralFallback(boolean showcase){return !showcase;}
+        static boolean valid(boolean showcase,boolean typed,boolean sameOwner,boolean active){return typed&&(!showcase||sameOwner&&active);}
+    }
     /** The retained production Activity owns all actions; this adapter owns its pixels only. */
     public interface ProductPanelAttachment extends AutoCloseable {
         Activity owner();
@@ -1330,9 +1335,11 @@ static final class VisibilityReadback {
             if(!attachProductOwner()&&(awaitingProductOwner||!ownerAttachment.resumed()))bootstrapProductOwner();
             return; // Selected local product owns its full UI; integration diagnostics are not appended.
         } catch(ClassNotFoundException unselected) {
+            if(!AttachmentAdmission.allowNeutralFallback(NativeRendererActivityComponents.showcaseSelected(activity))){selectedAttachmentFailure("facade-missing");return;}
             // Neutral mesh-only apps do not acquire experiment or recording authority.
             productSelectionResolved=true;
         } catch(NoSuchMethodException unselected) {
+            if(!AttachmentAdmission.allowNeutralFallback(NativeRendererActivityComponents.showcaseSelected(activity))){selectedAttachmentFailure("attachment-method-missing");return;}
             // A different closed panel module does not expose this product adapter.
             productModule=null;
             productSelectionResolved=true;
@@ -1401,6 +1408,10 @@ static final class VisibilityReadback {
     }
 
     private boolean activityResumed() {
+        if(NativeRendererActivityComponents.SHOWCASE_NATIVE.equals(activity.getClass().getName())){
+            try{return Boolean.TRUE.equals(activity.getClass().getMethod("showcaseOwnerResumed").invoke(activity));}
+            catch(ReflectiveOperationException unavailable){return false;}
+        }
         try {
             // The selected original Application already tracks actual Activity lifecycle.
             // Keep neutral mesh-only compositions free of a mandatory kiosk dependency.
@@ -1419,6 +1430,12 @@ static final class VisibilityReadback {
                         return current==NativeMeshUiProducer.this&&root!=null;
                     }});
             if(!(attachment instanceof ProductPanelAttachment))throw new IllegalStateException("panel-attachment-retirement-required");
+            if(!AttachmentAdmission.valid(NativeRendererActivityComponents.showcaseSelected(activity),true,
+                    ((ProductPanelAttachment)attachment).owner()==activity,
+                    ((ProductPanelAttachment)attachment).presentationActive())){
+                try{((ProductPanelAttachment)attachment).close();}catch(Exception ignored){}
+                throw new IllegalStateException("showcase-attachment-owner-or-generation-mismatch");
+            }
             panelAttachment=(ProductPanelAttachment)attachment;
             awaitingProductOwner=false;
             Activity actual=((ProductPanelAttachment)attachment).owner();ownerAttachment.ready(actual);
@@ -1430,6 +1447,7 @@ static final class VisibilityReadback {
             return true;
         } catch(Exception failure) {
             Throwable cause=failure instanceof java.lang.reflect.InvocationTargetException?failure.getCause():failure;
+            if(NativeRendererActivityComponents.showcaseSelected(activity)){selectedAttachmentFailure("attachment-owner-unavailable");return false;}
             if(cause instanceof IllegalStateException&&"retained-production-panel-owner-unavailable".equals(cause.getMessage())){
                 awaitingProductOwner=true;
                 status.setText("Waiting for the original app panel…");
@@ -1445,7 +1463,7 @@ static final class VisibilityReadback {
     private void bootstrapProductOwner() {
         // The original shared controller is owned by this actual NativeActivity.
         // Never create a Shell-managed 2D Activity to keep that controller alive.
-        if(NativeRendererActivityComponents.PRODUCT_NATIVE.equals(activity.getClass().getName()))return;
+        if(NativeRendererActivityComponents.retainedNative(activity.getClass().getName()))return;
         if(productModule==null||!ownerAttachment.bootstrap()||current!=this||root==null)return;
         try {
             android.content.Intent intent=new android.content.Intent(android.content.Intent.ACTION_MAIN)
@@ -1537,10 +1555,10 @@ static final class VisibilityReadback {
 
     public static boolean panelVisibilityConfirmed(Activity productOwner,boolean visible){
         NativeMeshUiProducer producer=current;
-        if(producer==null)return productOwner==null||!NativeRendererActivityComponents.PRODUCT_NATIVE.equals(productOwner.getClass().getName()); // Only the existing 2D route has its separate foreground proof.
+        if(producer==null)return productOwner==null||!NativeRendererActivityComponents.retainedNative(productOwner.getClass().getName()); // Only the existing 2D route has its separate foreground proof.
         if(!(producer.panelAttachment instanceof ProductPanelAttachment)
                 ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner
-                ||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return producer.productSelectionResolved&&producer.productModule==null;
+                ||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return !NativeRendererActivityComponents.showcaseSelected(producer.activity)&&producer.productSelectionResolved&&producer.productModule==null;
         return producer.visibilityObserved&&producer.visibilityRequest==0&&producer.effectiveVisible==visible;
     }
 
@@ -1586,7 +1604,15 @@ static final class VisibilityReadback {
         parent.addView(button, new LinearLayout.LayoutParams(-1, 68));
     }
 
+    private void selectedAttachmentFailure(String reason){
+        productSelectionResolved=true;productModule=null;awaitingProductOwner=false;
+        if(status!=null)status.setText("Showcase controls unavailable: "+reason);
+        if(productCarrier!=null){productCarrier.removeAllViews();if(status!=null)productCarrier.addView(status);productCarrier.setEnabled(false);}
+        Log.e(TAG,"event=showcase-panel-unavailable reason="+reason+" generation="+generation);
+    }
+
     private void submit(int code, float value) {
+        if(NativeRendererActivityComponents.showcaseSelected(activity)){selectedAttachmentFailure("diagnostic-controls-unselected");return;}
         boolean accepted = nativeControl(generation, code, value);
         status.setText("Control " + code + (accepted ? " accepted by native state" : " rejected") + " • value " + value);
     }

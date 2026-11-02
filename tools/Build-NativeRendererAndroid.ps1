@@ -345,7 +345,8 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         [bool]$panelSourceClosure.runtime_widening_allowed) {
         throw "Native panel source closure must explicitly forbid runtime widening."
     }
-    $panelActivitySelected = @($appBuildLockObject.android_manifest.activities) -ccontains "ControlPanelActivity"
+    $showcaseVulkanSelected = @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.native_mesh_panel.showcase'
+    $panelActivitySelected = @($appBuildLockObject.android_manifest.activities) -ccontains "ControlPanelActivity" -or $showcaseVulkanSelected
     $selectedPanelModuleId = [string]$panelSourceClosure.selected_module_id
     $selectedPanelEntryClass = [string]$panelSourceClosure.entry_class
     if ($panelActivitySelected) {
@@ -390,6 +391,7 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
             $relativeSource = ([string]$sourceRecord.path).Replace('\', '/')
             if ([string]::IsNullOrWhiteSpace($relativeSource) -or
                 (-not $relativeSource.StartsWith('apps/native-renderer-android/panel-modules/', [System.StringComparison]::Ordinal) -and
+                 -not ($showcaseVulkanSelected -and [string]$sourceRecord.module_id -ceq 'showcase-native-presentation' -and $relativeSource -cin @('NativeMeshUiProducer.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' | ForEach-Object { 'apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/' + $_ })) -and
                  -not (@($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider' -and $relativeSource -ceq 'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java')) -or
                 -not $relativeSource.EndsWith('.java', [System.StringComparison]::Ordinal)) {
                 throw "Native panel source is outside the owned panel-module root: $relativeSource"
@@ -416,7 +418,7 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     }
     $packageName = [string]$appBuildLockObject.android_manifest.package_name
     $selectedMeshHost = @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.native_mesh_panel' -or @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.native_mesh_panel.original_product'
-    $selectedNativeActivityClass = if ($selectedMeshHost -and $selectedPanelModuleId -ceq 'breath-composition-controls') { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
+    $selectedNativeActivityClass = if ($showcaseVulkanSelected) { 'io.github.mesmerprism.rustyquest.native_renderer.ShowcaseNativeActivity' } elseif ($selectedMeshHost -and $selectedPanelModuleId -ceq 'breath-composition-controls') { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
     if (@($appBuildLockObject.android_manifest.activities) -cnotcontains $selectedNativeActivityClass) { throw 'Selected native Activity is absent from exact manifest closure.' }
     $activityName = "$packageName/$selectedNativeActivityClass"
     $generatedManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.android_manifest) -RepoRoot ([string]$repoRoot)
@@ -814,7 +816,7 @@ $generatedControlPanelActivityPath = ""
 $showcaseSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.visual_showcase'
 if ($showcaseSelected) {
     if ($selectedPanelModuleId -cne 'visual-showcase-controls' -or $selectedPanelEntrySimpleName -cne 'ShowcasePanelModule') { throw 'Showcase requires its exact panel source closure.' }
-    $excludedShowcaseFeatures = @($appBuildLockObject.selected_feature_ids | Where-Object { $_ -match '(?i)experiment|recording|questionnaire|condition_audio|lsl|soft_kiosk|boot_autostart|sensor\.polar_h10_ble|ui\.native_mesh_panel' })
+    $excludedShowcaseFeatures = @($appBuildLockObject.selected_feature_ids | Where-Object { $_ -cne 'ui.native_mesh_panel.showcase' -and $_ -match '(?i)experiment|recording|questionnaire|condition_audio|lsl|soft_kiosk|boot_autostart|sensor\.polar_h10_ble|ui\.native_mesh_panel' })
     if ($excludedShowcaseFeatures.Count -gt 0) { throw "Showcase selected excluded features: $($excludedShowcaseFeatures -join ', ')" }
     if (-not $appBuildEnvByName.ContainsKey('RUSTY_QUEST_NATIVE_RENDERER_SHOWCASE') -or $appBuildEnvByName['RUSTY_QUEST_NATIVE_RENDERER_SHOWCASE'] -cne 'true') { throw 'Showcase requires authenticated explicit capability selection.' }
     Assert-ShowcaseManifestComponentClosure -Manifest $appBuildLockObject.android_manifest
@@ -1895,7 +1897,7 @@ $panelNativeMethods
         # Independent facade: do not inherit the experiment/audio/kiosk facade
         # and rely on late removal of its methods.
         Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererShowcaseFacade.psm1') -Force
-        $generatedControlPanelActivitySource = New-NativeRendererShowcaseFacadeSource
+        $generatedControlPanelActivitySource = New-NativeRendererShowcaseFacadeSource -Vulkan:$showcaseVulkanSelected
     }
     [System.IO.File]::WriteAllText(
         $generatedControlPanelActivityPath,
@@ -2057,9 +2059,9 @@ $sourceFiles = @($sourceFiles | Select-Object -Unique)
 $sourceFiles = @(Write-NativeRendererJavaSourceResponse -SourceFiles $sourceFiles -GeneratedAppStatusBridgePath $generatedAppStatusBridgePath -Path $sourceList)
 if ($showcaseSelected) {
     $allowedShowcaseJava = @('PanelModule.java','NativeAppSettingsReader.java','ControlPanelActivity.java','NativeRendererAppStatusBridge.java',
-        'ShowcaseNativeBridge.java','ShowcasePanelModule.java','ShowcaseVisualForm.java','ShowcaseGateway.java',
+        'ShowcaseNativeBridge.java','ShowcasePanelModule.java','ShowcaseVisualForm.java','ShowcaseGateway.java','ShowcaseControls.java',
         'ShowcaseDiscoveryServer.java','ShowcaseGatewayProtocol.java','ShowcaseGatewayHttpServer.java','ShowcaseGuestRegistry.java',
-        'PolarSensorPanel.java','PolarSensorRuntime.java','PolarBleRuntimeSupport.java')
+        'PolarSensorPanel.java','PolarSensorRuntime.java','PolarBleRuntimeSupport.java') + @(if ($showcaseVulkanSelected) { 'ShowcaseNativeActivity.java','NativeMeshUiProducer.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' })
     if ($sourceFiles.Count -ne $allowedShowcaseJava.Count) { throw 'Showcase selected Java inventory differs from the closed composition.' }
     $selectedJavaRecords = @()
     foreach ($source in $sourceFiles) {
@@ -2104,7 +2106,9 @@ $cargoBuildArguments = @(
 if ($rustyLslBackendPackaged) {
     $cargoBuildArguments += @("--features", "rusty-lsl-backend")
 }
-if ($showcaseSelected) {
+if ($showcaseVulkanSelected) {
+    $cargoBuildArguments += @('--features', 'showcase-vulkan-ui')
+} elseif ($showcaseSelected) {
     $cargoBuildArguments += @('--features', 'showcase')
 }
 try {

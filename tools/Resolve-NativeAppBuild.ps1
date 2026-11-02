@@ -196,7 +196,11 @@ function Get-SelectedNativeHostActivities {
     $originalNativeHost = ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.original_product') -and
         $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
     foreach ($activity in $Activities) {
-        if ($originalNativeHost -and $activity -ceq 'android.app.NativeActivity') {
+        if ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase' -and $activity -ceq 'ControlPanelActivity') {
+            continue # Reflection facade is deliberately not a manifest Activity.
+        } elseif ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase' -and $activity -ceq 'android.app.NativeActivity') {
+            'io.github.mesmerprism.rustyquest.native_renderer.ShowcaseNativeActivity'
+        } elseif ($originalNativeHost -and $activity -ceq 'android.app.NativeActivity') {
             'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity'
         } else {
             $activity
@@ -691,7 +695,11 @@ function New-GeneratedAndroidManifestText {
         [switch]$ExperimentSessionDebugOperator
     )
     $originalNativeHost = ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.original_product') -and $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
-    $nativeActivityClass = if ($originalNativeHost) { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
+    $showcaseNativeHost = $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase'
+    if (-not $showcaseNativeHost -and $Activities -ccontains 'io.github.mesmerprism.rustyquest.native_renderer.ShowcaseNativeActivity') { throw 'Showcase NativeActivity requires explicit selected showcase presentation.' }
+    if ($showcaseNativeHost -and ($originalNativeHost -or $SelectedFeatureIds -cnotcontains 'ui.visual_showcase')) { throw 'Showcase native host requires its sole closed showcase composition.' }
+    $nativeActivityClass = if ($showcaseNativeHost) { 'io.github.mesmerprism.rustyquest.native_renderer.ShowcaseNativeActivity' } elseif ($originalNativeHost) { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
+    if ($showcaseNativeHost -and ($Activities -cnotcontains $nativeActivityClass -or $Activities -ccontains 'ControlPanelActivity')) { throw 'Showcase native host excludes the standalone panel Activity.' }
     if (($originalNativeHost -and $Activities -cnotcontains $nativeActivityClass) -or
         (-not $originalNativeHost -and $Activities -ccontains 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity')) {
         throw 'Native product Activity requires exactly the original panel and native mesh feature selection.'
@@ -761,6 +769,9 @@ function New-GeneratedAndroidManifestText {
     }
     if ($originalNativeHost) {
         [void]$lines.Add('        <meta-data android:name="rusty.quest.native_renderer.original_panel_native_host" android:value="true" />')
+    }
+    if ($showcaseNativeHost) {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.native_renderer.showcase_panel_native_host" android:value="true" />')
     }
     if ($Activities -contains $nativeActivityClass) {
         [void]$lines.Add('        <activity')
@@ -928,7 +939,7 @@ function Resolve-NativePanelComposition {
         }
     }
 
-    $controlPanelSelected = $Activities -contains "ControlPanelActivity"
+    $controlPanelSelected = $Activities -contains "ControlPanelActivity" -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase'
     if (-not $controlPanelSelected) {
         if ($compositionOwners.Count -ne 0) {
             throw "A native panel module was selected without ControlPanelActivity."
@@ -1011,6 +1022,15 @@ function Resolve-NativePanelComposition {
         $modulesById['experiment-session-hub-status-provider'] = $hubModule
         $modulesById[$selectedModuleId].dependencies = @($modulesById[$selectedModuleId].dependencies) + 'experiment-session-hub-status-provider'
     }
+    if ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase') {
+        if ($selectedModuleId -cne 'visual-showcase-controls') { throw 'Showcase presentation requires its own controls.' }
+        $presentation = $Features['ui.native_mesh_panel.showcase'].descriptor.panel_source_module
+        $base = 'apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/'
+        $exact = @('NativeMeshUiProducer.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' | ForEach-Object { $base + $_ }) + @('apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseNativeActivity.java')
+        if ($presentation.module_id -cne 'showcase-native-presentation' -or [string]$presentation.entry_class -cne '' -or @($presentation.dependencies).Count -ne 0 -or @($presentation.source_files).Count -ne 6 -or [string]::Join('|',@($presentation.source_files | Sort-Object)) -cne [string]::Join('|',@($exact | Sort-Object))) { throw 'Exact neutral showcase presentation source closure required.' }
+        $modulesById['showcase-native-presentation'] = $presentation
+        $modulesById[$selectedModuleId].dependencies = @($modulesById[$selectedModuleId].dependencies) + 'showcase-native-presentation'
+    }
     if (-not $modulesById.ContainsKey($selectedModuleId)) {
         throw "Unknown selected panel module: $selectedModuleId"
     }
@@ -1063,6 +1083,7 @@ function Resolve-NativePanelComposition {
         foreach ($relativePath in @($module.source_files)) {
             $normalizedPath = ([string]$relativePath).Replace("\", "/")
             if (-not $normalizedPath.StartsWith("apps/native-renderer-android/panel-modules/", [System.StringComparison]::Ordinal) -and
+                -not ($moduleId -ceq 'showcase-native-presentation' -and $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase' -and $normalizedPath -cin $exact) -and
                 -not ($moduleId -ceq 'experiment-session-hub-status-provider' -and $normalizedPath -ceq 'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java')) {
                 throw "Panel source must live in the declared panel-modules owner root: $normalizedPath"
             }

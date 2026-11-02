@@ -22,7 +22,7 @@ public final class ShowcaseNativeBridge {
     private static WeakReference<Activity> panel=new WeakReference<>(null);
     private static long nextCue;
     private static final java.util.LinkedHashMap<String,JSONObject> stopReads=new java.util.LinkedHashMap<>();
-    public static native String nativeShowcaseInitialize(String defaults,String settings);
+    public static native String nativeShowcaseInitialize(String defaults,String settings,String migrations);
     public static native String nativeShowcaseCommand(String json);
     public static native String nativeShowcaseStatus();
     public static native String nativeShowcaseReceipt(String id);
@@ -34,17 +34,12 @@ public final class ShowcaseNativeBridge {
             application=context.getApplicationContext();
             try {
                 System.loadLibrary("rusty_quest_native_renderer");
-                String defaults;
-                try(java.io.InputStream input=application.getAssets().open("showcase-default-visual.json")) {
-                    java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[1024];int count;
-                    while((count=input.read(buffer))!=-1){bytes.write(buffer,0,count);if(bytes.size()>65536)throw new IllegalArgumentException("default-visual-size");}
-                    defaults=new String(bytes.toByteArray(),StandardCharsets.UTF_8);
-                }
+                if(!(context instanceof Activity))throw new IllegalStateException("actual-activity-required");
+                String defaults=NativeAppSettingsReader.readAsset((Activity)context,"showcase-default-visual.json");
+                String migrations=NativeAppSettingsReader.readAsset((Activity)context,"showcase-builtin-migrations.json");
+                if(defaults.getBytes(StandardCharsets.UTF_8).length>65536||migrations.getBytes(StandardCharsets.UTF_8).length>65536)throw new IllegalArgumentException("bounded-showcase-assets-required");
                 String saved=application.getSharedPreferences("visual_showcase_settings",Context.MODE_PRIVATE).getString("settings","");
-                JSONObject initialized=new JSONObject(nativeShowcaseInitialize(defaults,saved));
-                if(!initialized.optBoolean("ready")&&!saved.isEmpty()){
-                    initialized=new JSONObject(nativeShowcaseInitialize(defaults,""));
-                }
+                JSONObject initialized=new JSONObject(nativeShowcaseInitialize(defaults,saved,migrations));
                 if(!PRODUCT.equals(initialized.optString("product"))||!initialized.optBoolean("ready")||!initialized.optString("epoch").matches("[1-9][0-9]{0,18}"))throw new IllegalStateException("native-initialization-unavailable");
                 PolarSensorRuntime.reopenClosedFromExplicitLaunch();
                 PolarSensorRuntime.forApplication(application).ensureAutoConnection();
@@ -152,11 +147,12 @@ public final class ShowcaseNativeBridge {
     static void discoveryPermissionResult(){if(gateway!=null)gateway.permissionResult();}
 
     public static void openPanel(Context context) {
-        MAIN.post(new Runnable(){public void run(){initialize(context);context.startActivity(new Intent(context,ControlPanelActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_SINGLE_TOP));}});
+        MAIN.post(new Runnable(){public void run(){initialize(context);ControlPanelActivity.openShowcasePanel(context);}});
     }
     public static void togglePanel(Context context) {
-        MAIN.post(new Runnable(){public void run(){Activity current=panel.get();if(current!=null)current.finish();else openPanel(context);}});
+        MAIN.post(new Runnable(){public void run(){ControlPanelActivity.toggleShowcasePanel(context);}});
     }
+    static Activity currentPanel(){return panel.get();}
     static void attach(Activity value){panel=new WeakReference<>(value);}
     static void detach(Activity value){if(panel.get()==value)panel=new WeakReference<>(null);}
     public static void resume(){MAIN.post(new Runnable(){public void run(){active=true;MAIN.removeCallbacks(tick);MAIN.post(tick);}});}
