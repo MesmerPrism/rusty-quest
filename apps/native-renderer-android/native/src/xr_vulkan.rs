@@ -2398,7 +2398,7 @@ unsafe fn run_projection_frames(
     #[cfg(not(feature = "showcase"))]
     let mut mesh_hold_request: Option<(u64, u64, u64)> = None;
     #[cfg(feature = "showcase")]
-    let mut showcase_applied_visual_revision: Option<i64> = None;
+    let mut showcase_cpu_visual_revision: Option<i64> = None;
     // Immutable identity from the actual Activity owning this loop. A failed
     // observation must not publish a fabricated stock-Activity focus claim.
     let renderer_focus_activity =
@@ -2996,23 +2996,6 @@ unsafe fn run_projection_frames(
                 );
             }
         }
-        #[cfg(feature = "showcase")]
-        if let Some(candidate) = crate::showcase_runtime::particle_candidate() {
-            if showcase_applied_visual_revision != Some(candidate.revision) {
-                let revision = candidate.revision;
-                if gpu_private_particle_renderer.is_some() {
-                    apply_live_private_particle_dynamics(
-                        app,
-                        gpu_private_particle_renderer.as_deref_mut(),
-                        &mut private_particle_world_anchor,
-                        candidate,
-                        frame_count,
-                    );
-                    showcase_applied_visual_revision = Some(revision);
-                    crate::showcase_runtime::note_visual_applied(revision);
-                }
-            }
-        }
         let (live_hand_frames, live_hand_stats) = if let Some(replay) =
             replay.filter(|_| compact_hand_input_source_mode.selects_live_frame())
         {
@@ -3398,12 +3381,32 @@ unsafe fn run_projection_frames(
                     frame_count,
                 );
             }
-            #[cfg(feature = "showcase")]
+        }
+        #[cfg(feature = "showcase")]
+        let showcase_frame = {
             crate::showcase_runtime::tick(
                 crate::breath_composition_runtime::snapshot(),
                 dt_seconds,
                 crate::polar_composition_adapters::polar_rr_fresh(),
             );
+            let prepared = crate::showcase_runtime::prepare_visual_frame();
+            if let Some(frame) = prepared.as_ref() {
+                if showcase_cpu_visual_revision != Some(frame.revision())
+                    && gpu_private_particle_renderer.is_some()
+                {
+                    apply_live_private_particle_dynamics(
+                        app,
+                        gpu_private_particle_renderer.as_deref_mut(),
+                        &mut private_particle_world_anchor,
+                        frame.candidate(),
+                        frame_count,
+                    );
+                    showcase_cpu_visual_revision = Some(frame.revision());
+                }
+            }
+            prepared
+        };
+        if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
             renderer.update_heartbeat_pulse_adapter(dt_seconds, frame_count);
         }
         if let Some(bridge) = breath_bridge.as_mut() {
@@ -4237,6 +4240,8 @@ unsafe fn run_projection_frames(
                     } else {
                         None
                     },
+                    #[cfg(feature = "showcase")]
+                    showcase_frame.as_ref(),
                 )
             } else {
                 for stage in [
@@ -4659,6 +4664,17 @@ unsafe fn run_projection_frames(
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
+        #[cfg(feature = "showcase")]
+        if let Some(frame) = showcase_frame.as_ref() {
+            crate::showcase_runtime::confirm_visual_frame_submission(
+                frame,
+                true,
+                private_particle_stats.ready,
+                private_particle_stats.visible,
+                private_particle_stats.draw_count,
+            );
+        }
+
         #[cfg(not(feature = "showcase"))]
         control_panel_command_poller.after_current_session_frame_submitted(
             app,

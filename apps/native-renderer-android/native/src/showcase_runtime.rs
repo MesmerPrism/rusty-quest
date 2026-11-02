@@ -576,41 +576,81 @@ fn select_breath_input() {
         let _ = crate::breath_composition_runtime::ensure_running_for_visual_use();
     }
 }
-pub(crate) fn frame_extension() -> [[f32; 4]; 2] {
-    let s = lock();
-    let v = s.visual.as_ref().map(|v| &v["frame_extension"]);
-    [
+/// Immutable render-thread snapshot. Requests accepted after preparation belong
+/// to the next frame; no GPU parameter is read from requested global visuals.
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedVisualFrame {
+    epoch: String,
+    candidate: crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate,
+    progress: f32,
+    radius_m: f32,
+    extension: [[f32; 4]; 2],
+}
+impl PreparedVisualFrame {
+    pub(crate) fn revision(&self) -> i64 {
+        self.candidate.revision
+    }
+    pub(crate) fn candidate(
+        &self,
+    ) -> crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate {
+        self.candidate.clone()
+    }
+    pub(crate) fn progress(&self) -> f32 {
+        self.progress
+    }
+    pub(crate) fn radius_m(&self) -> f32 {
+        self.radius_m
+    }
+    pub(crate) fn frame_extension(&self) -> [[f32; 4]; 2] {
+        self.extension
+    }
+}
+pub(crate) fn prepare_visual_frame() -> Option<PreparedVisualFrame> {
+    prepare_visual_frame_from(&lock())
+}
+fn prepare_visual_frame_from(s: &ShowcaseRuntime) -> Option<PreparedVisualFrame> {
+    let visual = s.visual.as_ref()?;
+    let revision = i64::try_from(s.revision).ok()?;
+    let progress = s.progress;
+    let radius = &visual["radius"];
+    let minimum = radius["minimum_m"].as_f64()? as f32;
+    let maximum = radius["maximum_m"].as_f64()? as f32;
+    let extension = &visual["frame_extension"];
+    let extension_rows = [
         [
             7601.0,
             1.0,
-            if v.is_some() { 1.0 } else { 0.0 },
-            if v.is_some_and(|v| v["mode"] == "radius") {
+            1.0,
+            if extension["mode"] == "radius" {
                 1.0
             } else {
                 0.0
             },
         ],
         [
-            s.progress,
-            v.and_then(|v| v["endpoint_gain"].as_f64()).unwrap_or(1.0) as f32,
-            v.and_then(|v| v["midpoint_gain"].as_f64()).unwrap_or(0.0) as f32,
+            progress,
+            extension["endpoint_gain"].as_f64()? as f32,
+            extension["midpoint_gain"].as_f64()? as f32,
             0.0,
         ],
-    ]
-}
-pub(crate) fn particle_candidate(
-) -> Option<crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate> {
-    let s = lock();
-    let mut p = s.visual.clone()?;
-    p.as_object_mut()?.remove("frame_extension");
-    p.as_object_mut()?.remove("radius");
-    p["orbit_distance"]["source"] = json!(match s.inputs["heartbeat_source"].as_str() {
+    ];
+    let mut particles = visual.clone();
+    particles.as_object_mut()?.remove("frame_extension");
+    particles.as_object_mut()?.remove("radius");
+    particles["orbit_distance"]["source"] = json!(match s.inputs["heartbeat_source"].as_str() {
         Some("polar") => "polar-heartbeat",
         Some("synthetic") => "synthetic-heartbeat",
         _ => "static-minimum",
     });
-    p["orbit_distance"]["synthetic_bpm"] = s.inputs["synthetic_bpm"].clone();
-    crate::native_renderer_stimulus_panel::parse_private_particle_dynamics_json(&json!({"schema":crate::native_renderer_stimulus_panel::PRIVATE_PARTICLE_DYNAMICS_SCHEMA,"revision":s.revision,"private_particles":p}).to_string()).ok()
+    particles["orbit_distance"]["synthetic_bpm"] = s.inputs["synthetic_bpm"].clone();
+    let candidate=crate::native_renderer_stimulus_panel::parse_private_particle_dynamics_json(&json!({"schema":crate::native_renderer_stimulus_panel::PRIVATE_PARTICLE_DYNAMICS_SCHEMA,"revision":revision,"private_particles":particles}).to_string()).ok()?;
+    Some(PreparedVisualFrame {
+        epoch: s.epoch.clone(),
+        candidate,
+        progress,
+        radius_m: minimum + (maximum - minimum) * progress,
+        extension: extension_rows,
+    })
 }
 pub(crate) fn tick(snapshot: BreathCompositionSnapshot, dt: f32, rr_fresh: bool) -> f32 {
     advance_frame(&mut lock(), snapshot, dt, rr_fresh, monotonic_ns())
@@ -653,10 +693,21 @@ fn advance_frame(
     s.progress
 }
 
-pub(crate) fn note_visual_applied(revision: i64) {
+/// Acknowledgement is supplied only after the exact frame's xrEndFrame result.
+/// CPU preparation and command acceptance are not rendering evidence.
+pub(crate) fn confirm_visual_frame_submission(
+    frame: &PreparedVisualFrame,
+    submitted: bool,
+    ready: bool,
+    visible: bool,
+    draw_count: u32,
+) {
+    if !submitted || !ready || !visible || draw_count == 0 {
+        return;
+    }
     let mut s = lock();
-    if revision >= 0 && revision as u64 <= s.revision {
-        s.rendered_visual_revision = Some(revision as u64);
+    if frame.epoch == s.epoch && frame.revision() >= 0 && frame.revision() as u64 <= s.revision {
+        s.rendered_visual_revision = Some(frame.revision() as u64);
     }
 }
 pub(crate) fn command_with_executor(
@@ -803,14 +854,6 @@ pub(crate) fn command_with_executor(
         return receipt.to_string();
     }
     json!({"status":"unknown","id":id}).to_string()
-}
-
-pub(crate) fn applied_radius_m() -> Option<f32> {
-    let s = lock();
-    let radius = &s.visual.as_ref()?["radius"];
-    let min = radius["minimum_m"].as_f64()? as f32;
-    let max = radius["maximum_m"].as_f64()? as f32;
-    Some(min + (max - min) * s.progress)
 }
 
 #[cfg(test)]
@@ -1028,6 +1071,110 @@ mod tests {
             second.to_string()
         );
         assert_eq!(effects, 1);
+    }
+    #[test]
+    fn prepared_visual_keeps_radius_and_extension_when_new_request_arrives_midframe() {
+        struct Restore(Option<ShowcaseRuntime>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                *lock() = self.0.take().unwrap();
+            }
+        }
+        let _restore = Restore(Some(std::mem::replace(&mut *lock(), state())));
+        lock().progress = 0.25;
+        let prepared = prepare_visual_frame().unwrap();
+        let old_radius = prepared.radius_m();
+        let old_extension = prepared.frame_extension();
+        let inputs = lock().inputs.clone();
+        let mut next = visual();
+        next["radius"] = json!({"minimum_m":2.0,"maximum_m":3.0});
+        next["frame_extension"]["endpoint_gain"] = json!(4.0);
+        next["transparency"]["opacity"] = json!(0.3);
+        let raw = command(
+            &lock(),
+            "new-profile-midframe",
+            "apply-visual",
+            json!({"visual":next}),
+        );
+        assert_eq!(
+            command_json(&raw).parse::<Value>().unwrap()["status"],
+            "accepted"
+        );
+        assert_eq!(prepared.revision(), 0);
+        assert_eq!(prepared.progress(), 0.25);
+        assert_eq!(prepared.radius_m(), old_radius);
+        assert_eq!(old_radius, 0.75);
+        assert_eq!(prepared.frame_extension(), old_extension);
+        assert_eq!(prepared.candidate().transparency_opacity, 1.0);
+        assert_eq!(lock().inputs, inputs);
+        let next_frame = prepare_visual_frame().unwrap();
+        assert_eq!(next_frame.revision(), 1);
+        assert_eq!(next_frame.radius_m(), 2.25);
+        assert_eq!(next_frame.frame_extension()[1][1], 4.0);
+        assert_eq!(next_frame.candidate().transparency_opacity, 0.3);
+        assert_eq!(
+            prepared.candidate().orbit_distance.source,
+            next_frame.candidate().orbit_distance.source
+        );
+        assert_eq!(
+            prepared.candidate().orbit_distance.synthetic_bpm,
+            next_frame.candidate().orbit_distance.synthetic_bpm
+        );
+    }
+    #[test]
+    fn preparation_without_visible_submission_cannot_acknowledge_rendering() {
+        struct Restore(Option<ShowcaseRuntime>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                *lock() = self.0.take().unwrap();
+            }
+        }
+        let _restore = Restore(Some(std::mem::replace(&mut *lock(), state())));
+        let prepared = prepare_visual_frame().unwrap();
+        for (submitted, ready, visible, count) in [
+            (false, true, true, 10),
+            (true, false, true, 10),
+            (true, true, false, 10),
+            (true, true, true, 0),
+        ] {
+            confirm_visual_frame_submission(&prepared, submitted, ready, visible, count);
+            assert_eq!(lock().rendered_visual_revision, None);
+        }
+        let mut next = visual();
+        next["visual_scale"] = json!(0.9);
+        let raw = command(
+            &lock(),
+            "pending-after-preparation",
+            "apply-visual",
+            json!({"visual":next}),
+        );
+        assert_eq!(
+            command_json(&raw).parse::<Value>().unwrap()["status"],
+            "accepted"
+        );
+        confirm_visual_frame_submission(&prepared, true, true, true, 10);
+        let s = lock();
+        assert_eq!(s.revision, 1);
+        assert_eq!(s.rendered_visual_revision, Some(0));
+        assert_eq!(s.visual.as_ref().unwrap()["visual_scale"], 0.9);
+        drop(s);
+        let next_frame = prepare_visual_frame().unwrap();
+        confirm_visual_frame_submission(&next_frame, true, true, true, 10);
+        assert_eq!(lock().rendered_visual_revision, Some(1));
+    }
+    #[test]
+    fn prepared_frame_from_another_owner_cannot_acknowledge_rendering() {
+        struct Restore(Option<ShowcaseRuntime>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                *lock() = self.0.take().unwrap();
+            }
+        }
+        let _restore = Restore(Some(std::mem::replace(&mut *lock(), state())));
+        let prepared = prepare_visual_frame().unwrap();
+        lock().epoch = "replacement-owner".into();
+        confirm_visual_frame_submission(&prepared, true, true, true, 10);
+        assert_eq!(lock().rendered_visual_revision, None);
     }
 }
 

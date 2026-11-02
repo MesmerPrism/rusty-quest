@@ -29,5 +29,15 @@ class ShowcaseSourceClosure(unittest.TestCase):
         text = (SRC / "gpu_private_particles.rs").read_text()
         self.assertIn('if cfg!(feature = "showcase") { 2 } else { 0 }', text)
 
+    def test_frame_parameters_are_explicit_and_render_ack_follows_submission(self):
+        gpu = (SRC / "gpu_private_particles.rs").read_text()
+        self.assertIn("&crate::showcase_runtime::PreparedVisualFrame", gpu)
+        for global_read in ["showcase_runtime::frame_extension(", "showcase_runtime::applied_radius_m(", "showcase_runtime::prepare_visual_frame("]:
+            self.assertNotIn(global_read, gpu)
+        xr = (SRC / "xr_vulkan.rs").read_text()
+        self.assertNotIn("note_visual_applied", xr)
+        self.assertLess(xr.index('format!("end OpenXR frame: {error}")'), xr.index("showcase_runtime::confirm_visual_frame_submission("))
+        self.assertLess(xr.index("showcase_runtime::tick("), xr.index("showcase_runtime::prepare_visual_frame("))
+
 if __name__ == "__main__":
     unittest.main()

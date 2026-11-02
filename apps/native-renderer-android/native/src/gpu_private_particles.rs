@@ -1647,6 +1647,7 @@ mod auxiliary_compute_contract_tests {
 
 fn private_particle_driver_bank_rows(
     runtime_settings: PrivateParticleRuntimeSettings,
+    #[cfg(feature = "showcase")] extension: Option<[[f32; 4]; 2]>,
 ) -> [[f32; 4]; PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS] {
     let mut rows = [[0.0; 4]; PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS];
     for slot in 0..PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT {
@@ -1690,9 +1691,10 @@ fn private_particle_driver_bank_rows(
     }
     #[cfg(feature = "showcase")]
     {
-        let extension = crate::showcase_runtime::frame_extension();
-        rows[26] = extension[0];
-        rows[27] = extension[1];
+        if let Some(extension) = extension {
+            rows[26] = extension[0];
+            rows[27] = extension[1];
+        }
     }
 
     rows
@@ -1957,7 +1959,11 @@ impl GpuPrivateParticleRenderer {
             PrivateParticleHeartbeatPulseAdapter::new(heartbeat_pulse_adapter_settings);
         let breath_composition_driver =
             BreathCompositionDriver::new(breath_composition_driver_settings);
-        let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
+        let driver_bank_rows = private_particle_driver_bank_rows(
+            runtime_settings,
+            #[cfg(feature = "showcase")]
+            None,
+        );
         let driver_bank_buffer = match OwnedBuffer::new_with_data(
             device,
             memory_properties,
@@ -2962,11 +2968,14 @@ impl GpuPrivateParticleRenderer {
         world_anchor_forward_axis: [f32; 4],
         frame_count: u64,
         mesh_ui_animation: Option<(u64, bool, f32)>,
+        #[cfg(feature = "showcase")] showcase_frame: Option<
+            &crate::showcase_runtime::PreparedVisualFrame,
+        >,
     ) -> GpuPrivateParticleFrameStats {
         let mut runtime_settings = self.runtime_settings(frame_count);
         #[cfg(feature = "showcase")]
-        {
-            let progress = crate::showcase_runtime::frame_extension()[1][0];
+        if let Some(frame) = showcase_frame {
+            let progress = frame.progress();
             runtime_settings.driver0_value01 = progress;
             runtime_settings.driver_values01[0] = progress;
             runtime_settings.driver_bank_values01[0] = progress;
@@ -2977,7 +2986,9 @@ impl GpuPrivateParticleRenderer {
         }
         let mut world_center_scale = world_center_scale;
         #[cfg(feature = "showcase")]
-        if let Some(radius) = crate::showcase_runtime::applied_radius_m() {world_center_scale[3]=radius;}
+        if let Some(frame) = showcase_frame {
+            world_center_scale[3] = frame.radius_m();
+        }
         let mut world_anchor_scale_parameter_source = world_anchor_scale_parameter_source;
         #[cfg(not(feature = "showcase"))]
         if let Some(radius_m) = crate::experiment_session_runtime::active_radius_m_for_progress(
@@ -2986,7 +2997,11 @@ impl GpuPrivateParticleRenderer {
             world_center_scale[3] = radius_m;
             world_anchor_scale_parameter_source = "experiment-session-driver-slot-0";
         }
-        let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
+        let driver_bank_rows = private_particle_driver_bank_rows(
+            runtime_settings,
+            #[cfg(feature = "showcase")]
+            showcase_frame.map(|frame| frame.frame_extension()),
+        );
         if driver_bank_rows != self.driver_bank_uploaded_rows {
             match self.driver_bank_buffer.write_data(
                 device,
@@ -3005,6 +3020,9 @@ impl GpuPrivateParticleRenderer {
                             crate::sanitize(&error)
                         ),
                     );
+                    // Never draw new CPU settings against an old uploaded bank.
+                    #[cfg(feature = "showcase")]
+                    return GpuPrivateParticleFrameStats::unavailable();
                 }
             }
         }
@@ -6909,7 +6927,11 @@ mod material_request_tests {
         settings.apply_panel_override(panel, [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT]);
 
         assert_eq!(private_particle_size_limits(settings), (3.0, 12.0));
-        let rows = private_particle_driver_bank_rows(settings);
+        let rows = private_particle_driver_bank_rows(
+            settings,
+            #[cfg(feature = "showcase")]
+            None,
+        );
         let size_aux_row = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
             + 2 * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
             + 2;
@@ -6991,7 +7013,11 @@ mod material_request_tests {
     #[test]
     fn absent_particle_size_override_keeps_reserved_aux_row_neutral() {
         let settings = PrivateParticleRuntimeSettings::from_generated_defaults();
-        let rows = private_particle_driver_bank_rows(settings);
+        let rows = private_particle_driver_bank_rows(
+            settings,
+            #[cfg(feature = "showcase")]
+            None,
+        );
         let size_aux_row = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
             + 2 * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
             + 2;
