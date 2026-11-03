@@ -173,6 +173,7 @@ pub(crate) struct OpenXrControllerBreathAdapter {
     phase_estimator: NativeControllerBreathStateEstimator,
     calibration: AcceptedFrameCalibration,
     generation: Option<BreathGeneration>,
+    phase_only_inverted: Option<bool>,
     next_runtime_generation: u64,
     last_orientation: Option<[f64; 4]>,
     emitted_samples: u64,
@@ -189,6 +190,7 @@ impl OpenXrControllerBreathAdapter {
             phase_estimator: NativeControllerBreathStateEstimator::new(phase_settings),
             calibration: AcceptedFrameCalibration::new(),
             generation: None,
+            phase_only_inverted: None,
             next_runtime_generation: 1,
             last_orientation: None,
             emitted_samples: 0,
@@ -206,6 +208,7 @@ impl OpenXrControllerBreathAdapter {
     }
 
     pub(crate) fn configure(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
+        self.phase_only_inverted = None;
         self.phase_estimator.reset_history();
         self.last_orientation = None;
         self.generation = None;
@@ -254,6 +257,14 @@ impl OpenXrControllerBreathAdapter {
         self.generation
     }
 
+    #[cfg(feature = "showcase")]
+    pub(crate) fn start_phase_only(&mut self, generation: BreathGeneration, inverted: bool) {
+        self.generation = Some(generation);
+        self.phase_only_inverted = Some(inverted);
+        self.phase_estimator.reset_history();
+        self.last_orientation = None;
+    }
+
     pub(crate) fn cancel(
         &mut self,
         at: BreathTimestampMicros,
@@ -269,6 +280,7 @@ impl OpenXrControllerBreathAdapter {
     }
 
     pub(crate) fn reset(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
+        self.phase_only_inverted = None;
         self.generation = None;
         self.phase_estimator.reset_history();
         self.last_orientation = None;
@@ -403,6 +415,27 @@ impl OpenXrControllerBreathAdapter {
             );
         }
         self.last_orientation = Some(orientation);
+
+        if let Some(inverted) = self.phase_only_inverted {
+            if inverted {
+                phase_sample.phase = match phase_sample.phase {
+                    CommonBreathPhase::Inhale => CommonBreathPhase::Exhale,
+                    CommonBreathPhase::Exhale => CommonBreathPhase::Inhale,
+                    phase => phase,
+                };
+            }
+            return self.finish(
+                AssessmentDisposition {
+                    at,
+                    sampled_at: frame.sampled_at,
+                    sequence_id: frame.sequence_id,
+                    phase_sample,
+                    tracking: BreathTrackingState::Valid,
+                    rejection: None,
+                },
+                self.calibration.snapshot(),
+            );
+        }
 
         let vector = match self.volume_settings.projection {
             ControllerVolumeProjection::FixedOrientation => {
@@ -651,6 +684,33 @@ mod tests {
             adapter.start(at, generation(generation_id)).lifecycle,
             CalibrationLifecycle::Collecting
         );
+    }
+
+    #[cfg(feature = "showcase")]
+    #[test]
+    fn fixed_state_emits_valid_phase_without_a_fitted_range() {
+        let mut adapter = adapter(ControllerVolumeProjection::FixedOrientation);
+        let generation = generation(1);
+        adapter.configure(BreathTimestampMicros::new(0));
+        adapter.start_phase_only(generation, false);
+        let result = adapter.observe(
+            BreathTimestampMicros::new(10_000),
+            generation,
+            frame(1, 10_000, [0.0; 3]),
+        );
+        let assessment = result.assessment.expect("phase-only assessment");
+        assert_eq!(assessment.tracking, BreathTrackingState::Valid);
+        assert_eq!(assessment.phase, CommonBreathPhase::Hold);
+        assert_eq!(assessment.volume01, None);
+        assert_eq!(assessment.calibration, CalibrationLifecycle::Configured);
+        let missing = adapter.observe(
+            BreathTimestampMicros::new(20_000),
+            generation,
+            OpenXrControllerPoseInput::Missing { sequence_id: 2 },
+        );
+        assert_eq!(missing.assessment.unwrap().tracking, BreathTrackingState::Missing);
+        start(&mut adapter, 30_000, 2);
+        assert_eq!(adapter.phase_only_inverted, None);
     }
 
     #[test]

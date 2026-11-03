@@ -483,7 +483,9 @@ pub(crate) fn monotonic_ns() -> u64 {
         .min(u64::MAX as u128) as u64
 }
 pub(crate) fn status_json() -> String {
-    lock().status().to_string()
+    let mut status = lock().status();
+    status["calibration"] = crate::breath_composition_runtime::showcase_calibration_status(&status["inputs"]);
+    status.to_string()
 }
 pub(crate) fn settings_json() -> String {
     lock().settings().to_string()
@@ -877,6 +879,14 @@ pub(crate) fn command_with_executor(
             "calibrate" => {
                 exact(p, &["action"])?;
                 choice(&p["action"], &["start", "cancel", "reset"])?;
+                let inputs = &s.inputs;
+                if inputs["breath_source"] == "automatic"
+                    || (inputs["breath_source"] == "controller"
+                        && inputs["breath_mapping"] == "state"
+                        && inputs["controller_projection"] == "fixed-orientation")
+                {
+                    return Err("calibration-not-required".into());
+                }
             }
             "polar-select" => {
                 exact(p, &["device_id"])?;

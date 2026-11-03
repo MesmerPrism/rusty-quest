@@ -54,7 +54,8 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     private PolarSensorPanel polar;
     private NumericField inputBpm;
     private LinearLayout advancedInputs;
-    private TextView lastRadius;
+    private TextView lastRadius, calibrationStatus;
+    private ProgressBar calibrationProgress;
 
     ShowcaseControls(Activity activity,Host host){if(activity==null||host==null)throw new IllegalArgumentException("actual-owner-required");this.activity=activity;this.host=host;}
     static JSONObject copy(JSONObject value)throws Exception{return new JSONObject(value.toString());}
@@ -384,6 +385,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
             JSONObject input=s.optJSONObject("inputs"),availability=s.optJSONObject("availability");
             contextLine.setText((readbackAvailable?"":"Last applied · ")+"Breathing: "+displayChoice(input.optString("breath_source"))+" · Heartbeat: "+displayChoice(input.optString("heartbeat_source"))+(input.optString("heartbeat_source").equals("synthetic")?" "+input.optString("synthetic_bpm")+" BPM":"")+(availability!=null&&availability.optBoolean("selected_polar_unavailable")?" · Waiting for selected Polar input":availability!=null&&!availability.optBoolean("breath",true)?" · Waiting for breathing input":""));
             if(awaitingRendered>0&&s.optLong("rendered_visual_revision")>=awaitingRendered){awaitingRendered=0;message="Applied visual settings";}
+            if(page.equals("Calibration")) updateCalibration(s.optJSONObject("calibration"));
             if(lastRadius!=null)lastRadius.setText("Last applied sphere radius: "+(s.isNull("rendered_radius_m")?"unavailable":s.opt("rendered_radius_m")+" m"));
         }
         outcome.setText((!readbackAvailable&&s!=null?(pendingId.isEmpty()?"Waiting for current headset settings · ":"Waiting for the headset; the earlier action will not be sent again · "):"")+message+(state.inputDirty?" · Unapplied input edits":"")+(state.visualDirty?" · Unapplied visual edits":"")+((state.inputDirty&&state.conflict(false))||(state.visualDirty&&state.conflict(true))?" · Settings changed elsewhere — read applied settings":""));
@@ -644,10 +646,45 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         LinearLayout streams=foldout(parent,"ACC stream management");for(final String op:new String[]{"polar-start-acc","polar-stop-acc"})add(streams,op.equals("polar-start-acc")?"Start ACC":"Stop ACC",new Action(){public void run()throws Exception{send(op,new JSONObject(),false);}});
     }
     private void calibration(LinearLayout parent)throws Exception {
-        String source=state.applied.getJSONObject("inputs").getString("breath_source");parent.addView(text("Applied target: "+source,16,FG));if(source.equals("automatic")){parent.addView(text("Automatic breathing has no sensor calibration.",14,MUTED));return;}if(state.inputDirty){parent.addView(text("Apply input edits before calibrating their target.",14,MUTED));return;}
+        JSONObject inputs=state.applied.getJSONObject("inputs");
+        String source=inputs.getString("breath_source");
+        calibrationStatus=null;
+        calibrationProgress=null;
+        parent.addView(text("Applied target: "+displayChoice(source)+" · "+displayChoice(inputs.optString("breath_mapping")),16,FG));
+        if(source.equals("automatic")){
+            parent.addView(text("Automatic breathing has no sensor calibration.",14,MUTED));
+            return;
+        }
+        if(source.equals("controller") && inputs.optString("breath_mapping").equals("state")
+                && inputs.optString("controller_projection").equals("fixed-orientation")){
+            parent.addView(text("Controller State with Fixed orientation has no calibration.",14,MUTED));
+            return;
+        }
+        calibrationStatus=text("",14,MUTED);
+        parent.addView(calibrationStatus);
+        calibrationProgress=new ProgressBar(context,null,android.R.attr.progressBarStyleHorizontal);
+        parent.addView(calibrationProgress,new LinearLayout.LayoutParams(-1,-2));
+        if(state.inputDirty){
+            parent.addView(text("Apply input edits before calibrating their target.",14,MUTED));
+            return;
+        }
         for(final String action:new String[]{"start","cancel"})add(parent,action.equals("start")?"Start calibration":"Cancel calibration",new Action(){public void run()throws Exception{send("calibrate",new JSONObject().put("action",action),false);}});
         LinearLayout reset=foldout(parent,"Reset calibration");add(reset,"Reset selected source calibration",new Action(){public void run()throws Exception{send("calibrate",new JSONObject().put("action","reset"),false);}});
     }
+
+    private void updateCalibration(JSONObject calibration){
+        if(calibrationStatus==null || calibrationProgress==null)return;
+        int target=calibration==null?0:calibration.optInt("target_frames");
+        int accepted=calibration==null?0:Math.max(0,calibration.optInt("accepted_frames"));
+        String status=calibration==null?"Calibration status unavailable":displayChoice(calibration.optString("lifecycle","idle"));
+        String failure=calibration==null||calibration.isNull("failure")?"":calibration.optString("failure");
+        String detail=status+(target>0?" · "+accepted+" / "+target+" samples":"")+(failure.isEmpty()?"":" · "+displayChoice(failure));
+        if(!detail.contentEquals(calibrationStatus.getText()))calibrationStatus.setText(detail);
+        calibrationProgress.setVisibility(target>0?View.VISIBLE:View.GONE);
+        calibrationProgress.setMax(Math.max(1,target));
+        calibrationProgress.setProgress(accepted);
+    }
+
     private void send(String op,JSONObject payload,boolean visualDomain)throws Exception {
         if(retired||!host.current()||!resumed)throw new IllegalStateException("owner-not-current");
         if(!pendingId.isEmpty()||unknown)throw new IllegalStateException("reconcile-original-outcome-first");
@@ -674,7 +711,6 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
                 }
                 if(pendingOp.equals("save-profile")||pendingOp.equals("delete-profile"))pages.remove("Profiles");
                 if(pendingOp.startsWith("polar-"))pages.remove("Polar");
-                if(pendingOp.equals("calibrate"))pages.remove("Calibration");
                 if(pendingOp.equals("set-phone-control"))pages.remove("Setup");
                 message=pendingOp.equals("calibrate")?"Calibration command accepted.":"Applied "+operationLabel(pendingOp);
                 if((pendingOp.equals("apply-visual")||pendingOp.equals("apply-profile"))&&current.optLong("rendered_visual_revision")<confirmed){awaitingRendered=confirmed;message="Headset applying visual changes…";}

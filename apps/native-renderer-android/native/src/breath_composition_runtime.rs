@@ -1318,6 +1318,38 @@ pub(crate) fn effective_request() -> Option<BreathCompositionRequest> {
     lock_runtime().snapshot().effective
 }
 
+#[cfg(feature = "showcase")]
+pub(crate) fn showcase_uses_direct_controller_phase(request: BreathCompositionRequest) -> bool {
+    request.source == BreathCompositionSource::Controller
+        && request.mapping == BreathCompositionMapping::State
+        && request.controller_projection == ControllerProjectionSelection::FixedOrientation
+}
+
+#[cfg(feature = "showcase")]
+pub(crate) fn showcase_calibration_status(inputs: &Value) -> Value {
+    let runtime = lock_runtime();
+    let snapshot = runtime.snapshot();
+    let (Some(request), Some(calibration)) = (snapshot.effective, runtime.latest_calibration.as_ref()) else {
+        return Value::Null;
+    };
+    if snapshot.generation != Some(calibration.generation)
+        || request.source != calibration.source
+        || inputs["breath_source"] != request.source.as_str()
+        || inputs["breath_mapping"] != request.mapping.as_str()
+        || inputs["controller_projection"] != request.controller_projection.as_str()
+        || inputs["polar_projection"] != request.polar_projection.as_str()
+        || inputs["inverted"] != request.inverted
+    {
+        return Value::Null;
+    }
+    json!({
+        "lifecycle": calibration.lifecycle,
+        "accepted_frames": calibration.accepted_frames,
+        "target_frames": calibration.target_frames.unwrap_or(0),
+        "failure": calibration.failure_code
+    })
+}
+
 pub(crate) fn snapshot() -> BreathCompositionSnapshot {
     lock_runtime().snapshot()
 }

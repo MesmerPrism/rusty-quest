@@ -852,6 +852,20 @@ impl StimulusVolumeActions {
                     );
                 }
                 AdapterAction::Start(generation) => {
+                    #[cfg(feature = "showcase")]
+                    {
+                        let snapshot = crate::breath_composition_runtime::snapshot();
+                        if snapshot.generation != Some(generation) {
+                            continue;
+                        }
+                        if let Some(request) = snapshot.effective.filter(|request| {
+                            crate::breath_composition_runtime::showcase_uses_direct_controller_phase(*request)
+                        }) {
+                            self.native_controller_breath_assessment
+                                .start_phase_only(generation, request.inverted);
+                            continue;
+                        }
+                    }
                     let calibration = self
                         .native_controller_breath_assessment
                         .start(at, generation);
