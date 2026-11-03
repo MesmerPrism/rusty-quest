@@ -1,6 +1,9 @@
 package io.github.mesmerprism.rustyquest.native_renderer;
 import android.app.NativeActivity;
 import android.app.Activity;
+import android.content.Context;
+import android.view.MotionEvent;
+import android.widget.EditText;
 import android.os.Bundle;
 import android.content.Intent;
 import android.view.View;
@@ -17,7 +20,35 @@ public final class ShowcaseNativeActivity extends NativeActivity {
     private boolean resumed;
     private Boolean requestedVisibility;
     private BooleanSupplier currentProducer;
-    @Override protected void onCreate(Bundle state){super.onCreate(state);owner=new WeakReference<>(this);current=true;controls=new ShowcaseControls(this,new ShowcaseControls.Host(){public boolean current(){return ShowcaseNativeActivity.this.current&&currentProducer!=null&&currentProducer.getAsBoolean()&&!isFinishing()&&!isDestroyed();}public void closePanel(){requestVisibility(false);}});ShowcaseNativeBridge.initialize(this);}
+    @Override protected void onCreate(Bundle state){super.onCreate(state);owner=new WeakReference<>(this);current=true;controls=new ShowcaseControls(this,new ShowcaseControls.Host(){public boolean current(){return ShowcaseNativeActivity.this.current&&currentProducer!=null&&currentProducer.getAsBoolean()&&!isFinishing()&&!isDestroyed();}public void closePanel(){requestVisibility(false);}
+        @Override public EditText createEditor(Context context){return new MeshEditor(context);}
+    });ShowcaseNativeBridge.initialize(this);}
+    /** Keep the real editor and route a completed Vulkan tap through the existing IME bridge. */
+    private final class MeshEditor extends EditText {
+        MeshEditor(Context context) {
+            super(context);
+            setShowSoftInputOnFocus(false);
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            boolean handled = super.onTouchEvent(event);
+            BooleanSupplier producer = currentProducer;
+            if (handled && producer != null && event.getActionMasked() == MotionEvent.ACTION_UP) {
+                post(new Runnable() {
+                    @Override public void run() {
+                        ShowcaseNativeActivity activity = ShowcaseNativeActivity.this;
+                        if (showcaseOwnerResumed() && currentProducer == producer
+                                && producer.getAsBoolean() && isShown()
+                                && NativeMeshUiProducer.panelVisibilityConfirmed(activity, true)) {
+                            NativeMeshUiProducer.requestProductTextInput(activity, MeshEditor.this);
+                        }
+                    }
+                });
+            }
+            return handled;
+        }
+    }
+
     static ShowcaseNativeActivity current(){ShowcaseNativeActivity value=owner.get();return value!=null&&value.current&&!value.isFinishing()&&!value.isDestroyed()?value:null;}
     /** Producer startup may follow onResume; focus alone is not this lifecycle witness. */
     public boolean showcaseOwnerResumed(){return current&&resumed&&!isFinishing()&&!isDestroyed();}

@@ -11,7 +11,7 @@ public class ShowcasePanelModule extends Activity implements PanelModule {
     private TripleBSequence tripleB=new TripleBSequence(5000);
     public String panelModuleId(){return MODULE_ID;}
     static JSONObject visualPayload(JSONObject snapshot)throws Exception{return ShowcaseControls.visualPayload(snapshot);}
-    protected void onCreate(Bundle saved){super.onCreate(saved);tripleB=new TripleBSequence(panelPressWindowMillis());ShowcaseNativeBridge.initialize(this);ShowcaseNativeBridge.attach(this);controls=new ShowcaseControls(this,new ShowcaseControls.Host(){public boolean current(){return !isFinishing()&&!isDestroyed();}public void closePanel(){finish();}});try{setContentView(controls.attach(this));}catch(Exception error){throw new IllegalStateException("showcase-form-unavailable",error);}}
+    protected void onCreate(Bundle saved){super.onCreate(saved);tripleB=new TripleBSequence(panelPressWindowMillis());ShowcaseNativeBridge.initialize(this);ShowcaseNativeBridge.attach(this);controls=new ShowcaseControls(this,new ShowcaseControls.Host(){public boolean current(){return !isFinishing()&&!isDestroyed();}public void closePanel(){finish();}public android.widget.EditText createEditor(android.content.Context context){return new android.widget.EditText(context);}});try{setContentView(controls.attach(this));}catch(Exception error){throw new IllegalStateException("showcase-form-unavailable",error);}}
     protected void onResume(){super.onResume();resumed=true;tripleB.reset();if(controls!=null)controls.resumed();}
     protected void onPause(){resumed=false;tripleB.reset();if(controls!=null)controls.paused();super.onPause();}
     protected void onDestroy(){if(controls!=null)controls.close();ShowcaseNativeBridge.detach(this);super.onDestroy();}

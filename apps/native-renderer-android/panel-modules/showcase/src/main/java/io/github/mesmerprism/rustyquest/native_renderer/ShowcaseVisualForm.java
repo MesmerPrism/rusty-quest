@@ -12,6 +12,7 @@ import java.util.List;
 /** Complete typed form projected from the app-owned closed visual schema. */
 final class ShowcaseVisualForm {
     private final Context context;
+    private final ShowcaseControls.Host host;
     private final JSONObject schema;
     private final LinearLayout container;
     private final List<Binding> bindings=new ArrayList<>();
@@ -21,7 +22,13 @@ final class ShowcaseVisualForm {
     private JSONObject materialPresets;
     private TextView presetLabel;
     private interface Binding {void read()throws Exception;}
-    ShowcaseVisualForm(Context context,JSONObject schema,LinearLayout container){this.context=context;this.schema=schema;this.container=container;}
+    ShowcaseVisualForm(Context context,JSONObject schema,LinearLayout container,
+                       ShowcaseControls.Host host) {
+        this.context=context;
+        this.schema=schema;
+        this.container=container;
+        this.host=host;
+    }
     void show(JSONObject value)throws Exception {
         sectionMode=false;changed=null;
         model=new JSONObject(value.toString());bindings.clear();container.removeAllViews();
@@ -111,7 +118,7 @@ final class ShowcaseVisualForm {
         } else if(value instanceof Boolean){
             CheckBox checkbox=new CheckBox(context);checkbox.setText("Enabled");checkbox.setTextColor(ShowcaseControls.FG);checkbox.setChecked((Boolean)value);parent.addView(checkbox);bindings.add(new Binding(){public void read()throws Exception{put(owner,key,checkbox.isChecked());}});if(sectionMode)checkbox.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener(){public void onCheckedChanged(CompoundButton view,boolean next){try{put(owner,key,next);notifyChanged();}catch(Exception ignored){}}});
         } else if(value instanceof Number){
-            EditText number=new EditText(context);number.setTextColor(ShowcaseControls.FG);number.setSingleLine(true);number.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);number.setText(value.toString());parent.addView(number);
+            EditText number=host.createEditor(context);number.setTextColor(ShowcaseControls.FG);number.setSingleLine(true);number.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);number.setText(value.toString());parent.addView(number);
             if(sectionMode)number.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence text,int a,int c,int f){}public void onTextChanged(CharSequence text,int a,int b,int c){try{double n=Double.parseDouble(text.toString());if(Double.isFinite(n))put(owner,key,n);}catch(Exception ignored){}notifyChanged();}public void afterTextChanged(android.text.Editable value){}});
             bindings.add(new Binding(){public void read()throws Exception{double n=Double.parseDouble(number.getText().toString());if(!Double.isFinite(n)||description.has("minimum")&&n<description.getDouble("minimum")||description.has("maximum")&&n>description.getDouble("maximum"))throw new IllegalArgumentException("Out of range: "+label(path));if("integer".equals(description.optString("type"))){if(n!=Math.rint(n))throw new IllegalArgumentException("Whole number required: "+label(path));put(owner,key,(long)n);}else put(owner,key,n);}});
         } else throw new IllegalArgumentException("Unrepresented visual field: "+path);
