@@ -1,18 +1,28 @@
 use ash::vk;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 
-use super::{create_fullscreen_fragment_pipeline, SpatialPublicGuideTarget};
+use super::{begin_guide_pass, create_fullscreen_fragment_pipeline, SpatialPublicGuideTarget};
 use crate::camera_hwb_wsi::create_color_render_pass;
 
 include!(concat!(env!("OUT_DIR"), "/spatial_optional_color_build.rs"));
 
 const WORD_COUNT: usize = 10;
-const COMBINED: i32 = 3;
+pub(crate) const COMBINED: i32 = 3;
+pub(super) const SOURCE_COLOR_AVAILABLE: bool = SOURCE_COLOR_SHADER_COMPILED;
+static SOURCE_COLOR_DEVICE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn set_source_color_device_active(active: bool) {
+    SOURCE_COLOR_DEVICE_ACTIVE.store(active, Ordering::Release);
+}
 type Words = [u32; WORD_COUNT];
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct OptionalColorRequest {
     pub(crate) words: Words,
+    pub(crate) placement: i32,
     revision: u64,
 }
 
@@ -30,18 +40,32 @@ static CONTROL: Mutex<Control> = Mutex::new(Control {
 });
 
 pub(crate) fn set_optional_color_pass(placement: i32, words: Words) -> bool {
-    if placement != 0 && (placement != COMBINED || !OPTIONAL_COLOR_SHADER_COMPILED) {
+    let supported = match placement {
+        0 => true,
+        1 | 2 => SOURCE_COLOR_DEVICE_ACTIVE.load(Ordering::Acquire),
+        COMBINED => OPTIONAL_COLOR_SHADER_COMPILED,
+        _ => false,
+    };
+    if !supported {
         return false;
     }
     let mut control = CONTROL.lock().unwrap_or_else(|e| e.into_inner());
-    let words = (placement == COMBINED).then_some(words);
-    if control.requested.map(|request| request.words) != words {
+    let request = (placement != 0).then_some((placement, words));
+    if control
+        .requested
+        .map(|request| (request.placement, request.words))
+        != request
+    {
         let Some(revision) = control.revision.checked_add(1) else {
             return false;
         };
         control.revision = revision;
         control.effective = false;
-        control.requested = words.map(|words| OptionalColorRequest { words, revision });
+        control.requested = request.map(|(placement, words)| OptionalColorRequest {
+            placement,
+            words,
+            revision,
+        });
     }
     true
 }
@@ -111,11 +135,11 @@ mod jni_bridge {
         _: JNIEnv<'_>,
         _: JObject<'_>,
     ) -> jint {
-        if CONTROL.lock().unwrap_or_else(|e| e.into_inner()).effective {
-            COMBINED
-        } else {
-            0
-        }
+        let control = CONTROL.lock().unwrap_or_else(|e| e.into_inner());
+        control
+            .requested
+            .filter(|_| control.effective)
+            .map_or(0, |request| request.placement)
     }
 }
 
@@ -141,6 +165,20 @@ impl OptionalColorPass {
         extent: vk::Extent2D,
         presentation_pass: vk::RenderPass,
     ) -> Result<Self, String> {
+        Self::new_with_input(device, memory, format, extent, presentation_pass, true)
+    }
+
+    unsafe fn new_with_input(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        output_pass: vk::RenderPass,
+        capture_presentation: bool,
+    ) -> Result<Self, String> {
+        if extent.width < 2 || extent.width % 2 != 0 || extent.height == 0 {
+            return Err("optional-color-packed-extent-invalid".into());
+        }
         // One owner for partially constructed resources, also used on normal retirement.
         let mut pass = Self {
             device: device.clone(),
@@ -155,22 +193,30 @@ impl OptionalColorPass {
             pipeline: vk::Pipeline::null(),
             extent,
         };
-        pass.render_pass =
-            create_color_render_pass(device, format, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)?;
-        pass.input = Some(SpatialPublicGuideTarget::create(
-            device,
-            memory,
-            pass.render_pass,
-            extent,
-            format,
-            "optional-color-input",
-        )?);
+        let eye_render_pass = if capture_presentation {
+            pass.render_pass = create_color_render_pass(
+                device,
+                format,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )?;
+            pass.input = Some(SpatialPublicGuideTarget::create(
+                device,
+                memory,
+                pass.render_pass,
+                extent,
+                format,
+                "optional-color-input",
+            )?);
+            pass.render_pass
+        } else {
+            output_pass
+        };
         let eye_extent = pass.eye_extent();
         for _ in 0..2 {
             pass.eyes.push(SpatialPublicGuideTarget::create(
                 device,
                 memory,
-                pass.render_pass,
+                eye_render_pass,
                 eye_extent,
                 format,
                 "optional-color-eye",
@@ -245,7 +291,7 @@ impl OptionalColorPass {
             .map_err(|error| format!("optional-color-pipeline-layout-{error:?}"))?;
         pass.pipeline = create_fullscreen_fragment_pipeline(
             device,
-            presentation_pass,
+            output_pass,
             pass.pipeline_layout,
             include_bytes!(concat!(env!("OUT_DIR"), "/spatial_optional_color.frag.spv")),
             "optional-color",
@@ -269,8 +315,15 @@ impl OptionalColorPass {
     // Both destinations are fully replaced on each draw, so their previous
     // contents may be discarded after the shared WSI fence retires.
     pub(crate) unsafe fn prepare_eyes(&self, command: vk::CommandBuffer) {
+        self.copy_eyes(
+            command,
+            self.input.as_ref().unwrap().image,
+            PackedInput::ColorAttachment,
+        );
+    }
+
+    unsafe fn copy_eyes(&self, command: vk::CommandBuffer, source: vk::Image, input: PackedInput) {
         let device = &self.device;
-        let source = self.input.as_ref().unwrap().image;
         let layers = vk::ImageSubresourceLayers::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .layer_count(1);
@@ -285,10 +338,22 @@ impl OptionalColorPass {
                 .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                 .subresource_range(range)
         };
+        let (old_layout, previous_access, previous_stages) = match input {
+            PackedInput::ColorAttachment => (
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            ),
+            PackedInput::GuideSample => (
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::SHADER_READ,
+                vk::PipelineStageFlags::ALL_GRAPHICS,
+            ),
+        };
         let source_barrier = image_barrier(source)
-            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .old_layout(old_layout)
             .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .src_access_mask(previous_access)
             .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
         let mut before = vec![source_barrier];
         before.extend(self.eyes.iter().map(|target| {
@@ -299,7 +364,7 @@ impl OptionalColorPass {
         }));
         device.cmd_pipeline_barrier(
             command,
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            previous_stages,
             vk::PipelineStageFlags::TRANSFER,
             vk::DependencyFlags::empty(),
             &[],
@@ -330,7 +395,7 @@ impl OptionalColorPass {
                 &[copy],
             );
         }
-        let after = self
+        let mut after = self
             .eyes
             .iter()
             .map(|target| {
@@ -341,10 +406,21 @@ impl OptionalColorPass {
                     .dst_access_mask(vk::AccessFlags::SHADER_READ)
             })
             .collect::<Vec<_>>();
+        let mut consumers = vk::PipelineStageFlags::FRAGMENT_SHADER;
+        if matches!(input, PackedInput::GuideSample) {
+            after.push(
+                image_barrier(source)
+                    .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ),
+            );
+            consumers |= vk::PipelineStageFlags::VERTEX_SHADER;
+        }
         device.cmd_pipeline_barrier(
             command,
             vk::PipelineStageFlags::TRANSFER,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            consumers,
             vk::DependencyFlags::empty(),
             &[],
             &[],
@@ -420,6 +496,91 @@ impl Drop for OptionalColorPass {
                 target.destroy(device);
             }
             device.destroy_render_pass(self.render_pass, None);
+        }
+    }
+}
+
+enum PackedInput {
+    ColorAttachment,
+    GuideSample,
+}
+
+/// One bank's display-only output. The original guide target keeps its pixels.
+/// Allocate this only for a selected source-color route and retain it through
+/// the same fence as that bank's other per-frame resources.
+pub(super) struct SourceColorPass {
+    draw: OptionalColorPass,
+    display: Option<SpatialPublicGuideTarget>,
+    guide_render_pass: vk::RenderPass,
+}
+
+impl SourceColorPass {
+    pub(super) unsafe fn new(
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        guide_render_pass: vk::RenderPass,
+    ) -> Result<Self, String> {
+        let draw = OptionalColorPass::new_with_input(
+            device,
+            memory,
+            format,
+            extent,
+            guide_render_pass,
+            false,
+        )?;
+        let display = SpatialPublicGuideTarget::create(
+            device,
+            memory,
+            guide_render_pass,
+            extent,
+            format,
+            "optional-source-display",
+        )?;
+        Ok(Self {
+            draw,
+            display: Some(display),
+            guide_render_pass,
+        })
+    }
+
+    /// The caller supplies a completed, sampleable packed bank image of the
+    /// same format and extent as the owned display target. Input and output
+    /// must remain separate, and the guide render pass ends shader-readable.
+    pub(super) unsafe fn record(
+        &self,
+        command: vk::CommandBuffer,
+        source: &SpatialPublicGuideTarget,
+        words: Words,
+        elapsed: f32,
+    ) {
+        let target = self.display.as_ref().expect("source display target");
+        self.draw
+            .copy_eyes(command, source.image, PackedInput::GuideSample);
+        begin_guide_pass(
+            &self.draw.device,
+            command,
+            self.guide_render_pass,
+            target.framebuffer,
+            self.draw.extent,
+        );
+        self.draw.draw(command, words, elapsed);
+        self.draw.device.cmd_end_render_pass(command);
+    }
+
+    pub(super) fn display_view(&self) -> vk::ImageView {
+        self.display
+            .as_ref()
+            .expect("source display target")
+            .image_view
+    }
+}
+
+impl Drop for SourceColorPass {
+    fn drop(&mut self) {
+        if let Some(display) = self.display.take() {
+            unsafe { display.destroy(&self.draw.device) };
         }
     }
 }

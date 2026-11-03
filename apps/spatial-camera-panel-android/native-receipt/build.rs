@@ -164,6 +164,20 @@ fn main() {
         "spatial_optional_color.frag.spv",
         "fragment",
     );
+    let source_color = source_bank_abi == 2 && optional_color.compiled;
+    if source_color {
+        compile_optional_shader_env_with_args(
+            &glslc,
+            &out_dir,
+            "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER",
+            "spatial_display_primary.frag.spv",
+            "fragment",
+            &["-DPRIVATE_LAYER_DISPLAY_PRIMARY=1".to_string()],
+        );
+    } else {
+        fs::write(out_dir.join("spatial_display_primary.frag.spv"), [])
+            .expect("write absent display primary shader");
+    }
     let source_bank_vertex = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
@@ -176,18 +190,34 @@ fn main() {
             format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
         ],
     );
+    let source_bank_fragment_defines = [
+        "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
+        "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+        format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
+    ];
     let source_bank_fragment = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
         "spatial_source_bank.frag.spv",
         "fragment",
-        &[
-            "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
-            "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
-            format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
-        ],
+        &source_bank_fragment_defines,
     );
+    if source_color {
+        let mut source_color_defines = source_bank_fragment_defines.to_vec();
+        source_color_defines.push("-DPRIVATE_LAYER_SOURCE_COLOR=1".to_string());
+        compile_optional_shader_env_with_args(
+            &glslc,
+            &out_dir,
+            "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
+            "spatial_source_color_bank.frag.spv",
+            "fragment",
+            &source_color_defines,
+        );
+    } else {
+        fs::write(out_dir.join("spatial_source_color_bank.frag.spv"), [])
+            .expect("write absent source color final shader");
+    }
     assert!(
         source_bank_abi == 1 || (source_bank_vertex.compiled && source_bank_fragment.compiled),
         "ABI2 requires both exact final shader providers"
@@ -203,8 +233,8 @@ fn main() {
     fs::write(
         out_dir.join("spatial_optional_color_build.rs"),
         format!(
-            "pub(crate) const OPTIONAL_COLOR_SHADER_COMPILED: bool = {};",
-            optional_color.compiled
+            "pub(crate) const OPTIONAL_COLOR_SHADER_COMPILED: bool = {};\npub(crate) const SOURCE_COLOR_SHADER_COMPILED: bool = {};",
+            optional_color.compiled, source_color
         ),
     )
     .expect("write optional color shader metadata");

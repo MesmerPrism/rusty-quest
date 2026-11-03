@@ -1194,6 +1194,14 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let mut guide_record =
         SpatialPublicGuidePassRecord::not_recorded(guide_plan, "camera-projection-not-attempted");
     let edge_window_selected = guide_plan.edge_window_selected();
+    let optional_color = optional_color_pass::requested();
+    let layer_override = f32::from_bits(guide_plan.layer_override_bits);
+    let source_color = optional_color.filter(|request| {
+        request.placement != optional_color_pass::COMBINED
+            && !projection_zone_frame.settings.synthetic_diagnostic()
+            && layer_override <= 0.0
+    });
+    let mut source_color_recorded = None;
     let projection_footprint_scale = projection_guard_band.footprint_scale;
     let mut projection_zone_ready = false;
     let mut projection_zone_descriptor_available = false;
@@ -1208,13 +1216,14 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
         if let Some(inputs) = stereo_sources {
-            guide_record = targets.record_stereo_source_banks(
+            (guide_record, source_color_recorded) = targets.record_stereo_source_banks(
                 device,
                 command_buffer,
                 gpu_timestamps,
                 frame_slot,
                 elapsed_seconds,
                 inputs,
+                source_color,
             )?;
         } else {
             guide_record = targets.record_spatial_public_guide_passes(
@@ -1374,8 +1383,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             projection_zone_frame.settings,
             projection_zone_composite_alpha(composite_alpha),
         );
-    let optional_color_request = optional_color_pass::requested().filter(|_| {
-        ordinary_combined
+    let optional_color_request = optional_color.filter(|request| {
+        request.placement == optional_color_pass::COMBINED
+            && ordinary_combined
             && public_projection_ready
             && projection_zone_ready
             && !opaque_camera_only
@@ -1492,7 +1502,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         );
     }
     device.cmd_end_render_pass(command_buffer);
-    let mut recorded_optional_color = None;
+    let mut recorded_optional_color = source_color_recorded.filter(|_| projection_zone_rendered);
     if let (Some(_), Some(request)) = (offscreen_target, optional_color_request) {
         let pass = public_guide_targets
             .as_deref()
