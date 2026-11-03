@@ -225,19 +225,6 @@ impl NativeControllerBreathStateEstimator {
         self.reset_history();
     }
 
-    #[cfg(feature = "showcase")]
-    pub(crate) fn for_polar_acceleration() -> Self {
-        let mut estimator = Self::new(NativeControllerBreathSettings::default());
-        estimator.use_dynamic_axis(true);
-        estimator.classifier.sensor_axis_polarity = true;
-        estimator
-    }
-
-    #[cfg(feature = "showcase")]
-    pub(crate) fn push_acceleration(&mut self, time_s: f64, acceleration_g: [f64; 3]) -> CommonBreathPhase {
-        self.classifier.push_sample(self.settings, time_s, acceleration_g, [0.0, 0.0, 0.0, 1.0])
-    }
-
     pub(crate) fn marker_fields(&self) -> String {
         format!(
             "nativeControllerBreathSamples={} nativeControllerBreathTrackingLossSamples={} nativeControllerBreathLastSequenceId={} nativeControllerBreathPhase={}",
@@ -247,6 +234,79 @@ impl NativeControllerBreathStateEstimator {
             self.last_phase.as_str(),
         )
     }
+}
+
+#[cfg(feature = "showcase")]
+#[derive(Debug)]
+pub(crate) struct PolarRollingBreathState {
+    classifier: FixedControllerStateClassifier,
+    settings: NativeControllerBreathSettings,
+    baseline: Option<[f64; 3]>,
+    smoothed: Option<[f64; 3]>,
+    last_at: Option<f64>,
+    phase: CommonBreathPhase,
+    candidate: CommonBreathPhase,
+    candidate_since: f64,
+}
+
+#[cfg(feature = "showcase")]
+impl PolarRollingBreathState {
+    pub(crate) fn new() -> Self {
+        let settings = NativeControllerBreathSettings::default();
+        let mut classifier = FixedControllerStateClassifier::new(settings);
+        classifier.dynamic_axis = Some(DynamicControllerAxis::default());
+        classifier.sensor_axis_polarity = true;
+        Self {
+            classifier, settings, baseline: None, smoothed: None, last_at: None,
+            phase: CommonBreathPhase::Hold, candidate: CommonBreathPhase::Hold, candidate_since: 0.0,
+        }
+    }
+
+    pub(crate) fn reset_history(&mut self) {
+        *self = Self::new();
+    }
+
+    pub(crate) fn lose_signal(&mut self) {
+        self.reset_history();
+        self.phase = CommonBreathPhase::BadTracking;
+        self.candidate = CommonBreathPhase::BadTracking;
+    }
+
+    pub(crate) fn push_acceleration(&mut self, at: f64, raw_g: [f64; 3]) -> (CommonBreathPhase, bool) {
+        if self.last_at.is_some_and(|last| at - last > 0.125) {
+            self.lose_signal();
+        }
+        let dt = self.last_at.map_or(0.0, |last| (at - last).clamp(0.0, 0.25));
+        self.last_at = Some(at);
+        let baseline = follow_acceleration(self.baseline, raw_g, 0.035, dt);
+        self.baseline = Some(baseline);
+        let filtered = follow_acceleration(self.smoothed, sub3(raw_g, baseline), 0.6, dt);
+        self.smoothed = Some(filtered);
+        let next = self.classifier.push_sample(self.settings, at, filtered, [0.0, 0.0, 0.0, 1.0]);
+        if next == CommonBreathPhase::BadTracking {
+            // Relearn the direction, retaining the filter's history across a motion rejection.
+            self.classifier.reset();
+            self.phase = next;
+            self.candidate = next;
+            self.candidate_since = at;
+            return (next, true);
+        }
+        if self.candidate != next {
+            self.candidate = next;
+            self.candidate_since = at;
+        }
+        let confirm_seconds = if next == CommonBreathPhase::Hold { 0.25 } else { 0.30 };
+        if self.phase != next && at - self.candidate_since >= confirm_seconds {
+            self.phase = next;
+        }
+        (self.phase, false)
+    }
+}
+
+#[cfg(feature = "showcase")]
+fn follow_acceleration(previous: Option<[f64; 3]>, input: [f64; 3], hz: f64, dt: f64) -> [f64; 3] {
+    let alpha = -(-2.0 * std::f64::consts::PI * hz * dt).exp_m1();
+    previous.map_or(input, |value| std::array::from_fn(|i| value[i] + alpha * (input[i] - value[i])))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -459,8 +519,11 @@ impl FixedControllerStateClassifier {
         self.last_orientation = orientation;
         self.last_sample_time_s = Some(sample_time_s);
 
+        // Polar acceleration has a larger breathing envelope than controller displacement.
+        let envelope_guard = if self.sensor_axis_polarity { f64::from(0.06_f32) }
+            else { f64::from(settings.moving_average_guard) };
         if rotation_delta > f64::from(settings.rotation_guard_degrees)
-            || ma_diff.abs() > f64::from(settings.moving_average_guard)
+            || ma_diff.abs() > envelope_guard
         {
             return CommonBreathPhase::BadTracking;
         }
