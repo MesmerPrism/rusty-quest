@@ -115,6 +115,7 @@ def main():
  private String terminalWholeChallenge;
  private Object wholeCloseRollover,wholeLocalDrain,retainedWholeNativeReceipt,lastClosedActorProof;private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
  private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;
+ private void releaseEffectiveInputsAfterVerifiedCleanup(){} // No installed runtime inputs in this host fixture.
  private CompletableFuture<Void> wholeCallbackMarker;private EmbeddedDuplexPlatform wholeCallbackPlatform;
  boolean harnessJoinWhole(EmbeddedDuplexPlatform value)throws Exception{return joinWholeCallbackOwner(value);}
  String harnessNativeHandoff()throws Exception{return processFence.nativeOperationalRunHandoff();}

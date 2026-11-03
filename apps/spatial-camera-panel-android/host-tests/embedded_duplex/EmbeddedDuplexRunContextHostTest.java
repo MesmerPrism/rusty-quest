@@ -315,10 +315,47 @@ public final class EmbeddedDuplexRunContextHostTest {
   restored.harnessClose();
   System.out.println("run caller checks="+checks+"; actual selector/store/fence/Original bodies, Native physical state modeled");
  }
+ static void retainedIdleFirstRun()throws Exception{
+  java.lang.reflect.Field instance=EmbeddedDuplexProcessHost.class.getDeclaredField("instance");instance.setAccessible(true);
+  for(String prior:new String[]{"none","native","originals","run","pending","native-ineligible"}){
+   File app=Files.createTempDirectory("retained-first-run").toFile();
+   File replay=new File(app,"embedded-duplex-replay");yes(replay.mkdir());
+   try(EmbeddedDuplexProcessFence fence=EmbeddedDuplexProcessFence.acquire(replay,null,null,()->{})){
+    if(prior.equals("pending"))fence.beforeRuntimeEffects(null,null);
+   }
+   if(prior.equals("originals"))yes(new File(app,"operator-originals-v1").mkdir());
+   if(prior.equals("run"))yes(new File(app,"embedded-duplex-runs-v1").mkdir());
+   android.content.Context context=new android.content.Context(){public File getNoBackupFilesDir(){return app;}public String getPackageName(){return "fixture.package";}};
+   EmbeddedDuplexNative.actualRun=null;
+   EmbeddedDuplexNative.eligible=!prior.equals("native-ineligible");
+   EmbeddedDuplexNative.nativeGeneration=prior.equals("native")?1L:null;
+   String id="f".repeat(32);
+   try{
+    if(prior.equals("none")){
+     org.json.JSONObject first=new org.json.JSONObject(EmbeddedDuplexRuntimeService.newRun(context,id,null).get(5,java.util.concurrent.TimeUnit.SECONDS));
+     yes(id.equals(first.getString("run_id")));yes(first.getLong("selection_generation")==1);
+     org.json.JSONObject retry=new org.json.JSONObject(EmbeddedDuplexRuntimeService.newRun(context,id,null).get(5,java.util.concurrent.TimeUnit.SECONDS));
+     yes(retry.getLong("selection_generation")==first.getLong("selection_generation"));
+    }else{
+     try{
+      EmbeddedDuplexRuntimeService.newRun(context,id,null).get(5,java.util.concurrent.TimeUnit.SECONDS);
+      throw new AssertionError("accepted retained " + prior);
+     }catch(java.util.concurrent.ExecutionException expected){
+      if(!(expected.getCause() instanceof IllegalStateException || expected.getCause() instanceof IllegalArgumentException))throw expected;
+     }
+     yes(EmbeddedDuplexRuntimeService.selectedRunId(context)==null);
+    }
+   }finally{
+    EmbeddedDuplexProcessHost.forApplication(context).harnessClose();
+    instance.set(null,null);
+    EmbeddedDuplexNative.eligible=true;EmbeddedDuplexNative.nativeGeneration=null;
+   }
+  }
+ }
  public static void main(String[] args)throws Exception{
   if(args.length>0&&args[0].equals("legacy-files")){savedLegacyWhole(args[1],args[2]);return;}
   if(args.length>0&&args[0].equals("legacy-select")){savedLegacySelection(args[1],args[2]);return;}
-  if(args.length>0&&args[0].equals("caller")){legacyWitnessControls();callerControls();activityCacheControls();return;}
+  if(args.length>0&&args[0].equals("caller")){retainedIdleFirstRun();legacyWitnessControls();callerControls();activityCacheControls();return;}
   File app=Files.createTempDirectory("run-host").toFile();
   byte[] identity="real retained identity bytes".getBytes();Files.write(new File(app,"identity").toPath(),identity);
   EmbeddedDuplexRunSelectionStore store=new EmbeddedDuplexRunSelectionStore(app,new EmbeddedDuplexRunSelectionStore.DirectorySync(){public void sync(File d){} public void privateMode(File p,boolean d){/* Host Windows mode modeled; Android uses actual chmod. */}});

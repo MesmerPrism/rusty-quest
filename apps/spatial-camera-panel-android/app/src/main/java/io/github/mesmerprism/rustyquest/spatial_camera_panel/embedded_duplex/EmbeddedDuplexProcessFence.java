@@ -375,6 +375,11 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         f[3]=state;String body=String.join("\n",java.util.Arrays.copyOf(f,checksum))+"\n";return body+digest(body)+"\n";
     }
     synchronized boolean newlyInitialized(){return newlyInitialized;}
+    synchronized boolean clearLegacyWithoutJournals()throws Exception{
+        requireFresh();
+        verifyHeldRecord();
+        return operationalRunId==null&&!pending&&"-".equals(checkpointDigest)&&"-".equals(evidenceDigest);
+    }
     synchronized long previousGeneration(){return acquisitionGeneration;}
     /** Exact held predecessor, retained before this acquisition wrote its new generation. */
     synchronized String acquisitionRecordForRecovery()throws Exception{
