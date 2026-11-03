@@ -239,6 +239,11 @@ impl NativeControllerBreathStateEstimator {
 #[cfg(feature = "showcase")]
 pub(crate) const DEFAULT_POLAR_HOLD_MG: [f64; 2] = [8.0, 11.2];
 
+// Paired controller recordings establish positive X and Z as inhale for the
+// standard strap orientation. This vector sets polarity, not the learned axis.
+const POLAR_INHALE_REFERENCE: [f64; 3] =
+    [std::f64::consts::FRAC_1_SQRT_2, 0.0, std::f64::consts::FRAC_1_SQRT_2];
+
 // Store both values together. The render path never locks the settings owner.
 #[cfg(feature = "showcase")]
 static POLAR_HOLD_BITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -266,7 +271,6 @@ pub(crate) struct PolarRollingBreathState {
     baseline: Option<[f64; 3]>,
     smoothed: Option<[f64; 3]>,
     last_at: Option<f64>,
-    axis_sign: Option<f64>,
     phase: CommonBreathPhase,
     candidate: CommonBreathPhase,
     candidate_since: f64,
@@ -283,7 +287,7 @@ impl PolarRollingBreathState {
         classifier.dynamic_axis = Some(DynamicControllerAxis::default());
         classifier.sensor_axis_polarity = true;
         Self {
-            classifier, settings, baseline: None, smoothed: None, last_at: None, axis_sign: None,
+            classifier, settings, baseline: None, smoothed: None, last_at: None,
             phase: CommonBreathPhase::Hold, candidate: CommonBreathPhase::Hold, candidate_since: 0.0,
         }
     }
@@ -312,18 +316,14 @@ impl PolarRollingBreathState {
         if observed == CommonBreathPhase::BadTracking {
             // Relearn the direction, retaining the filter's history across a motion rejection.
             self.classifier.reset();
-            self.axis_sign = None;
             self.phase = observed;
             self.candidate = observed;
             self.candidate_since = at;
             return (observed, true);
         }
         let next = self.classifier.dynamic_axis.as_ref().and_then(|learner| learner.axis)
-            .map_or(CommonBreathPhase::Hold, |axis| {
-                // Fix the sign once per learned axis against Polar sensor +X.
-                // An explicit input inversion still reverses the published phase.
-                let sign = *self.axis_sign.get_or_insert(if axis[0] < 0.0 { -1.0 } else { 1.0 });
-                let signal = self.classifier.last_signal * sign;
+            .map_or(CommonBreathPhase::Hold, |_| {
+                let signal = self.classifier.last_signal;
                 // Leave Hold only on stronger evidence than is needed to enter it.
                 let [entry, exit] = polar_hold_g();
                 let threshold = if self.phase == CommonBreathPhase::Hold { exit } else { entry };
@@ -341,6 +341,28 @@ impl PolarRollingBreathState {
         }
         (self.phase, false)
     }
+}
+
+#[cfg(feature = "showcase")]
+#[test]
+fn polar_rolling_polarity_survives_relearning_across_zero_x() {
+    let mut polar = PolarRollingBreathState::new();
+    let mut run = |x: f64| -> Vec<CommonBreathPhase> {
+        polar.lose_signal();
+        (0..600)
+            .map(|i| {
+                let t = f64::from(i) * 0.02;
+                let breath = 0.033 * (std::f64::consts::TAU * t / 4.0).sin();
+                polar.push_acceleration(t, [x * breath, 1.0, breath]).0
+            })
+            .collect()
+    };
+    let positive_x = run(0.05);
+    let negative_x = run(-0.05);
+    for phase in [CommonBreathPhase::Inhale, CommonBreathPhase::Exhale] {
+        assert!(positive_x.contains(&phase));
+    }
+    assert!(positive_x == negative_x, "relearning reversed the published phases");
 }
 
 #[cfg(feature = "showcase")]
@@ -533,7 +555,12 @@ impl FixedControllerStateClassifier {
                 self.reset();
                 return CommonBreathPhase::BadTracking;
             }
-            learner.observe(sample_time_s, position, (!self.sensor_axis_polarity).then_some(reference_axis))
+            let polarity_reference = if self.sensor_axis_polarity {
+                POLAR_INHALE_REFERENCE
+            } else {
+                reference_axis
+            };
+            learner.observe(sample_time_s, position, Some(polarity_reference))
         } else {
             Some(reference_axis)
         };

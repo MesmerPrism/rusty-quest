@@ -17,11 +17,15 @@ public final class ShowcaseControlsModelTest {
         check(next.getString("breath_mapping").equals("state"),"automatic input requires state mapping");
         check(next.getBoolean("inverted"),"input change overwrote an unrelated field");
         check(current.getString("breath_mapping").equals("volume"),"input change mutated readback");
+        check(ShowcaseControls.displayChoice("tilt-classifier").equals("Three-axis tilt"),"tilt label is unclear");
         JSONObject polar = next.put("breath_source","polar-acc").put("polar_projection","dynamic-axis");
         JSONObject controller = ShowcaseControls.inputChange(polar,"breath_source","controller");
         check(controller.getString("polar_projection").equals("dynamic-axis"),"Controller overwrote the Polar projection");
         JSONObject restored = ShowcaseControls.inputChange(controller,"breath_source","polar-acc");
         check(restored.getString("polar_projection").equals("dynamic-axis"),"returning to Polar lost the saved projection");
+        JSONObject tilt = ShowcaseControls.inputChange(restored,"polar_projection","tilt-classifier");
+        JSONObject volume = ShowcaseControls.inputChange(tilt,"breath_mapping","volume");
+        check(volume.getString("polar_projection").equals("tilt-classifier"),"Volume overwrote the saved tilt classifier");
     }
     private static void numericBounds() throws Exception {
         check(ShowcaseControls.parseNumericValue(" 30 ",30,240,false,false).doubleValue()==30,"lower BPM boundary");

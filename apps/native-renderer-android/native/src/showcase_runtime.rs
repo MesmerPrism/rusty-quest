@@ -301,7 +301,7 @@ fn validate_inputs(v: &Value) -> Result<(), String> {
         &v["controller_projection"],
         &["dynamic-axis", "fixed-orientation"],
     )?;
-    choice(&v["polar_projection"], &["xz", "3d", "dynamic-axis"])?;
+    choice(&v["polar_projection"], &["xz", "3d", "dynamic-axis", "tilt-classifier"])?;
     if !v["inverted"].is_boolean() {
         return Err("boolean_required".into());
     }
@@ -710,7 +710,7 @@ pub(crate) fn restore_breath_selection_after_runtime_install() {
 
 pub(crate) fn effective_polar_projection(input: &Value) -> &str {
     match input["polar_projection"].as_str() {
-        Some("dynamic-axis")
+        Some("dynamic-axis" | "tilt-classifier")
             if input["breath_source"] != "polar-acc" || input["breath_mapping"] != "state" =>
         {
             "xz"
@@ -952,7 +952,7 @@ pub(crate) fn command_with_executor(
                         && inputs["breath_mapping"] == "state")
                     || (inputs["breath_source"] == "polar-acc"
                         && inputs["breath_mapping"] == "state"
-                        && inputs["polar_projection"] == "dynamic-axis")
+                        && matches!(inputs["polar_projection"].as_str(), Some("dynamic-axis" | "tilt-classifier")))
                 {
                     return Err("calibration-not-required".into());
                 }
@@ -1056,20 +1056,22 @@ fn calibration_outcome(response: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn polar_dynamic_axis_preference_is_only_effective_for_polar_state() {
+    fn polar_direct_state_preferences_are_only_effective_for_polar_state() {
         let mut inputs = ShowcaseRuntime::new("10".into()).inputs;
-        inputs["polar_projection"] = json!("dynamic-axis");
-        for (source, mapping, expected) in [
-            ("controller", "volume", "xz"),
-            ("automatic", "state", "xz"),
-            ("polar-acc", "volume", "xz"),
-            ("polar-acc", "state", "dynamic-axis"),
-        ] {
-            inputs["breath_source"] = json!(source);
-            inputs["breath_mapping"] = json!(mapping);
-            assert!(validate_inputs(&inputs).is_ok());
-            assert_eq!(effective_polar_projection(&inputs), expected);
-            assert_eq!(inputs["polar_projection"], "dynamic-axis");
+        for mode in ["dynamic-axis", "tilt-classifier"] {
+            inputs["polar_projection"] = json!(mode);
+            for (source, mapping, expected) in [
+                ("controller", "volume", "xz"),
+                ("automatic", "state", "xz"),
+                ("polar-acc", "volume", "xz"),
+                ("polar-acc", "state", mode),
+            ] {
+                inputs["breath_source"] = json!(source);
+                inputs["breath_mapping"] = json!(mapping);
+                assert!(validate_inputs(&inputs).is_ok());
+                assert_eq!(effective_polar_projection(&inputs), expected);
+                assert_eq!(inputs["polar_projection"], mode);
+            }
         }
     }
 

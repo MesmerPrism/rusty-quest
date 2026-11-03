@@ -295,7 +295,7 @@ pub(crate) struct PolarAccBreathAdapter {
     phase: PolarPhaseOwner,
     unbiased_phase: PolarPhaseOwner,
     #[cfg(feature = "showcase")]
-    dynamic_state: Option<(crate::native_controller_breath_state::PolarRollingBreathState, bool)>,
+    dynamic_state: Option<(PolarDirectState, bool)>,
     generation: Option<BreathGeneration>,
     next_runtime_generation: u64,
     last_sensor_monotonic_time_ns: Option<u64>,
@@ -333,7 +333,15 @@ impl PolarAccBreathAdapter {
     #[cfg(feature = "showcase")]
     pub(crate) fn enable_dynamic_state(&mut self, inverted: bool) {
         self.dynamic_state = Some((
-            crate::native_controller_breath_state::PolarRollingBreathState::new(),
+            PolarDirectState::Rolling(crate::native_controller_breath_state::PolarRollingBreathState::new()),
+            inverted,
+        ));
+    }
+
+    #[cfg(feature = "showcase")]
+    pub(crate) fn enable_tilt_state(&mut self, inverted: bool) {
+        self.dynamic_state = Some((
+            PolarDirectState::Tilt(Box::new(crate::polar_tilt_breath_state::PolarTiltBreathState::new())),
             inverted,
         ));
     }
@@ -928,6 +936,37 @@ impl PolarAccBreathAdapter {
         self.last_phase_observation = Some(observation);
         let unbiased = self.unbiased_phase.reset_history(at, reason);
         self.last_unbiased_phase_observation = Some(unbiased);
+    }
+}
+
+#[cfg(feature = "showcase")]
+#[derive(Debug)]
+enum PolarDirectState {
+    Rolling(crate::native_controller_breath_state::PolarRollingBreathState),
+    Tilt(Box<crate::polar_tilt_breath_state::PolarTiltBreathState>),
+}
+
+#[cfg(feature = "showcase")]
+impl PolarDirectState {
+    fn push_acceleration(&mut self, at: f64, g: [f64; 3]) -> (CommonBreathPhase, bool) {
+        match self {
+            Self::Rolling(estimator) => estimator.push_acceleration(at, g),
+            Self::Tilt(estimator) => estimator.push_acceleration(at, g),
+        }
+    }
+
+    fn lose_signal(&mut self) {
+        match self {
+            Self::Rolling(estimator) => estimator.lose_signal(),
+            Self::Tilt(estimator) => estimator.lose_signal(),
+        }
+    }
+
+    fn reset_history(&mut self) {
+        match self {
+            Self::Rolling(estimator) => estimator.reset_history(),
+            Self::Tilt(estimator) => estimator.reset_history(),
+        }
     }
 }
 

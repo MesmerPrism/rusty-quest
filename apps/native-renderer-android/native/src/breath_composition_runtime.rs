@@ -922,7 +922,7 @@ impl BreathCompositionRuntime {
                     let projection = match request.polar_projection {
                         PolarProjectionSelection::Xz => PolarAccProjection::Xz,
                         PolarProjectionSelection::Full3d => PolarAccProjection::Full3d,
-                        PolarProjectionSelection::DynamicAxis => PolarAccProjection::Full3d,
+                        PolarProjectionSelection::DynamicAxis | PolarProjectionSelection::TiltClassifier => PolarAccProjection::Full3d,
                     };
                     let mut parameters =
                         rusty_quest_breath_contract::calibration::CalibrationParameters::default();
@@ -943,8 +943,10 @@ impl BreathCompositionRuntime {
                     }
                     let mut adapter = PolarAccBreathAdapter::new(settings);
                     #[cfg(feature = "showcase")]
-                    if request.polar_projection == PolarProjectionSelection::DynamicAxis {
-                        adapter.enable_dynamic_state(request.inverted);
+                    match request.polar_projection {
+                        PolarProjectionSelection::DynamicAxis => adapter.enable_dynamic_state(request.inverted),
+                        PolarProjectionSelection::TiltClassifier => adapter.enable_tilt_state(request.inverted),
+                        _ => {}
                     }
                     let calibration = adapter.configure(at);
                     self.polar_adapter = Some(adapter);
@@ -1967,6 +1969,9 @@ fn parse_request_tokens(
         #[cfg(feature = "showcase")]
         "dynamic-axis" if source == BreathCompositionSource::PolarAcc
             && mapping == BreathCompositionMapping::State => PolarProjectionSelection::DynamicAxis,
+        #[cfg(feature = "showcase")]
+        "tilt-classifier" if source == BreathCompositionSource::PolarAcc
+            && mapping == BreathCompositionMapping::State => PolarProjectionSelection::TiltClassifier,
         _ => return Err("unsupported-polar-projection"),
     };
     Ok(BreathCompositionRequest {

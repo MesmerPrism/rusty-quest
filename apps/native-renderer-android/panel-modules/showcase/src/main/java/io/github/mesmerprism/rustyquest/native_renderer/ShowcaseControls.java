@@ -205,7 +205,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     private TextView text(String value,int size,int color){TextView view=new TextView(context);view.setText(value);view.setTextSize(size);view.setTextColor(color);view.setPadding(0,dp(4),0,dp(4));return view;}
     private Button button(String label,final Action action){Button view=new Button(context);view.setText(label);styleButton(view);if(label.equals("Apply visuals")||label.equals("Confirm"))paintControl(view,SELECTED,SURFACE);view.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){try{action.run();}catch(Exception error){message=friendlyError(error);updateFrame();}}});return view;}
     private static String friendlyError(Exception error){String reason=String.valueOf(error.getMessage());if(reason.contains("settings-changed"))return "Settings changed on the headset. Read applied settings before applying your edits.";if(reason.contains("reconcile-original"))return "Waiting for the earlier action's outcome.";if(error instanceof NumberFormatException)return "Enter a valid number before applying.";if(reason.startsWith("Out of range:")||reason.startsWith("Whole number required:"))return reason;return "This action is unavailable. Read applied settings and try again.";}
-    static String displayChoice(String value){if(value.equals("automatic"))return "Automatic";if(value.equals("polar-acc"))return "Polar ACC";if(value.equals("xz"))return "XZ";if(value.equals("3d"))return "3D";if(value.equals("sphere-radius-percent"))return "% of sphere radius";if(value.equals("world-meters"))return "World size (m)";if(value.equals("legacy-payload-envelope"))return "Original size behavior";if(value.equals("reference-material-emulation"))return "Reference material";if(value.equals("packaged-default"))return "Built-in material";String text=value.replace('-',' ');return text.isEmpty()?text:Character.toUpperCase(text.charAt(0))+text.substring(1);}
+    static String displayChoice(String value){if(value.equals("automatic"))return "Automatic";if(value.equals("polar-acc"))return "Polar ACC";if(value.equals("tilt-classifier"))return "Three-axis tilt";if(value.equals("xz"))return "XZ";if(value.equals("3d"))return "3D";if(value.equals("sphere-radius-percent"))return "% of sphere radius";if(value.equals("world-meters"))return "World size (m)";if(value.equals("legacy-payload-envelope"))return "Original size behavior";if(value.equals("reference-material-emulation"))return "Reference material";if(value.equals("packaged-default"))return "Built-in material";String text=value.replace('-',' ');return text.isEmpty()?text:Character.toUpperCase(text.charAt(0))+text.substring(1);}
     static ArrayAdapter<String> adapter(Context context,String[] values) {
         return new ArrayAdapter<String>(context,android.R.layout.simple_spinner_item,values) {
             private void style(TextView text) {
@@ -634,12 +634,14 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         LinearLayout advanced=foldoutGroup(parent,"Advanced input mapping",expanded);
         advancedInputs=advanced;
         inputChoice(advanced,"Controller projection",state.inputs,"controller_projection",new String[]{"dynamic-axis","fixed-orientation"});
-        boolean polarDynamic = allowsPolarDynamic(state.inputs);
-        boolean savedDynamic = state.inputs.optString("polar_projection").equals("dynamic-axis");
+        boolean polarState = allowsPolarDynamic(state.inputs);
+        String polarProjection = state.inputs.optString("polar_projection");
+        boolean savedStateMode = polarProjection.equals("dynamic-axis") || polarProjection.equals("tilt-classifier");
         inputChoice(advanced,"Polar projection",state.inputs,"polar_projection",
-            polarDynamic || savedDynamic ? new String[]{"xz","3d","dynamic-axis"} : new String[]{"xz","3d"});
-        if (!polarDynamic && savedDynamic) {
-            advanced.addView(text("Dynamic axis applies to Polar ACC with State mapping. Polar Volume uses XZ.",14,MUTED));
+            polarState ? new String[]{"xz","3d","dynamic-axis","tilt-classifier"}
+                : savedStateMode ? new String[]{"xz","3d",polarProjection} : new String[]{"xz","3d"});
+        if (!polarState && savedStateMode) {
+            advanced.addView(text(displayChoice(polarProjection)+" applies to Polar ACC with State mapping. Polar Volume uses XZ.",14,MUTED));
         }
         JSONObject hold=state.applied.optJSONObject("polar_hold");
         displayedPolarHold=state.applied.optString("polar_hold");
@@ -748,6 +750,10 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         }
         if(allowsPolarDynamic(inputs) && inputs.optString("polar_projection").equals("dynamic-axis")){
             parent.addView(text("Polar State with Dynamic axis learns the movement direction continuously.",14,MUTED));
+            return;
+        }
+        if(allowsPolarDynamic(inputs) && inputs.optString("polar_projection").equals("tilt-classifier")){
+            parent.addView(text("Polar State with Three-axis tilt uses no sensor calibration.",14,MUTED));
             return;
         }
         calibrationStatus=text("",14,MUTED);
