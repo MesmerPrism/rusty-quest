@@ -2893,6 +2893,8 @@ unsafe fn run_projection_frames(
                     std::array::from_fn(|axis| (head.position[axis] + other.position[axis]) * 0.5);
             }
             panel.initialize_pose(head);
+            #[cfg(feature = "showcase")]
+            panel.place_showcase_panel_on_open();
         }
         if gpu_private_particle_renderer.is_some() {
             private_particle_world_anchor.refresh_scale_from_android_properties(frame_count);

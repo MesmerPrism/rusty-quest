@@ -81,6 +81,8 @@ pub(crate) struct GpuMeshUiPanel {
     adaptation_faulted: bool,
     raster_epoch: u64,
     latest_head: Option<HandMeshVisualEyeProjection>,
+    #[cfg(feature = "showcase")]
+    showcase_open_placed: bool,
     hybrid_suppressed_forms_pointer: bool,
     hybrid_last_submission: Option<(bool, u64, RasterExtent, DetailMode)>,
     producer: Option<Producer>,
@@ -415,6 +417,8 @@ impl GpuMeshUiPanel {
             adaptation_faulted: false,
             raster_epoch: 1,
             latest_head: None,
+            #[cfg(feature = "showcase")]
+            showcase_open_placed: false,
             hybrid_suppressed_forms_pointer: false,
             hybrid_last_submission: None,
             producer: Some(producer),
@@ -529,16 +533,9 @@ impl GpuMeshUiPanel {
         self.retired[slot].clear();
         self.slots[slot] = None;
         // Freeze one pose for both eyes; asynchronous Android controls apply next frame.
-        let controls = native_mesh_ui::snapshot();
         #[cfg(feature = "showcase")]
-        let controls = if controls.panel_visible && !self.frame_controls.panel_visible
-            && self.recenter_showcase("panel-open")
-        {
-            native_mesh_ui::snapshot()
-        } else {
-            controls
-        };
-        self.frame_controls = controls;
+        self.place_showcase_panel_on_open();
+        self.frame_controls = native_mesh_ui::snapshot();
         self.poses[slot] = self.frame_controls.pose;
         self.hybrid_forms_slots[slot] = self.hybrid.forms_visible;
         let started = std::time::Instant::now();
@@ -1121,6 +1118,15 @@ impl GpuMeshUiPanel {
             false
         }
     }
+    #[cfg(feature = "showcase")]
+    pub(crate) fn place_showcase_panel_on_open(&mut self) {
+        if !native_mesh_ui::snapshot().panel_visible {
+            self.showcase_open_placed = false;
+        } else if !self.showcase_open_placed {
+            self.showcase_open_placed = self.recenter_showcase("panel-open");
+        }
+    }
+
     #[cfg(feature = "showcase")]
     pub(crate) fn recenter_showcase(&mut self, trigger: &str) -> bool {
         let Some(generation) = self.producer.as_ref().map(|producer| producer.generation) else {
