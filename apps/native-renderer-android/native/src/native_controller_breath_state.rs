@@ -244,6 +244,7 @@ pub(crate) struct PolarRollingBreathState {
     baseline: Option<[f64; 3]>,
     smoothed: Option<[f64; 3]>,
     last_at: Option<f64>,
+    axis_sign: Option<f64>,
     phase: CommonBreathPhase,
     candidate: CommonBreathPhase,
     candidate_since: f64,
@@ -252,12 +253,15 @@ pub(crate) struct PolarRollingBreathState {
 #[cfg(feature = "showcase")]
 impl PolarRollingBreathState {
     pub(crate) fn new() -> Self {
-        let settings = NativeControllerBreathSettings::default();
+        let settings = NativeControllerBreathSettings {
+            long_window_seconds: 1.3,
+            ..NativeControllerBreathSettings::default()
+        };
         let mut classifier = FixedControllerStateClassifier::new(settings);
         classifier.dynamic_axis = Some(DynamicControllerAxis::default());
         classifier.sensor_axis_polarity = true;
         Self {
-            classifier, settings, baseline: None, smoothed: None, last_at: None,
+            classifier, settings, baseline: None, smoothed: None, last_at: None, axis_sign: None,
             phase: CommonBreathPhase::Hold, candidate: CommonBreathPhase::Hold, candidate_since: 0.0,
         }
     }
@@ -280,22 +284,35 @@ impl PolarRollingBreathState {
         self.last_at = Some(at);
         let baseline = follow_acceleration(self.baseline, raw_g, 0.035, dt);
         self.baseline = Some(baseline);
-        let filtered = follow_acceleration(self.smoothed, sub3(raw_g, baseline), 0.6, dt);
+        let filtered = follow_acceleration(self.smoothed, sub3(raw_g, baseline), 0.35, dt);
         self.smoothed = Some(filtered);
-        let next = self.classifier.push_sample(self.settings, at, filtered, [0.0, 0.0, 0.0, 1.0]);
-        if next == CommonBreathPhase::BadTracking {
+        let observed = self.classifier.push_sample(self.settings, at, filtered, [0.0, 0.0, 0.0, 1.0]);
+        if observed == CommonBreathPhase::BadTracking {
             // Relearn the direction, retaining the filter's history across a motion rejection.
             self.classifier.reset();
-            self.phase = next;
+            self.axis_sign = None;
+            self.phase = observed;
+            self.candidate = observed;
+            self.candidate_since = at;
+            return (observed, true);
+        }
+        let next = self.classifier.dynamic_axis.as_ref().and_then(|learner| learner.axis)
+            .map_or(CommonBreathPhase::Hold, |axis| {
+                // Fix the sign once per learned axis against Polar sensor +X.
+                // An explicit input inversion still reverses the published phase.
+                let sign = *self.axis_sign.get_or_insert(if axis[0] < 0.0 { -1.0 } else { 1.0 });
+                let signal = self.classifier.last_signal * sign;
+                // Leave Hold only on stronger evidence than is needed to enter it.
+                let threshold = if self.phase == CommonBreathPhase::Hold { 0.014 } else { 0.010 };
+                if signal > threshold { CommonBreathPhase::Inhale }
+                else if signal < -threshold { CommonBreathPhase::Exhale }
+                else { CommonBreathPhase::Hold }
+            });
+        if self.candidate != next || dt > 0.05 {
             self.candidate = next;
             self.candidate_since = at;
-            return (next, true);
         }
-        if self.candidate != next {
-            self.candidate = next;
-            self.candidate_since = at;
-        }
-        let confirm_seconds = if next == CommonBreathPhase::Hold { 0.25 } else { 0.30 };
+        let confirm_seconds = if next == CommonBreathPhase::Hold { 0.06 } else { 0.12 };
         if self.phase != next && at - self.candidate_since >= confirm_seconds {
             self.phase = next;
         }
@@ -430,6 +447,7 @@ struct FixedControllerStateClassifier {
     last_sample_time_s: Option<f64>,
     delta_accumulator: f64,
     delta_history: Vec<FixedControllerDeltaPoint>,
+    last_signal: f64,
 }
 
 impl FixedControllerStateClassifier {
@@ -444,6 +462,7 @@ impl FixedControllerStateClassifier {
             last_sample_time_s: None,
             delta_accumulator: 0.0,
             delta_history: Vec::new(),
+            last_signal: 0.0,
         }
     }
 
@@ -456,6 +475,7 @@ impl FixedControllerStateClassifier {
         self.last_sample_time_s = None;
         self.delta_accumulator = 0.0;
         self.delta_history.clear();
+        self.last_signal = 0.0;
     }
 
     fn push_sample(
@@ -515,6 +535,7 @@ impl FixedControllerStateClassifier {
             f64::from(settings.long_window_seconds),
         );
         let ma_diff = short_mean - long_mean;
+        self.last_signal = ma_diff;
         self.last_position = Some(position);
         self.last_orientation = orientation;
         self.last_sample_time_s = Some(sample_time_s);

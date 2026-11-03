@@ -42,6 +42,9 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     private Context context;
     private LinearLayout frame,body,actions;
     private TextView contextLine,outcome;
+    private TextView polarHeader,polarStatus,polarReadiness;
+    private Spinner polarSensors;
+    private final ArrayList<String> discoveredPolarSensors=new ArrayList<>();
     private CheckBox remoteToggle;
     private static final String REMOTE_LABEL="Allow remote control on trusted Wi-Fi";
     private ScrollView scroll;
@@ -122,6 +125,8 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         status.addView(text("Applied settings",15,FG));
         contextLine=text("Waiting for headset settings",13,MUTED);
         status.addView(contextLine);
+        polarHeader=text("Polar: status unavailable",13,MUTED);
+        status.addView(polarHeader);
         LinearLayout remote=column();
         remote.addView(text(REMOTE_LABEL,13,FG));
         remoteToggle=toggle(context,REMOTE_LABEL,ShowcaseNativeBridge.phoneControl());
@@ -381,6 +386,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
             syncing=false;
         }
         remoteToggle.setEnabled(readbackAvailable&&pendingId.isEmpty()&&!unknown);
+        updatePolarStatus(readbackAvailable&&s!=null?s.optJSONObject("polar_setup"):null);
         if(s!=null){
             JSONObject input=s.optJSONObject("inputs"),availability=s.optJSONObject("availability");
             contextLine.setText((readbackAvailable?"":"Last applied · ")+"Breathing: "+displayChoice(input.optString("breath_source"))+" · Heartbeat: "+displayChoice(input.optString("heartbeat_source"))+(input.optString("heartbeat_source").equals("synthetic")?" "+input.optString("synthetic_bpm")+" BPM":"")+(availability!=null&&availability.optBoolean("selected_polar_unavailable")?" · Waiting for selected Polar input":availability!=null&&!availability.optBoolean("breath",true)?" · Waiting for breathing input":""));
@@ -645,11 +651,46 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         JSONObject details=ShowcaseNativeBridge.connectionDetails();parent.addView(text("Phone and headset must share Wi-Fi or a phone hotspot.",14,FG));parent.addView(text("Headset serial: "+(details.optString("serial").isEmpty()?"unavailable":details.optString("serial")),14,FG));JSONArray urls=details.optJSONArray("gateways");if(urls==null||urls.length()==0)parent.addView(text("No private IPv4 address available",14,MUTED));else for(int i=0;i<urls.length();i++)parent.addView(text(urls.getString(i),14,FG));
         LinearLayout info=foldout(parent,"Connection details");info.addView(text("Local HTTP authenticates commands but does not encrypt this LAN leg. Bluetooth reads identity and endpoint only. The headset remains settings authority.",13,MUTED));
     }
+    private void updatePolarStatus(JSONObject setup) {
+        boolean connected=setup!=null&&setup.optBoolean("c");
+        String status=setup==null?"Polar: status unavailable":!connected?"Polar: disconnected":
+                setup.optBoolean("a")?"Polar: connected · Motion live":"Polar: connected · Waiting for motion";
+        int color=connected?ACCENT:setup==null?MUTED:WARNING;
+        polarHeader.setText(status);
+        polarHeader.setTextColor(color);
+        if(!page.equals("Polar")||polarStatus==null)return;
+        polarStatus.setText(status);
+        polarStatus.setTextColor(color);
+        polarReadiness.setText(setup==null?"Waiting for headset sensor status":
+                (setup.optBoolean("p")?"Permissions ready":"Permissions needed")+" · "+
+                (setup.optBoolean("b")?"Bluetooth on":"Bluetooth off"));
+        if(setup==null)return;
+        JSONArray found=setup.optJSONArray("d");
+        ArrayList<String> names=new ArrayList<>();
+        if(found!=null)for(int i=0;i<found.length();i++)names.add(found.optString(i));
+        if(names.equals(discoveredPolarSensors))return;
+        Object previous=polarSensors.getSelectedItem();
+        discoveredPolarSensors.clear();
+        discoveredPolarSensors.addAll(names);
+        polarSensors.setAdapter(adapter(context,names.isEmpty()?new String[]{"No discovered sensor"}:
+                names.toArray(new String[0])));
+        int selected=names.indexOf(previous);
+        if(selected>=0)polarSensors.setSelection(selected);
+    }
     private void polar(LinearLayout parent)throws Exception {
-        JSONObject setup=state.applied.optJSONObject("polar_setup");parent.addView(text(setup==null?"Polar setup is waiting for the headset":(setup.optBoolean("p")?"Permissions ready":"Permissions needed")+" · "+(setup.optBoolean("b")?"Bluetooth on":"Bluetooth off")+" · "+(setup.optBoolean("c")?"Sensor connected":"Sensor disconnected")+" · "+(setup.optBoolean("a")?"Motion data fresh":"Waiting for motion data"),14,FG));
+        polarStatus=text("Polar: status unavailable",16,MUTED);
+        parent.addView(polarStatus);
+        polarReadiness=text("Waiting for headset sensor status",14,MUTED);
+        parent.addView(polarReadiness);
         add(parent,"Prepare permissions",new Action(){public void run(){if(polar==null)polar=PolarSensorRuntime.forApplication(activity).attachPanel(activity,ShowcaseControls.this);polar.requestStartupPermissions(activity);polar.onHostResume();}});add(parent,"Scan for Polar",new Action(){public void run()throws Exception{send("polar-scan",new JSONObject(),false);}});
-        final Spinner sensors=host.createSpinner(context,"Discovered Polar sensor");ArrayList<String> names=new ArrayList<>();JSONArray found=setup==null?null:setup.optJSONArray("d");if(found!=null)for(int i=0;i<found.length();i++)names.add(found.getString(i));if(names.isEmpty())names.add("No discovered sensor");sensors.setAdapter(adapter(context,names.toArray(new String[0])));parent.addView(sensors);
-        add(parent,"Select sensor",new Action(){public void run()throws Exception{send("polar-select",new JSONObject().put("device_id",sensors.getSelectedItem().toString()),false);}});
+        polarSensors=host.createSpinner(context,"Discovered Polar sensor");
+        polarSensors.setAdapter(adapter(context,new String[]{"No discovered sensor"}));
+        discoveredPolarSensors.clear();
+        parent.addView(polarSensors);
+        add(parent,"Select sensor",new Action(){public void run()throws Exception{
+            if(!discoveredPolarSensors.isEmpty())send("polar-select",new JSONObject()
+                    .put("device_id",polarSensors.getSelectedItem().toString()),false);
+        }});
         for(final String op:new String[]{"polar-connect","polar-disconnect"})add(parent,op.equals("polar-connect")?"Connect Polar":"Disconnect Polar",new Action(){public void run()throws Exception{send(op,new JSONObject(),false);}});
         LinearLayout streams=foldout(parent,"ACC stream management");for(final String op:new String[]{"polar-start-acc","polar-stop-acc"})add(streams,op.equals("polar-start-acc")?"Start ACC":"Stop ACC",new Action(){public void run()throws Exception{send(op,new JSONObject(),false);}});
     }
@@ -723,7 +764,6 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
                     java.util.Iterator<String> keys=pages.keySet().iterator();while(keys.hasNext())if(keys.next().startsWith("Visual"))keys.remove();forms.clear();lastRadius=null;pages.remove("Profiles");
                 }
                 if(pendingOp.equals("save-profile")||pendingOp.equals("delete-profile"))pages.remove("Profiles");
-                if(pendingOp.startsWith("polar-"))pages.remove("Polar");
                 if(pendingOp.equals("set-phone-control"))pages.remove("Setup");
                 message=pendingOp.equals("calibrate")?"Calibration command accepted.":"Applied "+operationLabel(pendingOp);
                 if((pendingOp.equals("apply-visual")||pendingOp.equals("apply-profile"))&&current.optLong("rendered_visual_revision")<confirmed){awaitingRendered=confirmed;message="Headset applying visual changes…";}

@@ -1235,7 +1235,7 @@ mod tests {
         let mut exhale = false;
         for index in 1..400 {
             let at = index * 16_000;
-            let motion = (index as f64 * 0.05).sin() * 0.015;
+            let motion = (index as f64 * 0.035).sin() * 0.04;
             let sample = frame(index, at, at * 1_000, [motion, 1.0, motion * 0.25], PolarAccelerationUnit::StandardGravity);
             let result = adapter.observe(BreathTimestampMicros::new(at), generation, sample);
             let assessment = result.assessment.unwrap();
@@ -1254,12 +1254,15 @@ mod tests {
         let after_gap = adapter.observe(BreathTimestampMicros::new(6_680_000), generation,
             frame(402, 6_680_000, 6_680_000_000, [0.0, 1.0, 0.0], PolarAccelerationUnit::StandardGravity));
         assert_eq!(after_gap.assessment.unwrap().phase, CommonBreathPhase::BadTracking);
-        for index in 1..=16 {
-            let at = 6_680_000 + index * 16_000;
+        let after_short_gap = adapter.observe(BreathTimestampMicros::new(6_760_000), generation,
+            frame(403, 6_760_000, 6_760_000_000, [0.0, 1.0, 0.0], PolarAccelerationUnit::StandardGravity));
+        assert_eq!(after_short_gap.assessment.unwrap().phase, CommonBreathPhase::BadTracking);
+        for index in 1..=4 {
+            let at = 6_760_000 + index * 16_000;
             let result = adapter.observe(BreathTimestampMicros::new(at), generation,
-                frame(402 + index, at, at * 1_000, [0.0, 1.0, 0.0], PolarAccelerationUnit::StandardGravity));
+                frame(403 + index, at, at * 1_000, [0.0, 1.0, 0.0], PolarAccelerationUnit::StandardGravity));
             assert_eq!(result.assessment.unwrap().phase,
-                if index == 16 { CommonBreathPhase::Hold } else { CommonBreathPhase::BadTracking });
+                if index == 4 { CommonBreathPhase::Hold } else { CommonBreathPhase::BadTracking });
         }
     }
 
