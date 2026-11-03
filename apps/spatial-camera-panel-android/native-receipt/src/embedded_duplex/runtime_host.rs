@@ -3456,11 +3456,52 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 
 // A terminal source exit is not a supported bytes-to-writable-owner restore.
 // Preserve the actual gate's final source bytes before releasing its last Host.
+#[derive(Clone, Copy)]
+enum FreshWholeClosureStage {
+    BeforeBody,
+    PersistAck,
+    ValidateAck,
+    RecheckOwner,
+}
+
+impl FreshWholeClosureStage {
+    fn label(self) -> &'static str {
+        match self {
+            Self::BeforeBody => "before_body",
+            Self::PersistAck => "persist_ack",
+            Self::ValidateAck => "validate_ack",
+            Self::RecheckOwner => "recheck_owner",
+        }
+    }
+}
+
 fn retain_terminal_fresh_owner(
     host: &Host,
     scope: &str,
     close_proof: Value,
     lifetime: Option<Value>,
+) -> Result<Option<Value>, String> {
+    let mut stage = FreshWholeClosureStage::BeforeBody;
+    let result =
+        retain_terminal_fresh_owner_at_stage(host, scope, close_proof, lifetime, &mut stage);
+    if scope == "normal_peer_whole_close" && result.is_err() {
+        crate::android_log_info(
+            "RQSpatialCameraPanelNative",
+            &format!(
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=embedded-duplex-whole-closure outcome=failed stage={}",
+                stage.label()
+            ),
+        );
+    }
+    result
+}
+
+fn retain_terminal_fresh_owner_at_stage(
+    host: &Host,
+    scope: &str,
+    close_proof: Value,
+    lifetime: Option<Value>,
+    stage: &mut FreshWholeClosureStage,
 ) -> Result<Option<Value>, String> {
     if host.authority.selected_fresh_pair_setup_policy()?.is_none() {
         return Ok(None);
@@ -3561,7 +3602,9 @@ fn retain_terminal_fresh_owner(
         "sha256:{}",
         rusty_quest_broker_authority::packaged_json_sha256(&raw)
     );
+    *stage = FreshWholeClosureStage::PersistAck;
     let ack = host.callbacks.persist_fresh_owner_retirement(&raw)?;
+    *stage = FreshWholeClosureStage::ValidateAck;
     const FIELDS: [&str; 7] = [
         "$schema",
         "body_sha256",
@@ -3592,6 +3635,7 @@ fn retain_terminal_fresh_owner(
     {
         return Err("fresh terminal owner durable ACK differs".into());
     }
+    *stage = FreshWholeClosureStage::RecheckOwner;
     host.capability.require_live()?;
     let mut p = process()
         .lock()
