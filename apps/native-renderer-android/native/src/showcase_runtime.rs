@@ -926,7 +926,7 @@ pub(crate) fn command_with_executor(
                 crate::breath_composition_runtime::apply_command_json(&command.to_string())
             }
         };
-        serde_json::from_str::<Value>(&result).map(|value|json!({"status":if value["status"]=="accepted"{"applied"}else{"rejected"},"effective":value})).map_err(|e|e.to_string())
+        calibration_outcome(&result)
     } else {
         executor(&op, &payload)
     };
@@ -948,6 +948,9 @@ pub(crate) fn command_with_executor(
                     Some("rejected") => "rejected",
                     _ => "unknown",
                 });
+                if let ("calibrate", Some(reason)) = (op.as_str(), value["reason"].as_str()) {
+                    receipt["reason"] = json!(reason);
+                }
                 receipt["effective"] = value;
             }
             Err(reason) => {
@@ -960,9 +963,29 @@ pub(crate) fn command_with_executor(
     json!({"status":"unknown","id":id}).to_string()
 }
 
+fn calibration_outcome(response: &str) -> Result<Value, String> {
+    let value: Value = serde_json::from_str(response).map_err(|error| error.to_string())?;
+    match value["command_status"].as_str() {
+        Some("accepted") => Ok(json!({"status":"applied","effective":value})),
+        Some("rejected") => {
+            Ok(json!({"status":"rejected","reason":value["reason_code"],"effective":value}))
+        }
+        _ => Err("invalid-calibration-outcome".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn calibration_receipt_follows_the_composition_command_status() {
+        let accepted = calibration_outcome(r#"{"command_status":"accepted","reason_code":"none"}"#).unwrap();
+        assert_eq!(accepted["status"], "applied");
+        let rejected = calibration_outcome(r#"{"command_status":"rejected","reason_code":"invalid-action"}"#).unwrap();
+        assert_eq!(rejected["status"], "rejected");
+        assert_eq!(rejected["reason"], "invalid-action");
+        assert!(calibration_outcome(r#"{"status":"accepted"}"#).is_err());
+    }
     fn visual() -> Value {
         json!({"visual_scale":0.5,"size":{"enabled":true,"mode":"world-meters","world_meters":0.01,"sphere_radius_percent":1.0,"oscillation_percent":0.0},"world_anchor_scale_m":1.0,"radius":{"minimum_m":0.5,"maximum_m":1.5},"driver_values01":[0,1,0,0,0,0,0,0],"driver_controls":(0..8).map(|i|json!({"target_slot":i,"mode":"direct","source_slot":i,"curve":"linear","range_min":crate::native_renderer_stimulus_panel::private_particle_canonical_driver_range(i as usize).0,"range_max":crate::native_renderer_stimulus_panel::private_particle_canonical_driver_range(i as usize).1,"cycle_multiplier":0.0})).collect::<Vec<_>>(),"tracer":{"draw_slots_per_oscillator":0,"lifetime_seconds":0.5,"copies_per_second":1.0},"transparency":{"opacity":1.0,"output_alpha_scale":1.0,"depth_suppression_strength":0.0,"rgb_alpha_coupling":0.0},"color":{"facing_attenuation_strength":0.0},"material":{"preset":"packaged-default"},"orbit_distance":{"scale_with_particle_size":false,"reference_radius_m":0.03},"frame_extension":{"mode":"constant","endpoint_gain":1.0,"midpoint_gain":0.0}})
     }

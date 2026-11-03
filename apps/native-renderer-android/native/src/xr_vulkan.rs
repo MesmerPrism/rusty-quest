@@ -3264,6 +3264,10 @@ unsafe fn run_projection_frames(
                 && gpu_private_particle_renderer.is_some()
             {
                 private_particle_world_anchor.recenter(particle_sort_eye_projection, frame_count);
+                #[cfg(feature = "showcase")]
+                if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+                    panel.recenter_showcase("sphere-recenter");
+                }
             }
         }
         let worldspace_controllers_selected = worldspace_input_policy

@@ -529,7 +529,16 @@ impl GpuMeshUiPanel {
         self.retired[slot].clear();
         self.slots[slot] = None;
         // Freeze one pose for both eyes; asynchronous Android controls apply next frame.
-        self.frame_controls = native_mesh_ui::snapshot();
+        let controls = native_mesh_ui::snapshot();
+        #[cfg(feature = "showcase")]
+        let controls = if controls.panel_visible && !self.frame_controls.panel_visible
+            && self.recenter_showcase("panel-open")
+        {
+            native_mesh_ui::snapshot()
+        } else {
+            controls
+        };
+        self.frame_controls = controls;
         self.poses[slot] = self.frame_controls.pose;
         self.hybrid_forms_slots[slot] = self.hybrid.forms_visible;
         let started = std::time::Instant::now();
@@ -1112,6 +1121,18 @@ impl GpuMeshUiPanel {
             false
         }
     }
+    #[cfg(feature = "showcase")]
+    pub(crate) fn recenter_showcase(&mut self, trigger: &str) -> bool {
+        let Some(generation) = self.producer.as_ref().map(|producer| producer.generation) else {
+            return false;
+        };
+        if !self.recall_world_at_head(generation) {
+            return false;
+        }
+        crate::marker("native-mesh-ui", format!("event=showcase-recenter trigger={trigger} generation={generation}"));
+        true
+    }
+
     fn recall_world_at_head(&mut self, generation: u64) -> bool {
         if !self.latest_head.is_some_and(|eye| {
             native_mesh_ui::recenter_pose(

@@ -676,13 +676,15 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
                 if(pendingOp.startsWith("polar-"))pages.remove("Polar");
                 if(pendingOp.equals("calibrate"))pages.remove("Calibration");
                 if(pendingOp.equals("set-phone-control"))pages.remove("Setup");
-                message="Applied "+operationLabel(pendingOp);
+                message=pendingOp.equals("calibrate")?"Calibration command accepted.":"Applied "+operationLabel(pendingOp);
                 if((pendingOp.equals("apply-visual")||pendingOp.equals("apply-profile"))&&current.optLong("rendered_visual_revision")<confirmed){awaitingRendered=confirmed;message="Headset applying visual changes…";}
             }else message=inputEdit?"Input change accepted. Showing the latest headset settings.":"Settings changed on the headset. Read applied settings to continue.";
         }
         else if(inputEdit){
             state.observe(ShowcaseNativeBridge.status());
             message="The headset rejected the input change. Showing current headset settings.";
+        }else if(pendingOp.equals("calibrate")){
+            message="Calibration command rejected ("+receipt.optString("reason","reason unavailable")+").";
         }else message="The headset could not apply "+operationLabel(pendingOp)+". Check the edited values and read applied settings.";
         pendingId="";pendingOp="";unknown=false;
         if(inputEdit){
