@@ -1341,7 +1341,7 @@ pub(crate) fn showcase_calibration_status(inputs: &Value) -> Value {
         || inputs["breath_source"] != request.source.as_str()
         || inputs["breath_mapping"] != request.mapping.as_str()
         || inputs["controller_projection"] != request.controller_projection.as_str()
-        || inputs["polar_projection"] != request.polar_projection.as_str()
+        || crate::showcase_runtime::effective_polar_projection(inputs) != request.polar_projection.as_str()
         || inputs["inverted"] != request.inverted
     {
         return Value::Null;

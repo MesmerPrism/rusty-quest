@@ -22,6 +22,7 @@ const MAX_PROFILES: usize = 16;
 pub(crate) struct ShowcaseRuntime {
     epoch: String,
     revision: u64,
+    last_visual_apply_revision: u64,
     rendered_visual_revision: Option<u64>,
     rendered_radius_m: Option<f32>,
     rendered_material: Option<Value>,
@@ -43,6 +44,7 @@ impl ShowcaseRuntime {
         Self {
             epoch,
             revision: 0,
+            last_visual_apply_revision: 0,
             rendered_visual_revision: None,
             rendered_radius_m: None,
             rendered_material: None,
@@ -183,6 +185,12 @@ impl ShowcaseRuntime {
                 _ => return Err("unsupported_operation".into()),
             }
             self.revision = self.revision.checked_add(1).ok_or("revision_exhausted")?;
+            if matches!(
+                command["op"].as_str(),
+                Some("apply-visual" | "apply-profile")
+            ) {
+                self.last_visual_apply_revision = self.revision;
+            }
             Ok((
                 id.into(),
                 json!({"schema":RECEIPT,"product":PRODUCT,"epoch":self.epoch,"id":id,"status":"accepted","revision":self.revision}),
@@ -294,11 +302,6 @@ fn validate_inputs(v: &Value) -> Result<(), String> {
         &["dynamic-axis", "fixed-orientation"],
     )?;
     choice(&v["polar_projection"], &["xz", "3d", "dynamic-axis"])?;
-    if v["polar_projection"] == "dynamic-axis"
-        && (v["breath_source"] != "polar-acc" || v["breath_mapping"] != "state")
-    {
-        return Err("polar_dynamic_axis_requires_polar_state".into());
-    }
     if !v["inverted"].is_boolean() {
         return Err("boolean_required".into());
     }
@@ -705,6 +708,18 @@ pub(crate) fn restore_breath_selection_after_runtime_install() {
     }
 }
 
+pub(crate) fn effective_polar_projection(input: &Value) -> &str {
+    match input["polar_projection"].as_str() {
+        Some("dynamic-axis")
+            if input["breath_source"] != "polar-acc" || input["breath_mapping"] != "state" =>
+        {
+            "xz"
+        }
+        Some(projection) => projection,
+        None => "xz",
+    }
+}
+
 fn select_breath_input() {
     let input = lock().inputs.clone();
     let source = if input["breath_source"] == "polar-acc" {
@@ -712,7 +727,7 @@ fn select_breath_input() {
     } else {
         "controller"
     };
-    let command = json!({"schema":"rusty.quest.breath_composition.command.v1","operation":"select","source":source,"mapping":input["breath_mapping"],"controller_projection":input["controller_projection"],"polar_projection":input["polar_projection"],"inverted":input["inverted"]});
+    let command = json!({"schema":"rusty.quest.breath_composition.command.v1","operation":"select","source":source,"mapping":input["breath_mapping"],"controller_projection":input["controller_projection"],"polar_projection":effective_polar_projection(&input),"inverted":input["inverted"]});
     let _ = crate::breath_composition_runtime::apply_command_json(&command.to_string());
     if input["breath_source"] != "automatic" {
         let _ = crate::breath_composition_runtime::ensure_running_for_visual_use();
@@ -723,6 +738,7 @@ fn select_breath_input() {
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedVisualFrame {
     epoch: String,
+    last_visual_apply_revision: i64,
     candidate: crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate,
     progress: f32,
     radius_m: f32,
@@ -736,6 +752,17 @@ impl PreparedVisualFrame {
         &self,
     ) -> crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate {
         self.candidate.clone()
+    }
+    pub(crate) fn candidate_after(
+        &self,
+        previous_revision: Option<i64>,
+    ) -> crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate {
+        let mut candidate = self.candidate();
+        // Input changes can update heartbeat settings, but only a visual apply
+        // requests the phase reset associated with a full snapshot.
+        candidate.update_mask.full_snapshot =
+            self.last_visual_apply_revision > previous_revision.unwrap_or(0);
+        candidate
     }
     pub(crate) fn progress(&self) -> f32 {
         self.progress
@@ -788,6 +815,7 @@ fn prepare_visual_frame_from(s: &ShowcaseRuntime) -> Option<PreparedVisualFrame>
     let candidate=crate::native_renderer_stimulus_panel::parse_private_particle_dynamics_json(&json!({"schema":crate::native_renderer_stimulus_panel::PRIVATE_PARTICLE_DYNAMICS_SCHEMA,"revision":revision,"private_particles":particles}).to_string()).ok()?;
     Some(PreparedVisualFrame {
         epoch: s.epoch.clone(),
+        last_visual_apply_revision: i64::try_from(s.last_visual_apply_revision).ok()?,
         candidate,
         progress,
         radius_m: minimum + (maximum - minimum) * progress,
@@ -1027,6 +1055,24 @@ fn calibration_outcome(response: &str) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn polar_dynamic_axis_preference_is_only_effective_for_polar_state() {
+        let mut inputs = ShowcaseRuntime::new("10".into()).inputs;
+        inputs["polar_projection"] = json!("dynamic-axis");
+        for (source, mapping, expected) in [
+            ("controller", "volume", "xz"),
+            ("automatic", "state", "xz"),
+            ("polar-acc", "volume", "xz"),
+            ("polar-acc", "state", "dynamic-axis"),
+        ] {
+            inputs["breath_source"] = json!(source);
+            inputs["breath_mapping"] = json!(mapping);
+            assert!(validate_inputs(&inputs).is_ok());
+            assert_eq!(effective_polar_projection(&inputs), expected);
+            assert_eq!(inputs["polar_projection"], "dynamic-axis");
+        }
+    }
+
     use super::*;
     #[test]
     fn calibration_receipt_follows_the_composition_command_status() {
@@ -1274,6 +1320,45 @@ mod tests {
             second.to_string()
         );
         assert_eq!(effects, 1);
+    }
+    #[test]
+    fn only_explicit_visual_applies_request_a_phase_reset() {
+        let mut state = state();
+        let mut inputs = state.inputs.clone();
+        inputs["breath_source"] = json!("controller");
+        let request = command(&state, "switch-source", "set-inputs", inputs.clone());
+        assert_eq!(state.execute_at(&request, 0)["status"], "accepted");
+        let input_frame = prepare_visual_frame_from(&state).unwrap();
+        assert!(!input_frame.candidate_after(Some(0)).update_mask.full_snapshot);
+
+        let request = command(
+            &state,
+            "apply-visual",
+            "apply-visual",
+            json!({"visual":visual()}),
+        );
+        assert_eq!(state.execute_at(&request, 0)["status"], "accepted");
+        inputs["heartbeat_source"] = json!("off");
+        let request = command(&state, "switch-heartbeat", "set-inputs", inputs);
+        assert_eq!(state.execute_at(&request, 0)["status"], "accepted");
+        let frame = prepare_visual_frame_from(&state).unwrap();
+        assert!(frame.candidate_after(Some(1)).update_mask.full_snapshot);
+        assert!(!frame.candidate_after(Some(2)).update_mask.full_snapshot);
+
+        let request = command(
+            &state,
+            "apply-profile",
+            "apply-profile",
+            json!({"name":"default"}),
+        );
+        assert_eq!(state.execute_at(&request, 0)["status"], "accepted");
+        assert!(
+            prepare_visual_frame_from(&state)
+                .unwrap()
+                .candidate_after(Some(3))
+                .update_mask
+                .full_snapshot
+        );
     }
     #[test]
     fn prepared_visual_keeps_radius_and_extension_when_new_request_arrives_midframe() {

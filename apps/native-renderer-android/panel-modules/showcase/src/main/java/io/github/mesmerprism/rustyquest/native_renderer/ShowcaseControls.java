@@ -425,8 +425,6 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     static JSONObject inputChange(JSONObject current,String key,Object value)throws Exception {
         JSONObject next=copy(current).put(key,value);
         if(next.optString("breath_source").equals("automatic"))next.put("breath_mapping","state");
-        if(!allowsPolarDynamic(next) && next.optString("polar_projection").equals("dynamic-axis"))
-            next.put("polar_projection","xz");
         return next;
     }
 
@@ -636,8 +634,13 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         LinearLayout advanced=foldoutGroup(parent,"Advanced input mapping",expanded);
         advancedInputs=advanced;
         inputChoice(advanced,"Controller projection",state.inputs,"controller_projection",new String[]{"dynamic-axis","fixed-orientation"});
+        boolean polarDynamic = allowsPolarDynamic(state.inputs);
+        boolean savedDynamic = state.inputs.optString("polar_projection").equals("dynamic-axis");
         inputChoice(advanced,"Polar projection",state.inputs,"polar_projection",
-            allowsPolarDynamic(state.inputs)?new String[]{"xz","3d","dynamic-axis"}:new String[]{"xz","3d"});
+            polarDynamic || savedDynamic ? new String[]{"xz","3d","dynamic-axis"} : new String[]{"xz","3d"});
+        if (!polarDynamic && savedDynamic) {
+            advanced.addView(text("Dynamic axis applies to Polar ACC with State mapping. Polar Volume uses XZ.",14,MUTED));
+        }
         JSONObject hold=state.applied.optJSONObject("polar_hold");
         displayedPolarHold=state.applied.optString("polar_hold");
         if(hold!=null&&allowsPolarDynamic(state.inputs)&&state.inputs.optString("polar_projection").equals("dynamic-axis")){

@@ -3404,7 +3404,7 @@ unsafe fn run_projection_frames(
                         app,
                         gpu_private_particle_renderer.as_deref_mut(),
                         &mut private_particle_world_anchor,
-                        frame.candidate(),
+                        frame.candidate_after(showcase_cpu_visual_revision),
                         frame_count,
                     );
                     showcase_cpu_visual_revision = Some(frame.revision());
