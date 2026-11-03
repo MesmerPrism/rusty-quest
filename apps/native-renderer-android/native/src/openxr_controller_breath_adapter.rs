@@ -209,6 +209,8 @@ impl OpenXrControllerBreathAdapter {
 
     pub(crate) fn configure(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.phase_only_inverted = None;
+        #[cfg(feature = "showcase")]
+        self.phase_estimator.use_dynamic_axis(false);
         self.phase_estimator.reset_history();
         self.last_orientation = None;
         self.generation = None;
@@ -258,10 +260,10 @@ impl OpenXrControllerBreathAdapter {
     }
 
     #[cfg(feature = "showcase")]
-    pub(crate) fn start_phase_only(&mut self, generation: BreathGeneration, inverted: bool) {
+    pub(crate) fn start_phase_only(&mut self, generation: BreathGeneration, inverted: bool, dynamic_axis: bool) {
         self.generation = Some(generation);
         self.phase_only_inverted = Some(inverted);
-        self.phase_estimator.reset_history();
+        self.phase_estimator.use_dynamic_axis(dynamic_axis);
         self.last_orientation = None;
     }
 
@@ -281,6 +283,8 @@ impl OpenXrControllerBreathAdapter {
 
     pub(crate) fn reset(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.phase_only_inverted = None;
+        #[cfg(feature = "showcase")]
+        self.phase_estimator.use_dynamic_axis(false);
         self.generation = None;
         self.phase_estimator.reset_history();
         self.last_orientation = None;
@@ -692,7 +696,7 @@ mod tests {
         let mut adapter = adapter(ControllerVolumeProjection::FixedOrientation);
         let generation = generation(1);
         adapter.configure(BreathTimestampMicros::new(0));
-        adapter.start_phase_only(generation, false);
+        adapter.start_phase_only(generation, false, false);
         let result = adapter.observe(
             BreathTimestampMicros::new(10_000),
             generation,
@@ -711,6 +715,45 @@ mod tests {
         assert_eq!(missing.assessment.unwrap().tracking, BreathTrackingState::Missing);
         start(&mut adapter, 30_000, 2);
         assert_eq!(adapter.phase_only_inverted, None);
+    }
+
+    #[cfg(feature = "showcase")]
+    #[test]
+    fn dynamic_state_emits_both_phases_and_respects_inversion_without_volume() {
+        let mut normal = adapter(ControllerVolumeProjection::DynamicMotionAxis);
+        let mut inverted = adapter(ControllerVolumeProjection::DynamicMotionAxis);
+        let generation = generation(1);
+        normal.configure(BreathTimestampMicros::new(0));
+        inverted.configure(BreathTimestampMicros::new(0));
+        normal.start_phase_only(generation, false, true);
+        inverted.start_phase_only(generation, true, true);
+        let mut saw_inhale = false;
+        let mut saw_exhale = false;
+        for i in 1..300 {
+            let at = i * 16_000;
+            let distance = (i as f64 * 0.05).sin() * 0.010;
+            let position = [distance * 0.4, distance, 0.0];
+            let observation = |adapter: &mut OpenXrControllerBreathAdapter| {
+                adapter.observe(BreathTimestampMicros::new(at), generation, frame(i, at, position))
+                    .assessment.unwrap()
+            };
+            let direct = observation(&mut normal);
+            let flipped = observation(&mut inverted);
+            assert_eq!(direct.tracking, BreathTrackingState::Valid);
+            assert_eq!(direct.volume01, None);
+            match direct.phase {
+                CommonBreathPhase::Inhale => {
+                    saw_inhale = true;
+                    assert_eq!(flipped.phase, CommonBreathPhase::Exhale);
+                }
+                CommonBreathPhase::Exhale => {
+                    saw_exhale = true;
+                    assert_eq!(flipped.phase, CommonBreathPhase::Inhale);
+                }
+                phase => assert_eq!(flipped.phase, phase),
+            }
+        }
+        assert!(saw_inhale && saw_exhale);
     }
 
     #[test]

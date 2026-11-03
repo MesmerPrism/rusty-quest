@@ -862,7 +862,11 @@ impl StimulusVolumeActions {
                             crate::breath_composition_runtime::showcase_uses_direct_controller_phase(*request)
                         }) {
                             self.native_controller_breath_assessment
-                                .start_phase_only(generation, request.inverted);
+                                .start_phase_only(
+                                    generation,
+                                    request.inverted,
+                                    request.controller_projection == ControllerProjectionSelection::DynamicAxis,
+                                );
                             continue;
                         }
                     }

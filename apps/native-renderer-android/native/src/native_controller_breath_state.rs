@@ -216,6 +216,12 @@ impl NativeControllerBreathStateEstimator {
         self.last_phase = CommonBreathPhase::Unknown;
     }
 
+    #[cfg(feature = "showcase")]
+    pub(crate) fn use_dynamic_axis(&mut self, enabled: bool) {
+        self.classifier.dynamic_axis = enabled.then(DynamicControllerAxis::default);
+        self.reset_history();
+    }
+
     pub(crate) fn marker_fields(&self) -> String {
         format!(
             "nativeControllerBreathSamples={} nativeControllerBreathTrackingLossSamples={} nativeControllerBreathLastSequenceId={} nativeControllerBreathPhase={}",
@@ -233,8 +239,105 @@ struct FixedControllerDeltaPoint {
     accumulator: f64,
 }
 
+/// Estimate direction from a bounded window of positions. Its sign comes
+/// from the controller orientation and the last reliable axis survives holds.
+#[derive(Debug, Default)]
+struct DynamicControllerAxis {
+    positions: std::collections::VecDeque<(f64, [f64; 3])>,
+    axis: Option<[f64; 3]>,
+}
+
+impl DynamicControllerAxis {
+    fn observe(&mut self, time: f64, position: [f64; 3], reference: [f64; 3]) -> Option<[f64; 3]> {
+        const WINDOW_SECONDS: f64 = 3.0;
+        const SAMPLE_INTERVAL_SECONDS: f64 = 0.05;
+        while self.positions.front().is_some_and(|&(at, _)| time - at > WINDOW_SECONDS) {
+            self.positions.pop_front();
+        }
+        if self.positions.back().is_some_and(|&(at, _)| time - at < SAMPLE_INTERVAL_SECONDS) {
+            return self.axis;
+        }
+        self.positions.push_back((time, position));
+        let count = self.positions.len();
+        if count < 5 {
+            return self.axis;
+        }
+        let mut center = [0.0; 3];
+        for &(_, sample) in &self.positions {
+            for i in 0..3 {
+                center[i] += sample[i] / count as f64;
+            }
+        }
+        let mut covariance = [[0.0; 3]; 3];
+        for &(_, sample) in &self.positions {
+            let offset = sub3(sample, center);
+            for i in 0..3 {
+                for j in 0..3 {
+                    covariance[i][j] += offset[i] * offset[j] / count as f64;
+                }
+            }
+        }
+        let variance = covariance[0][0] + covariance[1][1] + covariance[2][2];
+        if variance < 1.0e-6 {
+            return self.axis;
+        }
+        let multiply = |axis| covariance.map(|row| dot3(row, axis));
+        let largest = (0..3).max_by(|&i, &j| covariance[i][i].total_cmp(&covariance[j][j])).unwrap_or(0);
+        let mut direction = [0.0; 3];
+        direction[largest] = 1.0;
+        for _ in 0..8 {
+            let Some(next) = normalized_axis(multiply(direction)) else {
+                return self.axis;
+            };
+            direction = next;
+        }
+        let alignment = dot3(direction, reference);
+        if dot3(direction, multiply(direction)) < 0.7 * variance || alignment.abs() < 0.1 {
+            return self.axis;
+        }
+        if alignment < 0.0 {
+            direction = direction.map(|component| -component);
+        }
+        if let Some(previous) = self.axis {
+            // Avoid a sign reversal if the orientation reference drifts.
+            if dot3(previous, direction) < 0.0 {
+                return self.axis;
+            }
+            direction = normalized_axis(std::array::from_fn(|i| previous[i] * 0.9 + direction[i] * 0.1))
+                .unwrap_or(previous);
+        }
+        self.axis = Some(direction);
+        self.axis
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rolling_axis_uses_orientation_for_sign_and_adapts_after_a_hold() {
+    let mut learner = DynamicControllerAxis::default();
+    let reference = [0.0, 0.0, -1.0];
+    let original = normalized_axis([-1.0, 0.0, -0.5]).unwrap();
+    let shifted = normalized_axis([0.0, -1.0, -0.5]).unwrap();
+    assert!(learner.observe(0.0, [0.0; 3], reference).is_none());
+    for i in 1..30 {
+        learner.observe(i as f64 * 0.06, original.map(|x| x * i as f64 * 0.001), reference);
+    }
+    assert!(dot3(learner.axis.unwrap(), original) > 0.99);
+    for i in 30..100 {
+        learner.observe(i as f64 * 0.06, original.map(|x| x * 0.029), reference);
+    }
+    assert!(dot3(learner.axis.unwrap(), original) > 0.99);
+    for i in 100..200 {
+        let distance = ((i - 100) as f64 * 0.25).sin() * 0.01;
+        let position = std::array::from_fn(|j| original[j] * 0.029 + shifted[j] * distance);
+        learner.observe(i as f64 * 0.06, position, reference);
+    }
+    assert!(dot3(learner.axis.unwrap(), shifted) > 0.99);
+}
+
 #[derive(Debug)]
 struct FixedControllerStateClassifier {
+    dynamic_axis: Option<DynamicControllerAxis>,
     orientation_axis: [f64; 3],
     last_position: Option<[f64; 3]>,
     last_orientation: [f64; 4],
@@ -246,6 +349,7 @@ struct FixedControllerStateClassifier {
 impl FixedControllerStateClassifier {
     fn new(settings: NativeControllerBreathSettings) -> Self {
         Self {
+            dynamic_axis: None,
             orientation_axis: normalized_axis(to_f64_3(settings.orientation_axis))
                 .unwrap_or([0.0, 0.0, -1.0]),
             last_position: None,
@@ -257,6 +361,9 @@ impl FixedControllerStateClassifier {
     }
 
     fn reset(&mut self) {
+        if let Some(axis) = self.dynamic_axis.as_mut() {
+            *axis = DynamicControllerAxis::default();
+        }
         self.last_position = None;
         self.last_orientation = [0.0, 0.0, 0.0, 1.0];
         self.last_sample_time_s = None;
@@ -284,11 +391,22 @@ impl FixedControllerStateClassifier {
             fixed_controller_fallback_sample_seconds(settings),
         );
         let rotation_delta = quat_angle_degrees(self.last_orientation, orientation);
-        let axis_world = rotate_vec3_by_quat(
+        let reference_axis = rotate_vec3_by_quat(
             self.orientation_axis,
             normalize_quat_or_identity(orientation),
         );
-        let delta = dot3(sub3(position, last_position), axis_world);
+        let displacement = sub3(position, last_position);
+        let axis = if let Some(learner) = self.dynamic_axis.as_mut() {
+            if rotation_delta > f64::from(settings.rotation_guard_degrees)
+                || dot3(displacement, displacement) > f64::from(settings.moving_average_guard).powi(2)
+            {
+                return CommonBreathPhase::BadTracking;
+            }
+            learner.observe(sample_time_s, position, reference_axis)
+        } else {
+            Some(reference_axis)
+        };
+        let delta = axis.map_or(0.0, |axis| dot3(displacement, axis));
         self.delta_accumulator += delta;
         push_timed_delta_point(
             &mut self.delta_history,

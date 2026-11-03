@@ -882,8 +882,7 @@ pub(crate) fn command_with_executor(
                 let inputs = &s.inputs;
                 if inputs["breath_source"] == "automatic"
                     || (inputs["breath_source"] == "controller"
-                        && inputs["breath_mapping"] == "state"
-                        && inputs["controller_projection"] == "fixed-orientation")
+                        && inputs["breath_mapping"] == "state")
                 {
                     return Err("calibration-not-required".into());
                 }

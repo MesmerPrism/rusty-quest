@@ -1322,7 +1322,6 @@ pub(crate) fn effective_request() -> Option<BreathCompositionRequest> {
 pub(crate) fn showcase_uses_direct_controller_phase(request: BreathCompositionRequest) -> bool {
     request.source == BreathCompositionSource::Controller
         && request.mapping == BreathCompositionMapping::State
-        && request.controller_projection == ControllerProjectionSelection::FixedOrientation
 }
 
 #[cfg(feature = "showcase")]

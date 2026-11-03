@@ -655,9 +655,10 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
             parent.addView(text("Automatic breathing has no sensor calibration.",14,MUTED));
             return;
         }
-        if(source.equals("controller") && inputs.optString("breath_mapping").equals("state")
-                && inputs.optString("controller_projection").equals("fixed-orientation")){
-            parent.addView(text("Controller State with Fixed orientation has no calibration.",14,MUTED));
+        if(source.equals("controller") && inputs.optString("breath_mapping").equals("state")){
+            boolean fixed=inputs.optString("controller_projection").equals("fixed-orientation");
+            parent.addView(text(fixed?"Controller State uses Fixed orientation without calibration."
+                    :"Controller State learns the movement direction continuously.",14,MUTED));
             return;
         }
         calibrationStatus=text("",14,MUTED);
