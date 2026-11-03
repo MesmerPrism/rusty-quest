@@ -754,7 +754,7 @@ mod tests {
             }
         }
         assert!(saw_inhale && saw_exhale);
-        let position = [0.2, 0.0, 0.0];
+        let position = [2.0, 0.0, 0.0];
         let jump = normal.observe(BreathTimestampMicros::new(4_800_000), generation,
             frame(300, 4_800_000, position));
         assert_eq!(jump.assessment.unwrap().tracking, BreathTrackingState::RejectedMotion);
