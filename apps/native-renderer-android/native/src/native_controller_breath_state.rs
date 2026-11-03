@@ -400,6 +400,7 @@ impl FixedControllerStateClassifier {
             if rotation_delta > f64::from(settings.rotation_guard_degrees)
                 || dot3(displacement, displacement) > f64::from(settings.moving_average_guard).powi(2)
             {
+                self.reset();
                 return CommonBreathPhase::BadTracking;
             }
             learner.observe(sample_time_s, position, reference_axis)

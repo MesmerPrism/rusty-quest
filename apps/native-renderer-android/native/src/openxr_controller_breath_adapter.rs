@@ -754,6 +754,15 @@ mod tests {
             }
         }
         assert!(saw_inhale && saw_exhale);
+        let position = [0.2, 0.0, 0.0];
+        let jump = normal.observe(BreathTimestampMicros::new(4_800_000), generation,
+            frame(300, 4_800_000, position));
+        assert_eq!(jump.assessment.unwrap().tracking, BreathTrackingState::RejectedMotion);
+        let recovered = normal.observe(BreathTimestampMicros::new(4_816_000), generation,
+            frame(301, 4_816_000, position));
+        let assessment = recovered.assessment.unwrap();
+        assert_eq!(assessment.tracking, BreathTrackingState::Valid);
+        assert_eq!(assessment.phase, CommonBreathPhase::Hold);
     }
 
     #[test]
