@@ -202,7 +202,9 @@ final class NativePageSnapshot {
             shape(cx-length/2,cy-width/2,cx+length/2,cy+width/2,argb,alpha,width/2,(float)Math.atan2(y2-y1,x2-x1),clip);
         }
         void background(View view,float[] r,float alpha,float[] clip,float unit)throws Exception {
-            if(view instanceof Button||view instanceof EditText){
+            if ((view instanceof Button || view instanceof EditText)
+                    && !("native-page-flat-background".equals(view.getTag())
+                    && view.getBackground() instanceof GradientDrawable)) {
                 int border=view.hasFocus()?0xff52b7df:view.isPressed()?0xff83d0ed:0xff516578;
                 shape(r[0],r[1],r[2],r[3],border,alpha,4,0,clip);
                 shape(r[0]+1,r[1]+1,r[2]-1,r[3]-1,view.isPressed()?0xff304659:0xff1b2b38,alpha,3,0,clip);return;
@@ -259,7 +261,9 @@ final class NativePageSnapshot {
             background(view,r,alpha,clip,unit);
             if(view instanceof SeekBar)seek((SeekBar)view,r,alpha,clip,unit);
             else if(view instanceof ProgressBar)progress((ProgressBar)view,r,alpha,clip);
-            else if(view instanceof CheckBox)check((CheckBox)view,r,alpha,clip,unit);
+            else if(view instanceof CheckBox
+                    && !("native-page-flat-background".equals(view.getTag())
+                    && ((CheckBox)view).getButtonDrawable()==null))check((CheckBox)view,r,alpha,clip,unit);
             else if(view instanceof CheckedTextView)checkedText((CheckedTextView)view,r,alpha,clip,unit);
             if(view instanceof TextView)text((TextView)view,r,alpha,clip,unit);
             else if(view instanceof ViewGroup){
@@ -289,7 +293,8 @@ final class NativePageSnapshot {
                         drawable(list.getDivider(),view,new float[]{r[0]+view.getPaddingLeft()*unit,item[3],r[2]-view.getPaddingRight()*unit,item[3]+divider},alpha,childClip,unit,0);
                     }
                 }
-                if(view instanceof Spinner){float x=r[2]-12,y=(r[1]+r[3])/2;line(x-4,y-2,x,y+2,2,0xffbed4e4,alpha,clip);line(x,y+2,x+4,y-2,2,0xffbed4e4,alpha,clip);}
+                if(view instanceof Spinner && (group.getChildCount()==0
+                        || !"native-page-explicit-chevron".equals(group.getChildAt(0).getTag()))){float x=r[2]-12,y=(r[1]+r[3])/2;line(x-4,y-2,x,y+2,2,0xffbed4e4,alpha,clip);line(x,y+2,x+4,y-2,2,0xffbed4e4,alpha,clip);}
             }else require(view.getClass()==View.class||view instanceof ProgressBar,"unsupported-widget");
             if(view.getForeground()!=null)drawable(view.getForeground(),view,r,alpha,clip,unit,0);
         }

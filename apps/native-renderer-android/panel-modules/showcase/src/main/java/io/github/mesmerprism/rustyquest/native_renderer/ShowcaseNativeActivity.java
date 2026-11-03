@@ -4,6 +4,11 @@ import android.app.Activity;
 import android.content.Context;
 import android.view.MotionEvent;
 import android.widget.EditText;
+import android.widget.Spinner;
+import android.widget.SpinnerAdapter;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.view.ContextThemeWrapper;
 import android.os.Bundle;
 import android.content.Intent;
 import android.view.View;
@@ -22,7 +27,49 @@ public final class ShowcaseNativeActivity extends NativeActivity {
     private BooleanSupplier currentProducer;
     @Override protected void onCreate(Bundle state){super.onCreate(state);owner=new WeakReference<>(this);current=true;controls=new ShowcaseControls(this,new ShowcaseControls.Host(){public boolean current(){return ShowcaseNativeActivity.this.current&&currentProducer!=null&&currentProducer.getAsBoolean()&&!isFinishing()&&!isDestroyed();}public void closePanel(){requestVisibility(false);}
         @Override public EditText createEditor(Context context){return new MeshEditor(context);}
+        @Override public Spinner createSpinner(Context context,String label){return new MeshChoice(context,label);}
     });ShowcaseNativeBridge.initialize(this);}
+    private final class MeshChoice extends Spinner {
+        private final String label;
+
+        MeshChoice(Context context,String label) {
+            super(context,Spinner.MODE_DIALOG);
+            this.label=label;
+        }
+
+        @Override public boolean performClick() {
+            ShowcaseNativeActivity activity=ShowcaseNativeActivity.this;
+            BooleanSupplier producer=currentProducer;
+            SpinnerAdapter choices=getAdapter();
+            if (!showcaseOwnerResumed() || producer==null || !producer.getAsBoolean()
+                    || !isAttachedToWindow() || !isShown() || !isEnabled()
+                    || choices==null || choices.getCount()==0
+                    || !NativeMeshUiProducer.panelVisibilityConfirmed(activity,true)) return false;
+
+            CharSequence[] labels=new CharSequence[choices.getCount()];
+            for (int i=0;i<labels.length;i++) {
+                labels[i]=ShowcaseControls.displayChoice(String.valueOf(choices.getItem(i)));
+            }
+            Context themed=new ContextThemeWrapper(getContext(),activity.getTheme());
+            AlertDialog dialog=new AlertDialog.Builder(themed)
+                .setTitle(label)
+                .setSingleChoiceItems(labels,getSelectedItemPosition(),new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface dialog,int selected) {
+                        if (showcaseOwnerResumed() && currentProducer==producer && producer.getAsBoolean()
+                                && isAttachedToWindow() && isShown() && isEnabled() && getAdapter()==choices
+                                && NativeMeshUiProducer.panelVisibilityConfirmed(activity,true)) {
+                            setSelection(selected);
+                        }
+                        dialog.dismiss();
+                    }
+                })
+                .setNegativeButton("Cancel",null)
+                .create();
+            NativeMeshUiProducer.showProductDialog(activity,dialog);
+            return true;
+        }
+    }
+
     /** Keep the real editor and route a completed Vulkan tap through the existing IME bridge. */
     private final class MeshEditor extends EditText {
         MeshEditor(Context context) {

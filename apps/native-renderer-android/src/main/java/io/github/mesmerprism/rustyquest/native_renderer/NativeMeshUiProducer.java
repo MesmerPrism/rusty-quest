@@ -913,7 +913,12 @@ static final class VisibilityReadback {
                 new java.util.function.BooleanSupplier(){public boolean getAsBoolean(){
                     return editorEpoch==requestedEpoch&&editor==requested&&editorCurrent();
                 }},new Runnable(){public void run(){
-                    if(editorEpoch==requestedEpoch){systemKeyboard=null;retireEditor();}
+                    if(editorEpoch==requestedEpoch){
+                        systemKeyboard=null;
+                        retireEditor();
+                        // End a Showcase field edit when the system keyboard is dismissed.
+                        if (NativeRendererActivityComponents.showcaseSelected(activity)) requested.clearFocus();
+                    }
                 }});}catch(RuntimeException unavailable){
                 Log.w("RQNativeSystemIme","event=system-ime-open-failed textLogged=false visibleProof=false");
                 retireEditor();return;

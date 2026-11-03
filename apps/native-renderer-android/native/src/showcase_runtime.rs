@@ -58,7 +58,10 @@ impl ShowcaseRuntime {
         }
     }
     fn status(&self) -> Value {
-        json!({"schema":STATUS,"product":PRODUCT,"epoch":self.epoch,"revision":self.revision,"rendered_visual_revision":self.rendered_visual_revision,"rendered_radius_m":self.rendered_radius_m,"rendered_material":self.rendered_material,"material_presets":self.material_presets(),"o":{"e":self.epoch,"s":"observed"},"observed_at_ns":monotonic_ns().to_string(),"ready":self.visual.is_some(),"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles,"availability":{"breath":self.breath_available,"heartbeat":self.heartbeat_available,"polar_required":self.inputs["breath_source"]=="polar-acc" || self.inputs["heartbeat_source"]=="polar","selected_polar_unavailable":(self.inputs["breath_source"]=="polar-acc" && !self.breath_available)||(self.inputs["heartbeat_source"]=="polar" && !self.heartbeat_available)},"applied_progress":self.progress,"automatic_phase":self.automatic.phase(self.last_tick_ns)})
+        let driver_ranges: Vec<_> = (0..8)
+            .map(crate::native_renderer_stimulus_panel::private_particle_canonical_driver_range)
+            .collect();
+        json!({"schema":STATUS,"product":PRODUCT,"epoch":self.epoch,"revision":self.revision,"rendered_visual_revision":self.rendered_visual_revision,"rendered_radius_m":self.rendered_radius_m,"rendered_material":self.rendered_material,"material_presets":self.material_presets(),"driver_ranges":driver_ranges,"o":{"e":self.epoch,"s":"observed"},"observed_at_ns":monotonic_ns().to_string(),"ready":self.visual.is_some(),"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles,"availability":{"breath":self.breath_available,"heartbeat":self.heartbeat_available,"polar_required":self.inputs["breath_source"]=="polar-acc" || self.inputs["heartbeat_source"]=="polar","selected_polar_unavailable":(self.inputs["breath_source"]=="polar-acc" && !self.breath_available)||(self.inputs["heartbeat_source"]=="polar" && !self.heartbeat_available)},"applied_progress":self.progress,"automatic_phase":self.automatic.phase(self.last_tick_ns)})
     }
     fn material_presets(&self) -> Value {
         use crate::native_renderer_private_particle_material_request::PrivateParticleMaterialPreset;
