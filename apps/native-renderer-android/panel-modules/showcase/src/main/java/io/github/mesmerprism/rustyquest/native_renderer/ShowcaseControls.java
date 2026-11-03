@@ -418,7 +418,14 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     static JSONObject inputChange(JSONObject current,String key,Object value)throws Exception {
         JSONObject next=copy(current).put(key,value);
         if(next.optString("breath_source").equals("automatic"))next.put("breath_mapping","state");
+        if(!allowsPolarDynamic(next) && next.optString("polar_projection").equals("dynamic-axis"))
+            next.put("polar_projection","xz");
         return next;
+    }
+
+    private static boolean allowsPolarDynamic(JSONObject inputs) {
+        return inputs.optString("breath_source").equals("polar-acc")
+            && inputs.optString("breath_mapping").equals("state");
     }
 
     private void queueInputEdit(final String key,final Object value) {
@@ -596,7 +603,8 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         LinearLayout advanced=foldoutGroup(parent,"Advanced input mapping",expanded);
         advancedInputs=advanced;
         inputChoice(advanced,"Controller projection",state.inputs,"controller_projection",new String[]{"dynamic-axis","fixed-orientation"});
-        inputChoice(advanced,"Polar projection",state.inputs,"polar_projection",new String[]{"xz","3d"});
+        inputChoice(advanced,"Polar projection",state.inputs,"polar_projection",
+            allowsPolarDynamic(state.inputs)?new String[]{"xz","3d","dynamic-axis"}:new String[]{"xz","3d"});
         String inversionLabel="Invert breathing mapping";
         CheckBox inverse=toggle(context,inversionLabel,state.inputs.getBoolean("inverted"));
         addControlRow(advanced,text(inversionLabel,15,FG),inverse,140);
@@ -659,6 +667,10 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
             boolean fixed=inputs.optString("controller_projection").equals("fixed-orientation");
             parent.addView(text(fixed?"Controller State uses Fixed orientation without calibration."
                     :"Controller State learns the movement direction continuously.",14,MUTED));
+            return;
+        }
+        if(allowsPolarDynamic(inputs) && inputs.optString("polar_projection").equals("dynamic-axis")){
+            parent.addView(text("Polar State with Dynamic axis learns the movement direction continuously.",14,MUTED));
             return;
         }
         calibrationStatus=text("",14,MUTED);

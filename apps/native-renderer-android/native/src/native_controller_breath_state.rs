@@ -195,7 +195,10 @@ impl NativeControllerBreathStateEstimator {
         sample: Option<NativeControllerBreathPoseSample>,
     ) -> NativeControllerBreathSample {
         let phase = match sample {
-            Some(sample) if sample.ready() => self.classifier.push_sample(self.settings, sample),
+            Some(sample) if sample.ready() => self.classifier.push_sample(
+                self.settings, sample.sample_time_s, to_f64_3(sample.position_m),
+                to_f64_4(sample.orientation_xyzw),
+            ),
             _ => {
                 self.classifier.reset();
                 self.tracking_loss_samples = self.tracking_loss_samples.saturating_add(1);
@@ -220,6 +223,19 @@ impl NativeControllerBreathStateEstimator {
     pub(crate) fn use_dynamic_axis(&mut self, enabled: bool) {
         self.classifier.dynamic_axis = enabled.then(DynamicControllerAxis::default);
         self.reset_history();
+    }
+
+    #[cfg(feature = "showcase")]
+    pub(crate) fn for_polar_acceleration() -> Self {
+        let mut estimator = Self::new(NativeControllerBreathSettings::default());
+        estimator.use_dynamic_axis(true);
+        estimator.classifier.sensor_axis_polarity = true;
+        estimator
+    }
+
+    #[cfg(feature = "showcase")]
+    pub(crate) fn push_acceleration(&mut self, time_s: f64, acceleration_g: [f64; 3]) -> CommonBreathPhase {
+        self.classifier.push_sample(self.settings, time_s, acceleration_g, [0.0, 0.0, 0.0, 1.0])
     }
 
     pub(crate) fn marker_fields(&self) -> String {
@@ -248,7 +264,7 @@ struct DynamicControllerAxis {
 }
 
 impl DynamicControllerAxis {
-    fn observe(&mut self, time: f64, position: [f64; 3], reference: [f64; 3]) -> Option<[f64; 3]> {
+    fn observe(&mut self, time: f64, position: [f64; 3], reference: Option<[f64; 3]>) -> Option<[f64; 3]> {
         const WINDOW_SECONDS: f64 = 3.0;
         const SAMPLE_INTERVAL_SECONDS: f64 = 0.05;
         while self.positions.front().is_some_and(|&(at, _)| time - at > WINDOW_SECONDS) {
@@ -291,10 +307,19 @@ impl DynamicControllerAxis {
             };
             direction = next;
         }
-        let alignment = dot3(direction, reference);
-        if dot3(direction, multiply(direction)) < 0.7 * variance || alignment.abs() < 0.1 {
+        if dot3(direction, multiply(direction)) < 0.7 * variance {
             return self.axis;
         }
+        let alignment = match reference {
+            Some(reference) => {
+                let alignment = dot3(direction, reference);
+                if alignment.abs() < 0.1 {
+                    return self.axis;
+                }
+                alignment
+            }
+            None => self.axis.map_or(direction[largest], |previous| dot3(direction, previous)),
+        };
         if alignment < 0.0 {
             direction = direction.map(|component| -component);
         }
@@ -318,19 +343,19 @@ fn rolling_axis_uses_orientation_for_sign_and_adapts_after_a_hold() {
     let reference = [0.0, 0.0, -1.0];
     let original = normalized_axis([-1.0, 0.0, -0.5]).unwrap();
     let shifted = normalized_axis([0.0, -1.0, -0.5]).unwrap();
-    assert!(learner.observe(0.0, [0.0; 3], reference).is_none());
+    assert!(learner.observe(0.0, [0.0; 3], Some(reference)).is_none());
     for i in 1..30 {
-        learner.observe(i as f64 * 0.06, original.map(|x| x * i as f64 * 0.001), reference);
+        learner.observe(i as f64 * 0.06, original.map(|x| x * i as f64 * 0.001), Some(reference));
     }
     assert!(dot3(learner.axis.unwrap(), original) > 0.99);
     for i in 30..100 {
-        learner.observe(i as f64 * 0.06, original.map(|x| x * 0.029), reference);
+        learner.observe(i as f64 * 0.06, original.map(|x| x * 0.029), Some(reference));
     }
     assert!(dot3(learner.axis.unwrap(), original) > 0.99);
     for i in 100..200 {
         let distance = ((i - 100) as f64 * 0.25).sin() * 0.01;
         let position = std::array::from_fn(|j| original[j] * 0.029 + shifted[j] * distance);
-        learner.observe(i as f64 * 0.06, position, reference);
+        learner.observe(i as f64 * 0.06, position, Some(reference));
     }
     assert!(dot3(learner.axis.unwrap(), shifted) > 0.99);
 }
@@ -338,6 +363,7 @@ fn rolling_axis_uses_orientation_for_sign_and_adapts_after_a_hold() {
 #[derive(Debug)]
 struct FixedControllerStateClassifier {
     dynamic_axis: Option<DynamicControllerAxis>,
+    sensor_axis_polarity: bool,
     orientation_axis: [f64; 3],
     last_position: Option<[f64; 3]>,
     last_orientation: [f64; 4],
@@ -350,6 +376,7 @@ impl FixedControllerStateClassifier {
     fn new(settings: NativeControllerBreathSettings) -> Self {
         Self {
             dynamic_axis: None,
+            sensor_axis_polarity: false,
             orientation_axis: normalized_axis(to_f64_3(settings.orientation_axis))
                 .unwrap_or([0.0, 0.0, -1.0]),
             last_position: None,
@@ -374,19 +401,19 @@ impl FixedControllerStateClassifier {
     fn push_sample(
         &mut self,
         settings: NativeControllerBreathSettings,
-        sample: NativeControllerBreathPoseSample,
+        time_s: f64,
+        position: [f64; 3],
+        orientation: [f64; 4],
     ) -> CommonBreathPhase {
-        let position = to_f64_3(sample.position_m);
-        let orientation = to_f64_4(sample.orientation_xyzw);
         let Some(last_position) = self.last_position else {
             self.last_position = Some(position);
             self.last_orientation = orientation;
-            self.last_sample_time_s = Some(sample.sample_time_s);
+            self.last_sample_time_s = Some(time_s);
             return CommonBreathPhase::Hold;
         };
 
         let sample_time_s = fixed_controller_sample_time_s(
-            sample.sample_time_s,
+            time_s,
             self.last_sample_time_s,
             fixed_controller_fallback_sample_seconds(settings),
         );
@@ -403,7 +430,7 @@ impl FixedControllerStateClassifier {
                 self.reset();
                 return CommonBreathPhase::BadTracking;
             }
-            learner.observe(sample_time_s, position, reference_axis)
+            learner.observe(sample_time_s, position, (!self.sensor_axis_polarity).then_some(reference_axis))
         } else {
             Some(reference_axis)
         };

@@ -273,7 +273,12 @@ fn validate_inputs(v: &Value) -> Result<(), String> {
         &v["controller_projection"],
         &["dynamic-axis", "fixed-orientation"],
     )?;
-    choice(&v["polar_projection"], &["xz", "3d"])?;
+    choice(&v["polar_projection"], &["xz", "3d", "dynamic-axis"])?;
+    if v["polar_projection"] == "dynamic-axis"
+        && (v["breath_source"] != "polar-acc" || v["breath_mapping"] != "state")
+    {
+        return Err("polar_dynamic_axis_requires_polar_state".into());
+    }
     if !v["inverted"].is_boolean() {
         return Err("boolean_required".into());
     }
@@ -883,6 +888,9 @@ pub(crate) fn command_with_executor(
                 if inputs["breath_source"] == "automatic"
                     || (inputs["breath_source"] == "controller"
                         && inputs["breath_mapping"] == "state")
+                    || (inputs["breath_source"] == "polar-acc"
+                        && inputs["breath_mapping"] == "state"
+                        && inputs["polar_projection"] == "dynamic-axis")
                 {
                     return Err("calibration-not-required".into());
                 }

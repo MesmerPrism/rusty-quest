@@ -922,6 +922,7 @@ impl BreathCompositionRuntime {
                     let projection = match request.polar_projection {
                         PolarProjectionSelection::Xz => PolarAccProjection::Xz,
                         PolarProjectionSelection::Full3d => PolarAccProjection::Full3d,
+                        PolarProjectionSelection::DynamicAxis => PolarAccProjection::Full3d,
                     };
                     let mut parameters =
                         rusty_quest_breath_contract::calibration::CalibrationParameters::default();
@@ -941,6 +942,10 @@ impl BreathCompositionRuntime {
                         settings = tuned;
                     }
                     let mut adapter = PolarAccBreathAdapter::new(settings);
+                    #[cfg(feature = "showcase")]
+                    if request.polar_projection == PolarProjectionSelection::DynamicAxis {
+                        adapter.enable_dynamic_state(request.inverted);
+                    }
                     let calibration = adapter.configure(at);
                     self.polar_adapter = Some(adapter);
                     self.last_polar_sequence_id = None;
@@ -1959,6 +1964,9 @@ fn parse_request_tokens(
     {
         "xz" => PolarProjectionSelection::Xz,
         "3d" | "full-3d" => PolarProjectionSelection::Full3d,
+        #[cfg(feature = "showcase")]
+        "dynamic-axis" if source == BreathCompositionSource::PolarAcc
+            && mapping == BreathCompositionMapping::State => PolarProjectionSelection::DynamicAxis,
         _ => return Err("unsupported-polar-projection"),
     };
     Ok(BreathCompositionRequest {

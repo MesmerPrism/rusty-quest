@@ -104,6 +104,8 @@ pub enum PolarProjectionSelection {
     Xz,
     /// Fit the principal axis in three dimensions.
     Full3d,
+    /// Follow the dominant direction of recent acceleration for State.
+    DynamicAxis,
 }
 
 impl PolarProjectionSelection {
@@ -113,6 +115,7 @@ impl PolarProjectionSelection {
         match self {
             Self::Xz => "xz",
             Self::Full3d => "3d",
+            Self::DynamicAxis => "dynamic-axis",
         }
     }
 }
