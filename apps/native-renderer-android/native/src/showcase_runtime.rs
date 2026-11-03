@@ -657,6 +657,13 @@ fn restore_persisted_settings(
     Ok(())
 }
 
+pub(crate) fn restore_breath_selection_after_runtime_install() {
+    let initialized = lock().visual.is_some();
+    if initialized {
+        select_breath_input();
+    }
+}
+
 fn select_breath_input() {
     let input = lock().inputs.clone();
     let source = if input["breath_source"] == "polar-acc" {

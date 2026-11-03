@@ -651,6 +651,8 @@ fn android_main(app: android_activity::AndroidApp) {
     breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
         native_app_settings.lookup(name)
     });
+    #[cfg(feature = "showcase")]
+    showcase_runtime::restore_breath_selection_after_runtime_install();
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
             |name| native_app_settings.lookup(name),
