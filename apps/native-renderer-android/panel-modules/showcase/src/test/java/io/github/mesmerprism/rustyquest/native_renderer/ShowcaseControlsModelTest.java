@@ -11,6 +11,13 @@ public final class ShowcaseControlsModelTest {
     static JSONObject visual()throws Exception{return new JSONObject("{\"material\":{\"preset\":\"test\"},\"transparency\":{\"opacity\":1,\"output_alpha_scale\":1,\"depth_suppression_strength\":0,\"rgb_alpha_coupling\":0},\"color\":{\"facing_attenuation_strength\":0}}");}
     static JSONObject status(String epoch,long revision)throws Exception{return new JSONObject().put("product","visual-showcase").put("ready",true).put("epoch",epoch).put("revision",revision).put("inputs",new JSONObject().put("breath_source","automatic")).put("visual",visual());}
     static int leaves(JSONObject schema)throws Exception {String type=schema.optString("type");if(type.equals("object")){int total=0;JSONObject p=schema.getJSONObject("properties");java.util.Iterator<String> keys=p.keys();while(keys.hasNext())total+=leaves(p.getJSONObject(keys.next()));return total;}if(type.equals("array")){if(schema.has("prefixItems")){int total=0;org.json.JSONArray items=schema.getJSONArray("prefixItems");for(int i=0;i<items.length();i++)total+=leaves(items.getJSONObject(i));return total;}return schema.getInt("maxItems")*leaves(schema.getJSONObject("items"));}return 1;}
+    private static void inputChangeUsesCurrentValues() throws Exception {
+        JSONObject current=new JSONObject().put("breath_source","controller").put("breath_mapping","volume").put("inverted",true);
+        JSONObject next=ShowcaseControls.inputChange(current,"breath_source","automatic");
+        check(next.getString("breath_mapping").equals("state"),"automatic input requires state mapping");
+        check(next.getBoolean("inverted"),"input change overwrote an unrelated field");
+        check(current.getString("breath_mapping").equals("volume"),"input change mutated readback");
+    }
     private static void numericBounds() throws Exception {
         check(ShowcaseControls.parseNumericValue(" 30 ",30,240,false,false).doubleValue()==30,"lower BPM boundary");
         check(ShowcaseControls.parseNumericValue("240",30,240,false,false).doubleValue()==240,"upper BPM boundary");
@@ -38,6 +45,7 @@ public final class ShowcaseControlsModelTest {
     }
     public static void main(String[]args)throws Exception {
         numericBounds();
+        inputChangeUsesCurrentValues();
         ShowcaseControls.DraftState remote=new ShowcaseControls.DraftState();
         remote.observe(status("1",1));
         JSONObject controller=status("1",2);

@@ -45,7 +45,7 @@ impl ShowcaseRuntime {
             rendered_visual_revision: None,
             rendered_radius_m: None,
             rendered_material: None,
-            inputs: json!({"breath_source":"automatic","breath_mapping":"state","heartbeat_source":"synthetic","synthetic_bpm":60.0,"controller_projection":"dynamic-axis","polar_projection":"xz","inverted":false}),
+            inputs: json!({"breath_source":"automatic","breath_mapping":"state","heartbeat_source":"synthetic","synthetic_bpm":60.0,"controller_projection":"fixed-orientation","polar_projection":"xz","inverted":false}),
             visual: None,
             profiles: BTreeMap::new(),
             receipts: VecDeque::new(),

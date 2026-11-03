@@ -57,8 +57,9 @@
   "runtime_profile": {
     "set": {
       "debug.rustyquest.native_renderer.breath_composition.enabled": "true",
+      "debug.rustyquest.native_renderer.breath_composition.panel.enabled": "true",
       "debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled": "true",
-      "debug.rustyquest.native_renderer.breath_composition.controller_projection": "dynamic-axis",
+      "debug.rustyquest.native_renderer.breath_composition.controller_projection": "fixed-orientation",
       "debug.rustyquest.native_renderer.breath_composition.polar_projection": "xz",
       "debug.rustyquest.native_renderer.breath_composition.stale_millis": "500",
       "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.enabled": "true"

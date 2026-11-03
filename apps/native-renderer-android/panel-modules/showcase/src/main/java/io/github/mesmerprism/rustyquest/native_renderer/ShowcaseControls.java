@@ -53,7 +53,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     private long awaitingRendered;
     private PolarSensorPanel polar;
     private NumericField inputBpm;
-    private Runnable inputVisibility;
+    private LinearLayout advancedInputs;
     private TextView lastRadius;
 
     ShowcaseControls(Activity activity,Host host){if(activity==null||host==null)throw new IllegalArgumentException("actual-owner-required");this.activity=activity;this.host=host;}
@@ -196,7 +196,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     private LinearLayout column(){LinearLayout view=new LinearLayout(context);view.setOrientation(LinearLayout.VERTICAL);return view;}
     private LinearLayout row(){LinearLayout view=new LinearLayout(context);view.setOrientation(LinearLayout.HORIZONTAL);return view;}
     private TextView text(String value,int size,int color){TextView view=new TextView(context);view.setText(value);view.setTextSize(size);view.setTextColor(color);view.setPadding(0,dp(4),0,dp(4));return view;}
-    private Button button(String label,final Action action){Button view=new Button(context);view.setText(label);styleButton(view);if(label.equals("Apply inputs")||label.equals("Apply visuals")||label.equals("Confirm"))paintControl(view,SELECTED,SURFACE);view.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){try{action.run();}catch(Exception error){message=friendlyError(error);updateFrame();}}});return view;}
+    private Button button(String label,final Action action){Button view=new Button(context);view.setText(label);styleButton(view);if(label.equals("Apply visuals")||label.equals("Confirm"))paintControl(view,SELECTED,SURFACE);view.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){try{action.run();}catch(Exception error){message=friendlyError(error);updateFrame();}}});return view;}
     private static String friendlyError(Exception error){String reason=String.valueOf(error.getMessage());if(reason.contains("settings-changed"))return "Settings changed on the headset. Read applied settings before applying your edits.";if(reason.contains("reconcile-original"))return "Waiting for the earlier action's outcome.";if(error instanceof NumberFormatException)return "Enter a valid number before applying.";if(reason.startsWith("Out of range:")||reason.startsWith("Whole number required:"))return reason;return "This action is unavailable. Read applied settings and try again.";}
     static String displayChoice(String value){if(value.equals("automatic"))return "Automatic";if(value.equals("polar-acc"))return "Polar ACC";if(value.equals("xz"))return "XZ";if(value.equals("3d"))return "3D";if(value.equals("sphere-radius-percent"))return "% of sphere radius";if(value.equals("world-meters"))return "World size (m)";if(value.equals("legacy-payload-envelope"))return "Original size behavior";if(value.equals("reference-material-emulation"))return "Reference material";if(value.equals("packaged-default"))return "Built-in material";String text=value.replace('-',' ');return text.isEmpty()?text:Character.toUpperCase(text.charAt(0))+text.substring(1);}
     static ArrayAdapter<String> adapter(Context context,String[] values) {
@@ -280,15 +280,20 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     }
 
     static LinearLayout foldoutGroup(LinearLayout parent,String label) {
+        return foldoutGroup(parent,label,false);
+    }
+
+    private static LinearLayout foldoutGroup(LinearLayout parent,String label,boolean initiallyExpanded) {
         Context context=parent.getContext();
         LinearLayout group=new LinearLayout(context);
         group.setOrientation(LinearLayout.VERTICAL);
         group.setPadding(dp(context,12),0,0,dp(context,4));
-        group.setVisibility(View.GONE);
+        group.setVisibility(initiallyExpanded?View.VISIBLE:View.GONE);
         Button toggle=new Button(context);
         styleButton(toggle);
         toggle.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-        toggle.setText("▸ "+label);
+        toggle.setText((initiallyExpanded?"▾ ":"▸ ")+label);
+        toggle.setSelected(initiallyExpanded);
         toggle.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) {
                 boolean expanded=group.getVisibility()!=View.VISIBLE;
@@ -349,11 +354,10 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
             pages.put(page,content);pageRevisions.put(page,state.applied.getLong("revision"));cached=content;
         }
         ViewGroup previous=(ViewGroup)cached.getParent();if(previous!=null)previous.removeView(cached);body.addView(cached);scroll.scrollTo(0,0);
-        add(actions,"Read applied",new Action(){public void run()throws Exception{if(state.inputDirty||state.visualDirty){message="Discard unapplied edits?";actions.removeAllViews();add(actions,"Keep editing",new Action(){public void run()throws Exception{buildPage();}});add(actions,"Discard edits and read applied",new Action(){public void run()throws Exception{reload();}});}else reload();}});
-        if (!unknown && (page.equals("Inputs") || page.equals("Visuals") || page.startsWith("Visual / "))) {
+        if(!page.equals("Inputs")&&!page.equals("Polar")&&!page.equals("Calibration"))add(actions,"Read applied",new Action(){public void run()throws Exception{if(state.inputDirty||state.visualDirty){message="Discard unapplied edits?";actions.removeAllViews();add(actions,"Keep editing",new Action(){public void run()throws Exception{buildPage();}});add(actions,"Discard edits and read applied",new Action(){public void run()throws Exception{reload();}});}else reload();}});
+        if (!unknown && (page.equals("Visuals") || page.startsWith("Visual / "))) {
             actions.addView(new View(context),new LinearLayout.LayoutParams(0,1,1));
         }
-        if(page.equals("Inputs"))add(actions,"Apply inputs",new Action(){public void run()throws Exception{if(state.inputs.optString("heartbeat_source").equals("synthetic"))inputBpm.requireCommitted();send("set-inputs",copy(state.inputs),false);}});
         if(page.startsWith("Visual / ")||page.equals("Visuals"))add(actions,"Apply visuals",new Action(){public void run()throws Exception{flushVisuals();send("apply-visual",visualPayload(state.visual),true);}});
         if(unknown)add(actions,"Acknowledge current state",new Action(){public void run()throws Exception{state.observe(ShowcaseNativeBridge.status());message="Original outcome remains unknown; current state acknowledged";pendingId="";pendingOp="";unknown=false;buildPage();}});
         updateFrame();
@@ -393,7 +397,74 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     }
     private static boolean navigationLabel(String label){if(isMain(label)||label.equals("Close")||label.equals("Back")||label.equals("Polar setup")||label.equals("Calibration")||(label.startsWith("▸")||label.startsWith("▾"))||label.equals("Read applied")||label.equals("Acknowledge current state"))return true;for(String section:VISUAL_PAGES)if(section.equals(label))return true;return false;}
     private void enableEditors(View view,boolean enabled){if(view instanceof Button)view.setEnabled(enabled||navigationLabel(((Button)view).getText().toString()));else if(view instanceof EditText||view instanceof Spinner||view instanceof CompoundButton)view.setEnabled(enabled&&!Boolean.FALSE.equals(view.getTag()));if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)enableEditors(group.getChildAt(i),enabled);}}
-    private Spinner choice(LinearLayout parent,String label,final JSONObject object,final String key,String[] values,final boolean input){Spinner spinner=host.createSpinner(context,label);spinner.setAdapter(adapter(context,values));int selected=0;for(int i=0;i<values.length;i++)if(values[i].equals(object.optString(key)))selected=i;spinner.setSelection(selected);addControlRow(parent,text(label,15,FG),spinner,280);spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener(){boolean initial=true;public void onNothingSelected(AdapterView<?> p){}public void onItemSelected(AdapterView<?> p,View v,int position,long id){if(initial){initial=false;return;}try{object.put(key,p.getItemAtPosition(position));if(input){state.inputDirty=true;if(inputVisibility!=null)inputVisibility.run();}else state.visualDirty=true;updateFrame();}catch(Exception ignored){}}});return spinner;}
+    private void inputChoice(LinearLayout parent,String label,final JSONObject inputs,final String key,String[] values) {
+        Spinner spinner=host.createSpinner(context,label);
+        spinner.setAdapter(adapter(context,values));
+        int selected=0;
+        for(int i=0;i<values.length;i++)if(values[i].equals(inputs.optString(key)))selected=i;
+        spinner.setSelection(selected);
+        addControlRow(parent,text(label,15,FG),spinner,280);
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            public void onNothingSelected(AdapterView<?> parent){}
+            public void onItemSelected(AdapterView<?> parent,View view,int position,long id) {
+                Object value=parent.getItemAtPosition(position);
+                if(!value.equals(inputs.opt(key)))queueInputEdit(key,value);
+            }
+        });
+    }
+
+    static JSONObject inputChange(JSONObject current,String key,Object value)throws Exception {
+        JSONObject next=copy(current).put(key,value);
+        if(next.optString("breath_source").equals("automatic"))next.put("breath_mapping","state");
+        return next;
+    }
+
+    private void queueInputEdit(final String key,final Object value) {
+        // A native receipt can rebuild the page. Let the widget finish dispatching first.
+        main.post(new Runnable(){public void run(){
+            if(retired||!resumed||!host.current()||!pendingId.isEmpty()||unknown)return;
+            try {
+                state.observe(ShowcaseNativeBridge.status());
+                boolean changed=state.refreshCleanDomain(false);
+                JSONObject payload=inputChange(state.inputs,key,value);
+                if(!payload.toString().equals(state.inputs.toString()))send("set-inputs",payload,false);
+                else if(changed)rebuildInputPage();
+            } catch(Exception error) {
+                if(unknown)return;
+                try {
+                    state.observe(ShowcaseNativeBridge.status());
+                    state.refreshCleanDomain(false);
+                    readbackAvailable=true;
+                    message="Input change could not be applied. Showing current headset settings.";
+                    rebuildInputPage();
+                } catch(Exception unavailable) {
+                    readbackAvailable=false;
+                    message="Input change could not be applied. Waiting for headset settings.";
+                    invalidateInputPages();
+                    updateFrame();
+                }
+            }
+        }});
+    }
+
+    private void invalidateInputPages() {
+        pages.remove("Inputs");
+        pages.remove("Calibration");
+    }
+
+    private void rebuildInputPage()throws Exception {
+        invalidateInputPages();
+        rebuildAtCurrentScroll();
+    }
+
+    private void rebuildAtCurrentScroll()throws Exception {
+        final int previousScroll=scroll.getScrollY();
+        final String previousPage=page;
+        buildPage();
+        scroll.post(new Runnable(){public void run(){
+            if(page.equals(previousPage))scroll.scrollTo(0,previousScroll);
+        }});
+    }
     interface NumericWrite { void write(Number value) throws Exception; }
 
     static Number parseNumericValue(String text, double minimum, double maximum,
@@ -500,24 +571,36 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         void requireCommitted() {
             if (!commit()) throw new IllegalArgumentException("Out of range: restored the previous value.");
         }
+
     }
 
     private void inputs(LinearLayout parent)throws Exception {
-        choice(parent,"Breathing",state.inputs,"breath_source",new String[]{"automatic","controller","polar-acc"},true);
+        parent.addView(text("Input changes apply automatically.",13,MUTED));
+        inputChoice(parent,"Breathing",state.inputs,"breath_source",new String[]{"automatic","controller","polar-acc"});
         final TextView automatic=text("Automatic: 4 s inhale · 4 s full hold · 4 s exhale · 4 s empty hold",13,MUTED);parent.addView(automatic);
-        final LinearLayout mapping=column();parent.addView(mapping);choice(mapping,"Sensor mapping",state.inputs,"breath_mapping",new String[]{"volume","state"},true);
-        choice(parent,"Heartbeat",state.inputs,"heartbeat_source",new String[]{"off","polar","synthetic"},true);final LinearLayout rate=column();parent.addView(rate);JSONObject draftInputs = state.inputs;
+        final LinearLayout mapping=column();parent.addView(mapping);inputChoice(mapping,"Sensor mapping",state.inputs,"breath_mapping",new String[]{"volume","state"});
+        inputChoice(parent,"Heartbeat",state.inputs,"heartbeat_source",new String[]{"off","polar","synthetic"});final LinearLayout rate=column();parent.addView(rate);JSONObject draftInputs = state.inputs;
         inputBpm = new NumericField(rate, host.createEditor(context), "Synthetic rate (BPM)",
             (Number)draftInputs.get("synthetic_bpm"), 30, 240, false, false, new NumericWrite() {
                 @Override public void write(Number value) throws Exception {
-                    draftInputs.put("synthetic_bpm", value);
-                    state.inputDirty = true;
-                    updateFrame();
+                    queueInputEdit("synthetic_bpm",value);
                 }
             });
-        inputVisibility=new Runnable(){public void run(){boolean auto=state.inputs.optString("breath_source").equals("automatic");mapping.setVisibility(auto?View.GONE:View.VISIBLE);automatic.setVisibility(auto?View.VISIBLE:View.GONE);rate.setVisibility(state.inputs.optString("heartbeat_source").equals("synthetic")?View.VISIBLE:View.GONE);}};inputVisibility.run();
-        LinearLayout advanced=foldout(parent,"Advanced input mapping");choice(advanced,"Controller projection",state.inputs,"controller_projection",new String[]{"dynamic-axis","fixed-orientation"},true);choice(advanced,"Polar projection",state.inputs,"polar_projection",new String[]{"xz","3d"},true);
-        String inversionLabel="Invert breathing mapping";CheckBox inverse=toggle(context,inversionLabel,state.inputs.getBoolean("inverted"));addControlRow(advanced,text(inversionLabel,15,FG),inverse,140);onToggle(inverse,inversionLabel,new CompoundButton.OnCheckedChangeListener(){public void onCheckedChanged(CompoundButton b,boolean value){try{state.inputs.put("inverted",value);state.inputDirty=true;updateFrame();}catch(Exception ignored){}}});
+        boolean auto=state.inputs.optString("breath_source").equals("automatic");
+        mapping.setVisibility(auto?View.GONE:View.VISIBLE);
+        automatic.setVisibility(auto?View.VISIBLE:View.GONE);
+        rate.setVisibility(state.inputs.optString("heartbeat_source").equals("synthetic")?View.VISIBLE:View.GONE);
+        boolean expanded=advancedInputs!=null&&advancedInputs.getVisibility()==View.VISIBLE;
+        LinearLayout advanced=foldoutGroup(parent,"Advanced input mapping",expanded);
+        advancedInputs=advanced;
+        inputChoice(advanced,"Controller projection",state.inputs,"controller_projection",new String[]{"dynamic-axis","fixed-orientation"});
+        inputChoice(advanced,"Polar projection",state.inputs,"polar_projection",new String[]{"xz","3d"});
+        String inversionLabel="Invert breathing mapping";
+        CheckBox inverse=toggle(context,inversionLabel,state.inputs.getBoolean("inverted"));
+        addControlRow(advanced,text(inversionLabel,15,FG),inverse,140);
+        onToggle(inverse,inversionLabel,new CompoundButton.OnCheckedChangeListener(){
+            public void onCheckedChanged(CompoundButton button,boolean value){queueInputEdit("inverted",value);}
+        });
         LinearLayout links=row();add(links,"Polar setup",new Action(){public void run()throws Exception{navigate("Polar");}});add(links,"Calibration",new Action(){public void run()throws Exception{navigate("Calibration");}});parent.addView(links);
     }
     private void visuals(LinearLayout parent) {
@@ -580,12 +663,12 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     }
     private void settle(JSONObject receipt)throws Exception {
         String result=receipt.optString("status");if(result.equals("pending")){message="Waiting for the headset to confirm "+operationLabel(pendingOp);return;}if(result.equals("unknown")){unknown=true;message="The earlier action could not be confirmed. It will not be sent again.";buildPage();return;}
+        boolean inputEdit=pendingOp.equals("set-inputs");
         if(result.equals("accepted")){
             JSONObject current=ShowcaseNativeBridge.status();long confirmed=receipt.optLong("revision");
             state.acknowledgeLocal(current,pendingOp,confirmed);readbackAvailable=true;
             if(current.getLong("revision")==confirmed){
                 for(String cached:pages.keySet())pageRevisions.put(cached,confirmed);
-                if(pendingOp.equals("set-inputs")){pages.remove("Inputs");pages.remove("Calibration");}
                 if(pendingOp.equals("apply-visual")||pendingOp.equals("apply-profile")){
                     java.util.Iterator<String> keys=pages.keySet().iterator();while(keys.hasNext())if(keys.next().startsWith("Visual"))keys.remove();forms.clear();lastRadius=null;pages.remove("Profiles");
                 }
@@ -595,9 +678,17 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
                 if(pendingOp.equals("set-phone-control"))pages.remove("Setup");
                 message="Applied "+operationLabel(pendingOp);
                 if((pendingOp.equals("apply-visual")||pendingOp.equals("apply-profile"))&&current.optLong("rendered_visual_revision")<confirmed){awaitingRendered=confirmed;message="Headset applying visual changes…";}
-            }else message="Settings changed on the headset. Read applied settings to continue.";
+            }else message=inputEdit?"Input change accepted. Showing the latest headset settings.":"Settings changed on the headset. Read applied settings to continue.";
         }
-        else message="The headset could not apply "+operationLabel(pendingOp)+". Check the edited values and read applied settings.";pendingId="";pendingOp="";unknown=false;buildPage();
+        else if(inputEdit){
+            state.observe(ShowcaseNativeBridge.status());
+            message="The headset rejected the input change. Showing current headset settings.";
+        }else message="The headset could not apply "+operationLabel(pendingOp)+". Check the edited values and read applied settings.";
+        pendingId="";pendingOp="";unknown=false;
+        if(inputEdit){
+            state.refreshCleanDomain(false);
+            rebuildInputPage();
+        }else buildPage();
     }
     public void closePanelAndReturnToImmersive(){host.closePanel();}
     public void onPolarStreamEvent(JSONObject event){}
@@ -607,19 +698,16 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         if (frame==null || frame.findFocus() instanceof EditText || unknown) return;
         boolean inputsChanged=state.refreshCleanDomain(false);
         boolean visualChanged=state.refreshCleanDomain(true);
-        if (inputsChanged) {
-            pages.remove("Inputs");
-            pages.remove("Calibration");
-        }
+        if (inputsChanged) invalidateInputPages();
         if (visualChanged) {
             java.util.Iterator<String> keys=pages.keySet().iterator();
             while (keys.hasNext()) if (keys.next().startsWith("Visual / ")) keys.remove();
             forms.clear();
             lastRadius=null;
         }
-        if ((inputsChanged && (page.equals("Inputs") || page.equals("Calibration")))
+        if (((inputsChanged || !pages.containsKey(page)) && (page.equals("Inputs") || page.equals("Calibration")))
                 || (visualChanged && page.startsWith("Visual / "))) {
-            buildPage();
+            rebuildAtCurrentScroll();
         }
     }
 
