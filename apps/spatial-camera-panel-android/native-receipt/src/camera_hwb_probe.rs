@@ -3278,6 +3278,7 @@ unsafe fn render_camera_hwb_probe(
             None,
             processing_graph.public_guide_targets.as_mut(),
             None,
+            None,
             public_stack_elapsed_seconds,
             video_renderer.as_mut(),
             latest_video_frame.as_ref(),
@@ -4018,6 +4019,10 @@ unsafe fn render_peer_common_graph_resources(
             wsi.memory_properties,
         ));
         let surface_generation = NEXT_SDK_SURFACE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        let optional_color_route =
+            crate::spatial_public_multistack_runtime::optional_color_pass::ActiveRoute::begin(
+                surface_generation,
+            );
         let pending_route = crate::peer_projection_runtime::read_source(route_generation);
         if pending_route.words[1] != route_generation
             || pending_route.words[2] != crate::peer_projection_runtime::SOURCE_PEER
@@ -4368,6 +4373,7 @@ unsafe fn render_peer_common_graph_resources(
                 },
                 processing_graph.public_guide_targets.as_mut(),
                 stereo_inputs,
+                Some((wsi.surface_format.format, &memory_properties)),
                 render_started.elapsed().as_secs_f32(),
                 None,
                 None,
@@ -4610,6 +4616,7 @@ unsafe fn render_peer_common_graph_resources(
                     return Err("peer-exact-gpu-identity-rejected".to_string());
                 }
             }
+            optional_color_route.observe_retired(record_result.optional_color_request);
             freshness.commit(
                 pair_generation,
                 current_frame.import_sequence,

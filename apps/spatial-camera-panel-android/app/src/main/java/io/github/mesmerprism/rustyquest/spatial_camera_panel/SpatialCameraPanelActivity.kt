@@ -183,6 +183,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   )
                 },
                 marker = ::marker,
+                setOptionalColorPass = { placement, words ->
+                  try {
+                    nativeSetOptionalColorPass(placement, words)
+                  } catch (_: UnsatisfiedLinkError) {
+                    false
+                  }
+                },
+                optionalColorPassEffectivePlacement = {
+                  try {
+                    nativeGetOptionalColorPassEffectivePlacement()
+                  } catch (_: UnsatisfiedLinkError) {
+                    0
+                  }
+                },
             )
         )
       }
@@ -5250,6 +5264,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun activityMarkerFilePersistenceEnabled(): Boolean =
       activityReadOptionalBooleanSystemProperty(ACTIVITY_MARKER_FILE_ENABLED_PROPERTY) == true
+
+  private external fun nativeSetOptionalColorPass(placement: Int, words: IntArray): Boolean
+
+  private external fun nativeGetOptionalColorPassEffectivePlacement(): Int
 
   private external fun nativeRecordNoRenderInteropReceipt(
       openXrInstanceHandle: Long,

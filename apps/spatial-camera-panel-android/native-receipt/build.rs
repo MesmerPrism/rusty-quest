@@ -157,6 +157,13 @@ fn main() {
         source_bank_abi == 2,
         "primary input provider and final ABI2 must be selected together"
     );
+    let optional_color = compile_optional_shader_env(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER",
+        "spatial_optional_color.frag.spv",
+        "fragment",
+    );
     let source_bank_vertex = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
@@ -193,6 +200,14 @@ fn main() {
         ),
     )
     .expect("write source bank shader metadata");
+    fs::write(
+        out_dir.join("spatial_optional_color_build.rs"),
+        format!(
+            "pub(crate) const OPTIONAL_COLOR_SHADER_COMPILED: bool = {};",
+            optional_color.compiled
+        ),
+    )
+    .expect("write optional color shader metadata");
     let opaque_projection_effect =
         opaque_projection_effect_env("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT");
     let projection_surface_uniform_abi_version = projection_surface_uniform_abi_version_env(
