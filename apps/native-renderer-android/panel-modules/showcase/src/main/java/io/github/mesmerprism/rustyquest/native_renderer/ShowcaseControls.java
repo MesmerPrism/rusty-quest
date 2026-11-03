@@ -56,6 +56,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     private long awaitingRendered;
     private PolarSensorPanel polar;
     private NumericField inputBpm;
+    private String displayedPolarHold="";
     private LinearLayout advancedInputs;
     private TextView lastRadius, calibrationStatus;
     private ProgressBar calibrationProgress;
@@ -434,6 +435,32 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
             && inputs.optString("breath_mapping").equals("state");
     }
 
+    private void queuePolarHoldEdit(final String key,final Number value) {
+        main.post(new Runnable(){public void run(){
+            if(retired||!resumed||!host.current()||!pendingId.isEmpty()||unknown)return;
+            try {
+                send("set-polar-hold",new JSONObject().put(key,value),false);
+            } catch(Exception error) {
+                if(unknown)return;
+                message=friendlyError(error);
+                try {
+                    rebuildInputPage();
+                } catch(Exception unavailable) {
+                    readbackAvailable=false;
+                    updateFrame();
+                }
+            }
+        }});
+    }
+
+    private void polarHoldField(LinearLayout parent,JSONObject hold,String title,final String key)
+            throws Exception {
+        new NumericField(parent,host.createEditor(context),title,(Number)hold.get(key),
+                0.1,50,false,false,new NumericWrite(){
+            @Override public void write(Number value){queuePolarHoldEdit(key,value);}
+        });
+    }
+
     private void queueInputEdit(final String key,final Object value) {
         // A native receipt can rebuild the page. Let the widget finish dispatching first.
         main.post(new Runnable(){public void run(){
@@ -611,6 +638,12 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         inputChoice(advanced,"Controller projection",state.inputs,"controller_projection",new String[]{"dynamic-axis","fixed-orientation"});
         inputChoice(advanced,"Polar projection",state.inputs,"polar_projection",
             allowsPolarDynamic(state.inputs)?new String[]{"xz","3d","dynamic-axis"}:new String[]{"xz","3d"});
+        JSONObject hold=state.applied.optJSONObject("polar_hold");
+        displayedPolarHold=state.applied.optString("polar_hold");
+        if(hold!=null&&allowsPolarDynamic(state.inputs)&&state.inputs.optString("polar_projection").equals("dynamic-axis")){
+            polarHoldField(advanced,hold,"Hold entry threshold (mg)","entry_mg");
+            polarHoldField(advanced,hold,"Hold exit threshold (mg)","exit_mg");
+        }
         String inversionLabel="Invert breathing mapping";
         CheckBox inverse=toggle(context,inversionLabel,state.inputs.getBoolean("inverted"));
         addControlRow(advanced,text(inversionLabel,15,FG),inverse,140);
@@ -745,7 +778,15 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         boolean edits=op.equals("apply-visual")||op.equals("set-inputs")||op.equals("save-profile");
         if(edits&&state.conflict(visualDomain))throw new IllegalStateException("settings-changed-elsewhere-read-applied");
         JSONObject current=ShowcaseNativeBridge.status();state.observe(current);readbackAvailable=true;
-        long revision=edits?state.revision(visualDomain):op.equals("set-phone-control")
+        boolean polarHoldEdit=op.equals("set-polar-hold");
+        if(polarHoldEdit){
+            // Rebase only the edited threshold onto the same snapshot that supplies the revision.
+            JSONObject pair=current.getJSONObject("polar_hold");
+            payload=new JSONObject()
+                    .put("entry_mg",payload.optDouble("entry_mg",pair.getDouble("entry_mg")))
+                    .put("exit_mg",payload.optDouble("exit_mg",pair.getDouble("exit_mg")));
+        }
+        long revision=edits?state.revision(visualDomain):op.equals("set-phone-control")||polarHoldEdit
             ?current.getLong("revision"):pageRevisions.containsKey(page)?pageRevisions.get(page):current.getLong("revision");
         if(revision!=current.getLong("revision"))throw new IllegalStateException("settings-changed-elsewhere-read-applied");
         String id=java.util.UUID.randomUUID().toString();JSONObject command=new JSONObject().put("schema","rusty.quest.visual_showcase.command.v1").put("product",ShowcaseNativeBridge.PRODUCT).put("epoch",state.epoch).put("expected_revision",revision).put("id",id).put("op",op).put("payload",payload);
@@ -755,6 +796,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
     private void settle(JSONObject receipt)throws Exception {
         String result=receipt.optString("status");if(result.equals("pending")){message="Waiting for the headset to confirm "+operationLabel(pendingOp);return;}if(result.equals("unknown")){unknown=true;message="The earlier action could not be confirmed. It will not be sent again.";buildPage();return;}
         boolean inputEdit=pendingOp.equals("set-inputs");
+        boolean polarHoldEdit=pendingOp.equals("set-polar-hold");
         if(result.equals("accepted")){
             JSONObject current=ShowcaseNativeBridge.status();long confirmed=receipt.optLong("revision");
             state.acknowledgeLocal(current,pendingOp,confirmed);readbackAvailable=true;
@@ -772,6 +814,10 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         else if(inputEdit){
             state.observe(ShowcaseNativeBridge.status());
             message="The headset rejected the input change. Showing current headset settings.";
+        }else if(polarHoldEdit){
+            state.observe(ShowcaseNativeBridge.status());
+            readbackAvailable=true;
+            message="Hold threshold change rejected ("+receipt.optString("reason","reason unavailable")+"). Showing current thresholds.";
         }else if(pendingOp.equals("calibrate")){
             message="Calibration command rejected ("+receipt.optString("reason","reason unavailable")+").";
         }else message="The headset could not apply "+operationLabel(pendingOp)+". Check the edited values and read applied settings.";
@@ -779,6 +825,10 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         if(inputEdit){
             state.refreshCleanDomain(false);
             rebuildInputPage();
+        }else if(polarHoldEdit){
+            pages.remove("Inputs");
+            if(page.equals("Inputs"))rebuildAtCurrentScroll();
+            else updateFrame();
         }else buildPage();
     }
     public void closePanelAndReturnToImmersive(){host.closePanel();}
@@ -790,6 +840,7 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         boolean inputsChanged=state.refreshCleanDomain(false);
         boolean visualChanged=state.refreshCleanDomain(true);
         if (inputsChanged) invalidateInputPages();
+        if(!displayedPolarHold.equals(state.applied.optString("polar_hold")))pages.remove("Inputs");
         if (visualChanged) {
             java.util.Iterator<String> keys=pages.keySet().iterator();
             while (keys.hasNext()) if (keys.next().startsWith("Visual / ")) keys.remove();

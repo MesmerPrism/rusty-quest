@@ -237,6 +237,28 @@ impl NativeControllerBreathStateEstimator {
 }
 
 #[cfg(feature = "showcase")]
+pub(crate) const DEFAULT_POLAR_HOLD_MG: [f64; 2] = [8.0, 11.2];
+
+// Store both values together. The render path never locks the settings owner.
+#[cfg(feature = "showcase")]
+static POLAR_HOLD_BITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(feature = "showcase")]
+pub(crate) fn set_polar_hold_mg(values: [f64; 2]) {
+    let [entry, exit] = values.map(|mg| ((mg / 1_000.0) as f32).to_bits());
+    POLAR_HOLD_BITS.store((u64::from(entry) << 32) | u64::from(exit), std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(feature = "showcase")]
+fn polar_hold_g() -> [f64; 2] {
+    let bits = POLAR_HOLD_BITS.load(std::sync::atomic::Ordering::Relaxed);
+    if bits == 0 {
+        return DEFAULT_POLAR_HOLD_MG.map(|mg| mg / 1_000.0);
+    }
+    [(bits >> 32) as u32, bits as u32].map(|word| f64::from(f32::from_bits(word)))
+}
+
+#[cfg(feature = "showcase")]
 #[derive(Debug)]
 pub(crate) struct PolarRollingBreathState {
     classifier: FixedControllerStateClassifier,
@@ -303,7 +325,8 @@ impl PolarRollingBreathState {
                 let sign = *self.axis_sign.get_or_insert(if axis[0] < 0.0 { -1.0 } else { 1.0 });
                 let signal = self.classifier.last_signal * sign;
                 // Leave Hold only on stronger evidence than is needed to enter it.
-                let threshold = if self.phase == CommonBreathPhase::Hold { 0.014 } else { 0.010 };
+                let [entry, exit] = polar_hold_g();
+                let threshold = if self.phase == CommonBreathPhase::Hold { exit } else { entry };
                 if signal > threshold { CommonBreathPhase::Inhale }
                 else if signal < -threshold { CommonBreathPhase::Exhale }
                 else { CommonBreathPhase::Hold }

@@ -26,6 +26,7 @@ pub(crate) struct ShowcaseRuntime {
     rendered_radius_m: Option<f32>,
     rendered_material: Option<Value>,
     inputs: Value,
+    polar_hold_mg: [f64; 2],
     visual: Option<Value>,
     profiles: BTreeMap<String, Value>,
     receipts: VecDeque<(String, String, Value)>,
@@ -46,6 +47,7 @@ impl ShowcaseRuntime {
             rendered_radius_m: None,
             rendered_material: None,
             inputs: json!({"breath_source":"automatic","breath_mapping":"state","heartbeat_source":"synthetic","synthetic_bpm":60.0,"controller_projection":"fixed-orientation","polar_projection":"xz","inverted":false}),
+            polar_hold_mg: crate::native_controller_breath_state::DEFAULT_POLAR_HOLD_MG,
             visual: None,
             profiles: BTreeMap::new(),
             receipts: VecDeque::new(),
@@ -61,7 +63,7 @@ impl ShowcaseRuntime {
         let driver_ranges: Vec<_> = (0..8)
             .map(crate::native_renderer_stimulus_panel::private_particle_canonical_driver_range)
             .collect();
-        json!({"schema":STATUS,"product":PRODUCT,"epoch":self.epoch,"revision":self.revision,"rendered_visual_revision":self.rendered_visual_revision,"rendered_radius_m":self.rendered_radius_m,"rendered_material":self.rendered_material,"material_presets":self.material_presets(),"driver_ranges":driver_ranges,"o":{"e":self.epoch,"s":"observed"},"observed_at_ns":monotonic_ns().to_string(),"ready":self.visual.is_some(),"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles,"availability":{"breath":self.breath_available,"heartbeat":self.heartbeat_available,"polar_required":self.inputs["breath_source"]=="polar-acc" || self.inputs["heartbeat_source"]=="polar","selected_polar_unavailable":(self.inputs["breath_source"]=="polar-acc" && !self.breath_available)||(self.inputs["heartbeat_source"]=="polar" && !self.heartbeat_available)},"applied_progress":self.progress,"automatic_phase":self.automatic.phase(self.last_tick_ns)})
+        json!({"schema":STATUS,"product":PRODUCT,"epoch":self.epoch,"revision":self.revision,"rendered_visual_revision":self.rendered_visual_revision,"rendered_radius_m":self.rendered_radius_m,"rendered_material":self.rendered_material,"material_presets":self.material_presets(),"driver_ranges":driver_ranges,"o":{"e":self.epoch,"s":"observed"},"observed_at_ns":monotonic_ns().to_string(),"ready":self.visual.is_some(),"inputs":self.inputs,"polar_hold":self.polar_hold_json(),"visual":self.visual,"profiles":self.profiles,"availability":{"breath":self.breath_available,"heartbeat":self.heartbeat_available,"polar_required":self.inputs["breath_source"]=="polar-acc" || self.inputs["heartbeat_source"]=="polar","selected_polar_unavailable":(self.inputs["breath_source"]=="polar-acc" && !self.breath_available)||(self.inputs["heartbeat_source"]=="polar" && !self.heartbeat_available)},"applied_progress":self.progress,"automatic_phase":self.automatic.phase(self.last_tick_ns)})
     }
     fn material_presets(&self) -> Value {
         use crate::native_renderer_private_particle_material_request::PrivateParticleMaterialPreset;
@@ -80,7 +82,10 @@ impl ShowcaseRuntime {
         Value::Object(map)
     }
     fn settings(&self) -> Value {
-        json!({"schema":SETTINGS,"inputs":self.inputs,"visual":self.visual,"profiles":self.profiles})
+        json!({"schema":SETTINGS,"inputs":self.inputs,"polar_hold":self.polar_hold_json(),"visual":self.visual,"profiles":self.profiles})
+    }
+    fn polar_hold_json(&self) -> Value {
+        json!({"entry_mg":self.polar_hold_mg[0],"exit_mg":self.polar_hold_mg[1]})
     }
     fn execute(&mut self, raw: &str) -> Value {
         self.execute_with_clock(raw, monotonic_ns)
@@ -144,6 +149,9 @@ impl ShowcaseRuntime {
                     exact(payload, &["visual"])?;
                     validate_visual(&payload["visual"])?;
                     self.visual = Some(payload["visual"].clone());
+                }
+                Some("set-polar-hold") => {
+                    self.polar_hold_mg = parse_polar_hold(payload)?;
                 }
                 Some("save-profile") => {
                     exact(payload, &["name", "visual"])?;
@@ -245,6 +253,18 @@ fn number(value: &Value, min: f64, max: f64) -> Result<(), String> {
         return Err("number_out_of_range".into());
     }
     Ok(())
+}
+fn parse_polar_hold(value: &Value) -> Result<[f64; 2], String> {
+    exact(value, &["entry_mg", "exit_mg"])?;
+    let read = |key| {
+        value[key].as_f64().filter(|n| (0.1..=50.0).contains(n)).ok_or("polar_hold_out_of_range")
+    };
+    let entry = read("entry_mg")?;
+    let exit = read("exit_mg")?;
+    if entry > exit {
+        return Err("polar_hold_entry_exceeds_exit".into());
+    }
+    Ok([entry, exit])
 }
 fn validate_inputs(v: &Value) -> Result<(), String> {
     exact(
@@ -496,10 +516,18 @@ pub(crate) fn settings_json() -> String {
     lock().settings().to_string()
 }
 pub(crate) fn command_json(raw: &str) -> String {
-    let answer = lock().execute(raw);
-    if answer["status"] == "accepted"
-        && serde_json::from_str::<Value>(raw).is_ok_and(|v| v["op"] == "set-inputs")
-    {
+    let (answer, input_changed) = {
+        let mut state = lock();
+        let before = state.polar_hold_mg;
+        let answer = state.execute(raw);
+        if before != state.polar_hold_mg {
+            crate::native_controller_breath_state::set_polar_hold_mg(state.polar_hold_mg);
+        }
+        let input_changed = answer["status"] == "accepted"
+            && serde_json::from_str::<Value>(raw).is_ok_and(|v| v["op"] == "set-inputs");
+        (answer, input_changed)
+    };
+    if input_changed {
         select_breath_input();
     }
     answer.to_string()
@@ -568,6 +596,7 @@ pub(crate) fn initialize(defaults: &str, persisted: &str, migrations: &str) -> R
         let p: Value = serde_json::from_str(persisted).map_err(|_| "settings_json")?;
         restore_persisted_settings(&mut candidate, &p, &trusted)?;
     }
+    crate::native_controller_breath_state::set_polar_hold_mg(candidate.polar_hold_mg);
     *s = candidate;
     drop(s);
     select_breath_input();
@@ -627,7 +656,12 @@ fn restore_persisted_settings(
     p: &Value,
     trusted: &[TrustedBuiltin],
 ) -> Result<(), String> {
-    exact(&p, &["schema", "inputs", "visual", "profiles"])?;
+    if let Some(hold) = p.get("polar_hold") {
+        exact(p, &["schema", "inputs", "visual", "profiles", "polar_hold"])?;
+        candidate.polar_hold_mg = parse_polar_hold(hold)?;
+    } else {
+        exact(p, &["schema", "inputs", "visual", "profiles"])?;
+    }
     if p["schema"] != SETTINGS {
         return Err("settings_schema".into());
     }
@@ -1014,6 +1048,31 @@ mod tests {
     }
     fn command(s: &ShowcaseRuntime, id: &str, op: &str, payload: Value) -> String {
         json!({"schema":COMMAND,"product":PRODUCT,"epoch":s.epoch,"expected_revision":s.revision,"id":id,"op":op,"payload":payload}).to_string()
+    }
+    #[test]
+    fn polar_hold_thresholds_validate_and_restore_independently() {
+        let mut active = state();
+        let initial_inputs = active.inputs.clone();
+        assert_eq!(active.status()["polar_hold"], json!({"entry_mg":8.0,"exit_mg":11.2}));
+        let good = command(&active, "hold-ok", "set-polar-hold", json!({"entry_mg":6.2,"exit_mg":9.5}));
+        assert_eq!(active.execute(&good)["status"], "accepted");
+        let revision = active.revision;
+        for (id, entry, exit) in [
+            ("hold-order", 10.0, 9.0), ("hold-range", 0.0, 10.0), ("hold-guard", 8.0, 60.0),
+        ] {
+            let bad = command(&active, id, "set-polar-hold", json!({"entry_mg":entry,"exit_mg":exit}));
+            assert_eq!(active.execute(&bad)["status"], "rejected");
+        }
+        assert_eq!(active.revision, revision);
+        assert_eq!(active.inputs, initial_inputs);
+        let mut restored = state();
+        let mut saved = active.settings();
+        restore_persisted_settings(&mut restored, &saved, &[]).unwrap();
+        assert_eq!(restored.polar_hold_mg, [6.2, 9.5]);
+        saved.as_object_mut().unwrap().remove("polar_hold");
+        let mut upgraded = state();
+        restore_persisted_settings(&mut upgraded, &saved, &[]).unwrap();
+        assert_eq!(upgraded.polar_hold_mg, [8.0, 11.2]);
     }
     #[test]
     fn complete_visual_is_closed_typed_and_input_free() {
