@@ -494,12 +494,39 @@ impl QuestBrokerRuntimeProvider {
         now_ms: u64,
         entropy_hex: &str,
     ) -> Result<QuestConcurrentAuthorityRenewalReceipt, QuestBrokerRuntimeError> {
+        self.renew_concurrent_peer_authority_observed(clock, proof, now_ms, entropy_hex).0
+    }
+
+    /// Report a fixed stage for the actual renewal result without changing its outcome.
+    pub fn renew_concurrent_peer_authority_observed(
+        &mut self,
+        clock: &ManifoldClockSnapshot,
+        proof: &ManifoldConcurrentPairSessionRenewalReceipt,
+        now_ms: u64,
+        entropy_hex: &str,
+    ) -> (Result<QuestConcurrentAuthorityRenewalReceipt, QuestBrokerRuntimeError>, &'static str) {
+        let mut stage = "provider_entry";
+        let result = self.renew_concurrent_peer_authority_at_stage(
+            clock, proof, now_ms, entropy_hex, &mut stage,
+        );
+        (result, stage)
+    }
+
+    fn renew_concurrent_peer_authority_at_stage(
+        &mut self,
+        clock: &ManifoldClockSnapshot,
+        proof: &ManifoldConcurrentPairSessionRenewalReceipt,
+        now_ms: u64,
+        entropy_hex: &str,
+        stage: &mut &'static str,
+    ) -> Result<QuestConcurrentAuthorityRenewalReceipt, QuestBrokerRuntimeError> {
         let entropy =
             parse_entropy_hex(entropy_hex).map_err(QuestBrokerRuntimeError::AdmissionProjection)?;
         let owner = self
             .runtime
             .as_mut()
             .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        *stage = "provider_retained_owner";
         if let Some(receipt) = owner
             .concurrent_renewal
             .completed
@@ -527,6 +554,7 @@ impl QuestBrokerRuntimeProvider {
             .runtime
             .write()
             .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
+        *stage = "provider_signed_pair";
         if !peer.snapshot().concurrent_session_renewals.contains(proof)
             || !proof.applied
             || !peer
@@ -540,6 +568,7 @@ impl QuestBrokerRuntimeProvider {
                 return Err(rejected());
             }
         } else {
+            *stage = "provider_clock";
             let prior = &broker.control_lease_authority_snapshot().clock_snapshot;
             if clock.clock_domain != prior.clock_domain
                 || clock.clock_epoch_id != prior.clock_epoch_id
@@ -554,6 +583,7 @@ impl QuestBrokerRuntimeProvider {
             {
                 return Err(QuestBrokerRuntimeError::InvalidAuthorityClock);
             }
+            *stage = "provider_media";
             let medias:Vec<_>=peer.snapshot().media_sessions.sessions.iter().filter(|m|
                 m.lifecycle_status==rusty_manifold_media_session::ManifoldMediaSessionLifecycleStatus::Current&&m.expires_at_ms>now_ms).collect();
             let [media] = medias.as_slice() else {
@@ -567,6 +597,7 @@ impl QuestBrokerRuntimeProvider {
             {
                 return Err(rejected());
             }
+            *stage = "provider_grant";
             let grants: Vec<_> = broker
                 .admission_snapshot()
                 .grants
@@ -584,6 +615,7 @@ impl QuestBrokerRuntimeProvider {
             let [grant] = grants.as_slice() else {
                 return Err(phase_rejected("renewal requires one current authenticated grant with the selected renewal capability"));
             };
+            *stage = "provider_outer_lease";
             let leases: Vec<_> = broker
                 .host_snapshot()
                 .leases
@@ -599,6 +631,7 @@ impl QuestBrokerRuntimeProvider {
                     "renewal requires one current outer media lease",
                 ));
             };
+            *stage = "provider_deadline";
             let root_horizon_ms = broker
                 .admission_snapshot()
                 .root_renewal_horizon_ms(&grant.grant_id);
@@ -648,6 +681,7 @@ impl QuestBrokerRuntimeProvider {
                 lifecycle: None,
             });
         }
+        *stage = "provider_pending";
         let pending = owner
             .concurrent_renewal
             .pending
@@ -659,6 +693,7 @@ impl QuestBrokerRuntimeProvider {
                 "retained renewal permit expired before actual outer application",
             ));
         }
+        *stage = "provider_grant_application";
         if pending.grant_issue.is_none() {
             pending.grant_issue = Some(token_issue(
                 &mut broker,
@@ -748,6 +783,7 @@ impl QuestBrokerRuntimeProvider {
             pending.grant_capability_use = Some(actual_grant_capability_use.clone());
         }
         let grant_capability_use = pending.grant_capability_use.as_ref().ok_or_else(rejected)?;
+        *stage = "provider_outer_application";
         if pending.lease_issue.is_none() {
             pending.lease_issue = Some(token_issue(
                 &mut broker,
@@ -816,6 +852,7 @@ impl QuestBrokerRuntimeProvider {
                 "actual generic outer lease application and adoption were rejected",
             ));
         }
+        *stage = "provider_media_adoption";
         let media_authority = peer
             .adopt_concurrent_media_authority_renewal_with_live_broker_runtime(
                 &broker,
@@ -831,6 +868,7 @@ impl QuestBrokerRuntimeProvider {
         {
             return Err(rejected());
         }
+        *stage = "provider_product_adoption";
         let product_adoption = owner
             .media_sessions
             .get_mut(&pending.identity.client_id)
@@ -852,6 +890,7 @@ impl QuestBrokerRuntimeProvider {
                 "test pause after actual product adoption; exact pending retained",
             ));
         }
+        *stage = "provider_history";
         let generic_history = peer.snapshot().runtime_history_checkpoint.is_some();
         let continuation_checkpoint = if generic_history {
             peer.checkpoint_coupled_ongoing_histories(&mut broker, &media_authority, now_ms)
@@ -919,6 +958,7 @@ impl QuestBrokerRuntimeProvider {
         } else {
             None
         };
+        *stage = "provider_receipt";
         let receipt = QuestConcurrentAuthorityRenewalReceipt {
             owner_history_epochs,
             current_lifetime_renewal_count: generic_history
