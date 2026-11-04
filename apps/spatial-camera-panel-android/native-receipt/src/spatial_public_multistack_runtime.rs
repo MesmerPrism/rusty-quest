@@ -420,6 +420,9 @@ impl ProjectionZoneCompositorPrepareStatus {
     }
 }
 
+#[cfg(any(target_os = "android", test))]
+#[path = "spatial_binocular_display.rs"]
+pub(crate) mod binocular_display;
 #[cfg(target_os = "android")]
 #[path = "spatial_optional_color_pass.rs"]
 pub(crate) mod optional_color_pass;
@@ -435,6 +438,10 @@ pub(crate) struct SpatialPublicGuideTargets {
     stereo_banks: Option<Box<stereo_banks::StereoBankResources>>,
     #[cfg(target_os = "android")]
     optional_color_pass: Option<optional_color_pass::OptionalColorPass>,
+    #[cfg(target_os = "android")]
+    binocular_display: Option<binocular_display::Pass>,
+    #[cfg(target_os = "android")]
+    binocular_display_failed: bool,
     #[cfg(target_os = "android")]
     optional_color_failed: bool,
     targets: Vec<SpatialPublicGuideTarget>,
@@ -786,9 +793,48 @@ impl SpatialPublicGuideTargets {
         self.optional_color_pass.as_ref()
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) unsafe fn prepare_binocular_display(
+        &mut self,
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        render_pass: vk::RenderPass,
+    ) -> Option<(vk::RenderPass, vk::Framebuffer)> {
+        if extent.width < 2
+            || extent.width % 2 != 0
+            || extent.height == 0
+            || self.binocular_display_failed
+        {
+            return None;
+        }
+        if self.binocular_display.is_none() {
+            match binocular_display::Pass::new(device, memory, format, extent, render_pass) {
+                Ok(pass) => self.binocular_display = Some(pass),
+                Err(error) => {
+                    log_marker(format!(
+                        "status=binocular-display-unavailable reason={} runtimeCrash=false",
+                        crate::marker_token(&error),
+                    ));
+                    self.binocular_display_failed = true;
+                }
+            }
+        }
+        self.binocular_display.as_ref()?.target(extent)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn binocular_display(&self) -> Option<&binocular_display::Pass> {
+        self.binocular_display.as_ref()
+    }
+
     pub(crate) unsafe fn destroy(mut self, device: &ash::Device) {
         #[cfg(target_os = "android")]
-        drop(self.optional_color_pass.take());
+        {
+            drop(self.binocular_display.take());
+            drop(self.optional_color_pass.take());
+        }
         if let Some(state) = self.stereo_banks.take() {
             state.destroy(device);
         }
@@ -3890,6 +3936,10 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
         stereo_banks: None,
         #[cfg(target_os = "android")]
         optional_color_pass: None,
+        #[cfg(target_os = "android")]
+        binocular_display: None,
+        #[cfg(target_os = "android")]
+        binocular_display_failed: false,
         #[cfg(target_os = "android")]
         optional_color_failed: false,
         targets,

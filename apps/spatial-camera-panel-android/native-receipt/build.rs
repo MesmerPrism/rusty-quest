@@ -75,6 +75,11 @@ fn main() {
             "fragment",
         ),
         (
+            "shaders/spatial_binocular_display.frag.glsl",
+            "spatial_binocular_display.frag.spv",
+            "fragment",
+        ),
+        (
             "shaders/public_guide_blur.frag.glsl",
             "public_guide_blur.frag.spv",
             "fragment",

@@ -32,7 +32,7 @@ use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandFrame;
 use crate::packed_sbs_normalizer::PackedSbsNormalizer;
 use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
-use crate::spatial_public_multistack_runtime::optional_color_pass;
+use crate::spatial_public_multistack_runtime::{binocular_display, optional_color_pass};
 use crate::spatial_public_multistack_runtime::{
     current_spatial_public_guide_pass_plan,
     record_spatial_public_meta_passthrough_edge_window_cutout, SpatialPublicGuidePassRecord,
@@ -47,6 +47,7 @@ use crate::spatial_video_projection_settings::SpatialVideoProjectionSettings;
 pub(crate) struct CameraHwbRecordResult {
     pub(crate) projected_by_public_stack: bool,
     pub(crate) optional_color_request: Option<optional_color_pass::OptionalColorRequest>,
+    pub(crate) binocular_display_observation: binocular_display::Observation,
     pub(crate) camera_projection_visible: bool,
     pub(crate) video_stats: SpatialVideoProjectionFrameStats,
     pub(crate) projection_zone_stats: ProjectionZoneRenderStats,
@@ -1405,8 +1406,29 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                     })
                     .map(|pass| pass.target())
             });
+    let binocular_request = binocular_display::requested(surface_generation);
+    let binocular_target = binocular_request
+        .filter(|request| {
+            request.mode != binocular_display::Mode::Stereo
+                && stereo_selected
+                && public_projection_ready
+                && projection_zone_ready
+                && !opaque_camera_only
+                && !edge_window_selected
+                && !projection_zone_frame.settings.synthetic_diagnostic()
+        })
+        .and(optional_color_format)
+        .and_then(|(format, memory)| {
+            public_guide_targets
+                .as_deref_mut()?
+                .prepare_binocular_display(device, memory, format, extent, render_pass)
+        });
+    // The existing Combined pass, when present, writes the completed frame into
+    // the remap input. Otherwise the compositor writes that input directly.
+    let (processed_render_pass, processed_framebuffer) =
+        binocular_target.unwrap_or((render_pass, framebuffer));
     let (draw_render_pass, draw_framebuffer) =
-        offscreen_target.unwrap_or((render_pass, framebuffer));
+        offscreen_target.unwrap_or((processed_render_pass, processed_framebuffer));
     begin_camera_hwb_final_render_pass(
         device,
         command_buffer,
@@ -1512,8 +1534,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         begin_camera_hwb_final_render_pass(
             device,
             command_buffer,
-            render_pass,
-            framebuffer,
+            processed_render_pass,
+            processed_framebuffer,
             extent,
             false,
         );
@@ -1522,6 +1544,31 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         if projection_zone_rendered {
             recorded_optional_color = Some(request);
         }
+    }
+    let recorded_binocular_display = binocular_request.filter(|request| {
+        projection_zone_rendered
+            && (request.mode == binocular_display::Mode::Stereo || binocular_target.is_some())
+    });
+    if binocular_target.is_some() {
+        let pass = public_guide_targets
+            .as_deref()
+            .and_then(SpatialPublicGuideTargets::binocular_display)
+            .expect("offscreen target belongs to the binocular display pass");
+        pass.prepare_sample(command_buffer);
+        begin_camera_hwb_final_render_pass(
+            device,
+            command_buffer,
+            render_pass,
+            framebuffer,
+            extent,
+            false,
+        );
+        pass.draw(
+            command_buffer,
+            recorded_binocular_display
+                .map_or(binocular_display::Mode::Stereo, |request| request.mode),
+        );
+        device.cmd_end_render_pass(command_buffer);
     }
     projection_readback.record_after_draw(
         device,
@@ -1575,6 +1622,10 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     Ok(CameraHwbRecordResult {
         projected_by_public_stack,
         optional_color_request: recorded_optional_color,
+        binocular_display_observation: match (binocular_request, recorded_binocular_display) {
+            (Some(request), None) if projection_zone_rendered => Err(request),
+            (_, recorded) => Ok(recorded),
+        },
         camera_projection_visible,
         video_stats,
         projection_zone_stats: ProjectionZoneRenderStats {

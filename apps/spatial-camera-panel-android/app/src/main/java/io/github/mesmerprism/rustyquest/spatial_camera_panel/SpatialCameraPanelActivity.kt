@@ -197,6 +197,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     0
                   }
                 },
+                setBinocularDisplayMode = { mode ->
+                  try {
+                    nativeSetBinocularDisplayMode(mode)
+                  } catch (_: UnsatisfiedLinkError) {
+                    false
+                  }
+                },
+                binocularDisplayEffectiveMode = {
+                  try {
+                    nativeGetBinocularDisplayEffectiveMode()
+                  } catch (_: UnsatisfiedLinkError) {
+                    -1
+                  }
+                },
             )
         )
       }
@@ -5268,6 +5282,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private external fun nativeSetOptionalColorPass(placement: Int, words: IntArray): Boolean
 
   private external fun nativeGetOptionalColorPassEffectivePlacement(): Int
+
+  private external fun nativeSetBinocularDisplayMode(mode: Int): Boolean
+
+  private external fun nativeGetBinocularDisplayEffectiveMode(): Int
 
   private external fun nativeRecordNoRenderInteropReceipt(
       openXrInstanceHandle: Long,
