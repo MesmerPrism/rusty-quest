@@ -518,6 +518,16 @@ if ($null -ne $appBuildLockObject) {
 
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererPanelCompositionSelection.psm1') -Force
 $panelCompositionSelection = Get-NativeRendererPanelCompositionSelection -FeatureLock $appBuildLockObject -BuildEnvByName $appBuildEnvByName
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererInputSelection.psm1') -Force
+$inputFeatureIds = if ($null -eq $appBuildLockObject) { @() } else { @($appBuildLockObject.selected_feature_ids) }
+$inputSelection = Get-NativeRendererInputSelection -FeatureIds $inputFeatureIds -BuildEnvByName $appBuildEnvByName
+if ($inputSelection.controller_only) {
+    if (@($appBuildLockObject.android_manifest.permissions) -ccontains 'com.oculus.permission.HAND_TRACKING' -or
+        @($appBuildLockObject.android_manifest.uses_features) -ccontains 'oculus.software.handtracking' -or
+        [IO.File]::ReadAllText($manifestInputPath) -match 'android:name="(?:com\.oculus\.permission\.HAND_TRACKING|oculus\.software\.handtracking|com\.oculus\.handtracking\.[^"]+)"') {
+        throw 'Controller-only input requires a manifest without hand permissions, features or support metadata.'
+    }
+}
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererMetaXrOperator.psm1') -Force
 $metaXrOperator = Get-NativeRendererMetaXrOperatorSelection -FeatureLock $appBuildLockObject `
     -AndroidManifestPath $manifestInputPath -Enable:$EnableMetaXrOperatorDebugLayer `

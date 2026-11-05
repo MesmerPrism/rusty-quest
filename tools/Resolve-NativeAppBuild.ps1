@@ -1429,6 +1429,10 @@ foreach ($marker in @($requiredMarkerSet.Keys)) {
 
 $permissions = @(Get-SortedSet -Set $permissionsSet)
 $usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererInputSelection.psm1') -Force
+$inputSelection = Get-NativeRendererInputSelection -FeatureIds $selectedFeatureIds -BuildEnvByName $envByName -Permissions $permissions -UsesFeatures $usesFeatures
+$permissions = @($inputSelection.permissions)
+$usesFeatures = @($inputSelection.uses_features)
 $activities = @(Get-SortedSet -Set $activitiesSet)
 $activities = @(Get-SelectedNativeHostActivities -Activities $activities -SelectedFeatureIds $selectedFeatureIds)
 $receivers = @(Get-SortedSet -Set $receiversSet)

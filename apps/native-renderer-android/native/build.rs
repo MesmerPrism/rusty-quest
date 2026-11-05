@@ -236,6 +236,13 @@ fn main() {
     println!(
         "cargo:rustc-env=RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL={diagnostics_level}"
     );
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_CONTROLLER_ONLY");
+    if let Ok(value) = env::var("RUSTY_QUEST_NATIVE_RENDERER_CONTROLLER_ONLY") {
+        assert!(
+            matches!(value.as_str(), "true" | "false"),
+            "invalid controller-only input selection"
+        );
+    }
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED");
     println!("cargo:rustc-check-cfg=cfg(native_hand_geometry_disabled)");
     // Supplied by the owning builder from the verified particles-only feature lock.

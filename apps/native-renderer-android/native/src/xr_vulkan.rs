@@ -464,7 +464,8 @@ unsafe fn run_projection_loop_inner(
     let mut enabled_extensions = xr::ExtensionSet::default();
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
-    enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking
+        && !crate::native_alternate_input::controller_only_selected();
     enabled_extensions.fb_hand_tracking_aim = enabled_extensions.ext_hand_tracking
         && available_extensions.fb_hand_tracking_aim
         && (crate::native_alternate_input::tracked_pointer_enabled_for_mode(
@@ -476,6 +477,14 @@ unsafe fn run_projection_loop_inner(
         crate::native_geometry_selection::hand_geometry_enabled()
             && enabled_extensions.ext_hand_tracking
             && available_extensions.fb_hand_tracking_mesh;
+    if crate::native_alternate_input::controller_only_selected() {
+        crate::marker("input-policy", format!(
+            "nativeControllerOnlyInput=true liveHandTrackingExtensionEnabled={} liveHandTrackingAimExtensionEnabled={} liveHandTrackingMeshExtensionEnabled={}",
+            enabled_extensions.ext_hand_tracking,
+            enabled_extensions.fb_hand_tracking_aim,
+            enabled_extensions.fb_hand_tracking_mesh,
+        ));
+    }
     enabled_extensions.fb_passthrough =
         native_passthrough_requested && available_extensions.fb_passthrough;
     enabled_extensions.fb_display_refresh_rate =
@@ -1863,7 +1872,8 @@ unsafe fn probe_inner(
     let mut enabled_extensions = xr::ExtensionSet::default();
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
-    enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking
+        && !crate::native_alternate_input::controller_only_selected();
     enabled_extensions.fb_hand_tracking_mesh =
         crate::native_geometry_selection::hand_geometry_enabled()
             && enabled_extensions.ext_hand_tracking

@@ -1,5 +1,9 @@
 //! Exclusive hands-or-controllers input with optional runtime aim and joint fallback.
 
+pub(crate) fn controller_only_selected() -> bool {
+    option_env!("RUSTY_QUEST_NATIVE_RENDERER_CONTROLLER_ONLY") == Some("true")
+}
+
 /// One current action-space location. Valid-but-untracked poses can be runtime
 /// estimates (including a stationary origin), not a tracked panel pointer.
 #[derive(Clone, Copy, Debug)]
@@ -39,7 +43,7 @@ pub(crate) fn controller_pointer(
 }
 
 pub(crate) fn tracked_pointer_enabled_for_mode(mode: &str) -> bool {
-    tracked_pointer_selection(
+    !controller_only_selected() && tracked_pointer_selection(
         mode,
         option_env!("RUSTY_QUEST_NATIVE_RENDERER_TRACKED_HAND_POINTER_ENABLED") == Some("true"),
     )

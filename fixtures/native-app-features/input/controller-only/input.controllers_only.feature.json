@@ -1,0 +1,31 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.controllers_only",
+  "module_path": "input/controller-only",
+  "module_kind": "input-affordance",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit controller-only policy that removes optional hand manifest support and disables OpenXR hand input.",
+  "provides": ["input.controllers.required", "input.hand_tracking.disabled"],
+  "depends_on": ["input.controllers_and_hands_optional"],
+  "incompatible_with": ["input.tracked_hand_pointer", "input.simultaneous_hands_and_controllers", "hand_mesh_live_input", "hand_mesh_visual", "hand_anchor_particles"],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [], "uses_features": [], "activities": [], "services": [], "queries": []
+  },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": [] },
+  "build_inputs": {
+    "env": [{"name":"RUSTY_QUEST_NATIVE_RENDERER_CONTROLLER_ONLY", "value":"true"}],
+    "assets": [], "shaders": []
+  },
+  "markers": {
+    "required": ["nativeControllerOnlyInput=true", "liveHandTrackingExtensionEnabled=false"],
+    "forbidden": ["liveHandTrackingExtensionEnabled=true"]
+  },
+  "validation": { "quick": [], "standard": [], "device": [] },
+  "public_private_boundary": "Input policy, manifest selection and OpenXR extension gating are generic platform substrate."
+}
