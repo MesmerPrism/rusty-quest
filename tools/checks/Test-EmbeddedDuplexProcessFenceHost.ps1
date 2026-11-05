@@ -30,12 +30,12 @@ if (-not $output.StartsWith($target + [IO.Path]::DirectorySeparatorChar, [String
 $javac = if ($JavaHome) { Join-Path $JavaHome 'bin/javac.exe' } else { (Get-Command javac -ErrorAction Stop).Source }
 $java = Join-Path (Split-Path $javac -Parent) 'java.exe'
 $sources = @('EmbeddedDuplexProcessFence.java', 'EmbeddedDuplexProcessIncarnation.java', 'EmbeddedDuplexCanonicalJson.java') | ForEach-Object { Join-Path $main $_ }
-$testSources = @('EmbeddedDuplexProcessFenceHostTest.java', 'EmbeddedDuplexProcessIncarnationHostTest.java') | ForEach-Object { Join-Path $tests $_ }
+$testSources = @('EmbeddedDuplexProcessFenceHostTest.java', 'EmbeddedDuplexProcessIncarnationHostTest.java', 'EmbeddedDuplexProcessFenceDigestHostTest.java') | ForEach-Object { Join-Path $tests $_ }
 $testSources += @(Get-ChildItem -LiteralPath (Join-Path $tests 'android-system-host/android/system') -Filter '*.java' -File | ForEach-Object FullName)
 $classes = Join-Path $output 'host'
 & $javac '--release' '17' '-encoding' 'UTF-8' '-cp' $HostJsonJar '-d' $classes @sources @testSources *> (Join-Path $output 'host-javac.log')
 if ($LASTEXITCODE -ne 0) { Get-Content (Join-Path $output 'host-javac.log'); throw 'Process identity/fence host compilation failed' }
-foreach ($test in @('EmbeddedDuplexProcessIncarnationHostTest', 'EmbeddedDuplexProcessFenceHostTest')) {
+foreach ($test in @('EmbeddedDuplexProcessFenceDigestHostTest', 'EmbeddedDuplexProcessIncarnationHostTest', 'EmbeddedDuplexProcessFenceHostTest')) {
     & $java '-cp' ($classes + [IO.Path]::PathSeparator + $HostJsonJar) ("io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.$test") *> (Join-Path $output "$test.log")
     Get-Content (Join-Path $output "$test.log")
     if ($LASTEXITCODE -ne 0) { throw "Process identity/fence host regressions failed: $test" }

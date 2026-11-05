@@ -94,7 +94,15 @@ the exact v1 and v2 DTOs; v1 has no app disposition and must not acquire an
 inferred `clear`. Existing installed v1 producers retain their six-field schema.
 
 Run `tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` for actual Java cold
-acquisition/readback and unchanged effect-gate controls. Run
+acquisition/readback and unchanged effect-gate controls. Its digest controls
+preserve the null sentinel and exact UTF-8 SHA-256 bytes across golden, Unicode,
+replacement, randomized and long records. A JDK per-thread allocated-byte check
+compares the actual fence digest with the shared canonical byte helper under a
+broad relative budget; it has no wall-clock threshold and makes no ART throughput
+claim. Fence digests use that existing helper without caching or skipping any
+live file, custody, freshness or hash validation. The `JavaApi34` native-fence
+leaf compiles the fence together with its incarnation and canonical-JSON
+dependencies against the genuine SDK bootclasspath. Run
 `python tools/checks/Test-ColdPendingRunInspectionHost.py` for the complete
 source-extracted JNI inspection caller/projection against explicit JNI, registry
 and platform models. These host controls prove neither an installed JNI binding
