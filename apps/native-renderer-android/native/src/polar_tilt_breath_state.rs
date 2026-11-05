@@ -90,10 +90,18 @@ impl PolarTiltBreathState {
     }
 
     pub(crate) fn reset_history(&mut self) {
-        *self = if self.frame.is_some() {
-            Self::new_adaptive()
-        } else {
-            Self::new()
+        // A signal gap invalidates transient evidence, not the established
+        // relation between the sensor and the classifier's breathing frame.
+        let frame = self.frame.take().map(|previous| AdaptiveTiltFrame {
+            reference_gravity: previous.reference_gravity,
+            reference_axis: previous.reference_axis,
+            learned_axis: previous.learned_axis,
+            adapting: previous.adapting,
+            ..AdaptiveTiltFrame::default()
+        });
+        *self = Self {
+            frame,
+            ..Self::new()
         };
     }
 
@@ -134,7 +142,7 @@ impl PolarTiltBreathState {
 
         if self.last_input.is_none() {
             if let Some(frame) = &mut self.frame {
-                frame.reference_gravity = normalized_axis(tilt);
+                frame.reference_gravity = frame.reference_gravity.or(normalized_axis(tilt));
             }
             self.fast = tilt;
             self.medium = tilt;
@@ -509,6 +517,40 @@ mod tests {
                 matches += usize::from(actual == expected);
             }
         }
+        assert!(matches as f64 / compared as f64 > 0.90);
+    }
+
+    #[test]
+    fn adapted_recline_survives_a_sensor_gap() {
+        let mut model = PolarTiltBreathState::new_adaptive();
+        let mut upright = PolarTiltBreathState::new();
+        let half_angle = 0.5 * 60.0_f64.to_radians();
+        let recline = [0.0, half_angle.sin(), 0.0, half_angle.cos()];
+        for i in 0..900 {
+            let time = i as f64 * STEP_S;
+            let progress = ((time - 12.0) / 3.0).clamp(0.0, 1.0);
+            let angle = half_angle * progress;
+            let rotation = [0.0, angle.sin(), 0.0, angle.cos()];
+            model.push_acceleration(time, rotate_vec3_by_quat(probe(i), rotation));
+            upright.push_acceleration(time, probe(i));
+        }
+        let reference = model.frame.as_ref().unwrap().reference_gravity;
+        model.lose_signal();
+        upright.lose_signal();
+        let mut matches = 0;
+        let mut compared = 0;
+        for i in 900..1_500 {
+            let time = 1.0 + i as f64 * STEP_S;
+            let expected = upright.push_acceleration(time, probe(i)).0;
+            let actual = model
+                .push_acceleration(time, rotate_vec3_by_quat(probe(i), recline))
+                .0;
+            if i >= 1_000 {
+                compared += 1;
+                matches += usize::from(actual == expected);
+            }
+        }
+        assert_eq!(model.frame.as_ref().unwrap().reference_gravity, reference);
         assert!(matches as f64 / compared as f64 > 0.90);
     }
 

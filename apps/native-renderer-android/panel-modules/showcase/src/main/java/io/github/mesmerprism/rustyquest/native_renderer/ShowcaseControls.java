@@ -643,6 +643,9 @@ final class ShowcaseControls implements PolarSensorPanel.Host {
         if (!polarState && savedStateMode) {
             advanced.addView(text(displayChoice(polarProjection)+" applies to Polar ACC with State mapping. Polar Volume uses XZ.",14,MUTED));
         }
+        if (polarState && polarProjection.equals("adaptive-tilt")) {
+            advanced.addView(text("Begin upright with a few steady breaths. After changing posture, allow a few breaths to adapt.",14,MUTED));
+        }
         JSONObject hold=state.applied.optJSONObject("polar_hold");
         displayedPolarHold=state.applied.optString("polar_hold");
         if(hold!=null&&allowsPolarDynamic(state.inputs)&&state.inputs.optString("polar_projection").equals("dynamic-axis")){
