@@ -346,6 +346,14 @@ impl PolarAccBreathAdapter {
         ));
     }
 
+    #[cfg(feature = "showcase")]
+    pub(crate) fn enable_adaptive_tilt_state(&mut self, inverted: bool) {
+        self.dynamic_state = Some((
+            PolarDirectState::Tilt(Box::new(crate::polar_tilt_breath_state::PolarTiltBreathState::new_adaptive())),
+            inverted,
+        ));
+    }
+
     pub(crate) fn configure(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
         self.generation = None;
         self.last_sensor_monotonic_time_ns = None;

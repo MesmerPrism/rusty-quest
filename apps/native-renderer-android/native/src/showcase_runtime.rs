@@ -301,7 +301,7 @@ fn validate_inputs(v: &Value) -> Result<(), String> {
         &v["controller_projection"],
         &["dynamic-axis", "fixed-orientation"],
     )?;
-    choice(&v["polar_projection"], &["xz", "3d", "dynamic-axis", "tilt-classifier"])?;
+    choice(&v["polar_projection"], &["xz", "3d", "dynamic-axis", "tilt-classifier", "adaptive-tilt"])?;
     if !v["inverted"].is_boolean() {
         return Err("boolean_required".into());
     }
@@ -710,7 +710,7 @@ pub(crate) fn restore_breath_selection_after_runtime_install() {
 
 pub(crate) fn effective_polar_projection(input: &Value) -> &str {
     match input["polar_projection"].as_str() {
-        Some("dynamic-axis" | "tilt-classifier")
+        Some("dynamic-axis" | "tilt-classifier" | "adaptive-tilt")
             if input["breath_source"] != "polar-acc" || input["breath_mapping"] != "state" =>
         {
             "xz"
@@ -952,7 +952,7 @@ pub(crate) fn command_with_executor(
                         && inputs["breath_mapping"] == "state")
                     || (inputs["breath_source"] == "polar-acc"
                         && inputs["breath_mapping"] == "state"
-                        && matches!(inputs["polar_projection"].as_str(), Some("dynamic-axis" | "tilt-classifier")))
+                        && matches!(inputs["polar_projection"].as_str(), Some("dynamic-axis" | "tilt-classifier" | "adaptive-tilt")))
                 {
                     return Err("calibration-not-required".into());
                 }
@@ -1058,7 +1058,7 @@ mod tests {
     #[test]
     fn polar_direct_state_preferences_are_only_effective_for_polar_state() {
         let mut inputs = ShowcaseRuntime::new("10".into()).inputs;
-        for mode in ["dynamic-axis", "tilt-classifier"] {
+        for mode in ["dynamic-axis", "tilt-classifier", "adaptive-tilt"] {
             inputs["polar_projection"] = json!(mode);
             for (source, mapping, expected) in [
                 ("controller", "volume", "xz"),

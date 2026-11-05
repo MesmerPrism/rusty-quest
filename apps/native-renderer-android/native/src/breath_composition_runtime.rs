@@ -922,7 +922,8 @@ impl BreathCompositionRuntime {
                     let projection = match request.polar_projection {
                         PolarProjectionSelection::Xz => PolarAccProjection::Xz,
                         PolarProjectionSelection::Full3d => PolarAccProjection::Full3d,
-                        PolarProjectionSelection::DynamicAxis | PolarProjectionSelection::TiltClassifier => PolarAccProjection::Full3d,
+                        PolarProjectionSelection::DynamicAxis | PolarProjectionSelection::TiltClassifier
+                            | PolarProjectionSelection::AdaptiveTiltClassifier => PolarAccProjection::Full3d,
                     };
                     let mut parameters =
                         rusty_quest_breath_contract::calibration::CalibrationParameters::default();
@@ -946,6 +947,7 @@ impl BreathCompositionRuntime {
                     match request.polar_projection {
                         PolarProjectionSelection::DynamicAxis => adapter.enable_dynamic_state(request.inverted),
                         PolarProjectionSelection::TiltClassifier => adapter.enable_tilt_state(request.inverted),
+                        PolarProjectionSelection::AdaptiveTiltClassifier => adapter.enable_adaptive_tilt_state(request.inverted),
                         _ => {}
                     }
                     let calibration = adapter.configure(at);
@@ -1972,6 +1974,9 @@ fn parse_request_tokens(
         #[cfg(feature = "showcase")]
         "tilt-classifier" if source == BreathCompositionSource::PolarAcc
             && mapping == BreathCompositionMapping::State => PolarProjectionSelection::TiltClassifier,
+        #[cfg(feature = "showcase")]
+        "adaptive-tilt" if source == BreathCompositionSource::PolarAcc
+            && mapping == BreathCompositionMapping::State => PolarProjectionSelection::AdaptiveTiltClassifier,
         _ => return Err("unsupported-polar-projection"),
     };
     Ok(BreathCompositionRequest {

@@ -380,13 +380,13 @@ struct FixedControllerDeltaPoint {
 /// Estimate direction from a bounded window of positions. Its sign comes
 /// from the controller orientation and the last reliable axis survives holds.
 #[derive(Debug, Default)]
-struct DynamicControllerAxis {
+pub(crate) struct DynamicControllerAxis {
     positions: std::collections::VecDeque<(f64, [f64; 3])>,
     axis: Option<[f64; 3]>,
 }
 
 impl DynamicControllerAxis {
-    fn observe(&mut self, time: f64, position: [f64; 3], reference: Option<[f64; 3]>) -> Option<[f64; 3]> {
+    pub(crate) fn observe(&mut self, time: f64, position: [f64; 3], reference: Option<[f64; 3]>) -> Option<[f64; 3]> {
         const WINDOW_SECONDS: f64 = 3.0;
         const SAMPLE_INTERVAL_SECONDS: f64 = 0.05;
         while self.positions.front().is_some_and(|&(at, _)| time - at > WINDOW_SECONDS) {
@@ -761,7 +761,7 @@ fn scale3(value: [f64; 3], scale: f64) -> [f64; 3] {
     [value[0] * scale, value[1] * scale, value[2] * scale]
 }
 
-fn cross3(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+pub(crate) fn cross3(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
     [
         left[1] * right[2] - left[2] * right[1],
         left[2] * right[0] - left[0] * right[2],
