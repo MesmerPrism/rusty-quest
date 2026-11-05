@@ -3190,6 +3190,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       source: String,
   ): SpatialPassthroughLutUpdate {
     val effects = SpatialBackgroundModePolicy.resolve(mode, diagnosticPassthroughLutRequested)
+    configureNativeProjectionBackground(mode, source)
     passthroughReasonAggregator.updateVisibleReasons(
         mode,
         diagnosticPassthroughLutRequested,
@@ -3206,6 +3207,30 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
     return update
+  }
+
+  private fun configureNativeProjectionBackground(mode: SpatialBackgroundMode, source: String) {
+    val black = mode == SpatialBackgroundMode.Black
+    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
+      marker(
+          "channel=native-projection-background status=unavailable " +
+              "source=${activityMarkerToken(source)} requestedBlack=$black " +
+              "configuredBlack=unavailable nativeBackgroundGpuAdoptionProven=false"
+      )
+      return
+    }
+    val configured = runCatching {
+      nativeSetProjectionBackgroundBlack(black)
+      nativeProjectionBackgroundBlack()
+    }
+    marker(
+        "channel=native-projection-background " +
+            "status=${if (configured.getOrNull() == black) "configured" else "failed"} " +
+            "source=${activityMarkerToken(source)} requestedBlack=$black " +
+            "configuredBlack=${configured.getOrNull() ?: "unavailable"} " +
+            "nativeBackgroundScope=same-projection-surface-clear " +
+            "nativeBackgroundGpuAdoptionProven=false activityRestarted=false"
+    )
   }
 
   private fun setImmersiveVideoPresentationMode(
@@ -5266,6 +5291,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       activityReadOptionalBooleanSystemProperty(ACTIVITY_MARKER_FILE_ENABLED_PROPERTY) == true
 
   private external fun nativeSetOptionalColorPass(placement: Int, words: IntArray): Boolean
+
+  private external fun nativeSetProjectionBackgroundBlack(black: Boolean)
+
+  private external fun nativeProjectionBackgroundBlack(): Boolean
 
   private external fun nativeGetOptionalColorPassEffectivePlacement(): Int
 

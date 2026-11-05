@@ -1665,7 +1665,7 @@ unsafe fn begin_camera_hwb_final_render_pass(
 ) {
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, if opaque_clear { 1.0 } else { 0.0 }],
+            float32: crate::spatial_projection_background::clear_color(opaque_clear),
         },
     }];
     let render_area = vk::Rect2D {

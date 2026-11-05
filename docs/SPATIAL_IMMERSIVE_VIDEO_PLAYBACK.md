@@ -134,6 +134,26 @@ cycle speed, and black cutoff. LUT construction runs off the main thread and
 only the final Spatial SDK scene mutation returns to the main scope; static LUT
 mode applies once and schedules no periodic LUT update.
 
+The existing `background-black` and `background-passthrough` UI actions also
+configure the Native camera projection's same-surface background clear while its
+current Own/Peer/Blend processing and media continue. Native starts with this
+independent flag false. Black selects opaque black beneath premultiplied
+projection pixels; the other Background selections restore transparent clear.
+This does not enable the opaque-camera-only diagnostic isolation mode, disable
+system passthrough, or create another video carrier/decoder. It covers the
+existing projection surface rather than asserting occlusion beyond that surface.
+
+`channel=native-projection-background` reports `requestedBlack`, independently
+read-back `configuredBlack`, and `status=configured|failed|unavailable` on the
+Activity marker route. `nativeBackgroundGpuAdoptionProven=false` is deliberate:
+configuration readback alone proves no GPU draw, physical presentation or live
+Peer frames. Pair it with current frame evidence and wearer observation. Run
+`python tools/checks/Test-ProjectionBackgroundHost.py --output <fresh-target>`
+for actual Native default/toggle/clear controls and bridge integration checks.
+With `--kotlin-lib <existing-compiler-lib> --java-home <existing-jdk>`, the same
+leaf compiles the actual Kotlin setter/readback method and Native declarations;
+its host Native calls are modeled, and full Android compilation remains separate.
+
 Turning ordinary video playback off retains the registered carrier and its
 Surface. It releases the zero-contribution decoder on a dedicated lifecycle
 executor/Media3 looper, never on the Activity/XR thread. A rapid off/on change
