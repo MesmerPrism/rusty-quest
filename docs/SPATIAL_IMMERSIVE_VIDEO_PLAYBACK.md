@@ -362,6 +362,22 @@ or respawn requests. The same coordinator cannot reacquire a retired scene.
 Decoder release and final thread shutdown retain the existing asynchronous
 player/lifecycle owners; the Android `super.onDestroy()` call remains synchronous.
 
+Direct Surface and panel callbacks also have to identify the current Entity.
+The fixed registration slot and presentation mode may be reused after a rebuild;
+they cannot admit a callback from the previous Entity into its successor. A
+callback received after the Entity reference is cleared cannot reacquire it.
+
+Requested video routes emit process-local `sceneEpoch`, `videoLayerOwner`,
+video/backing Entity epochs and IDs, callback Entity ID, Surface identity and
+decoder generation fields. The settings-request, creation, adoption, destruction
+and queued/begin/end decoder-release markers distinguish SDK scene work from
+asynchronous Media3 work. First-frame and playback markers retain the resources
+captured for their player generation. They contain no media path or key.
+The `native-interop-lifecycle` channel separately marks entry and completion of
+the no-render Surface creation/destruction and native Vulkan receipt call, with
+a per-call `probeGeneration`. These stages establish ordering for diagnosis;
+successful probe completion does not identify a concurrent renderer failure.
+
 The same pre-model handoff retires the optional virtual-room/skybox and staged
 asset Entity owners and cancels their pending scene adoption. The projection
 panel carrier separates its SDK Entity/SceneObject handles from Native/Surface
@@ -376,9 +392,15 @@ It compiles actual Activity destruction/SDK-hook methods, the lifecycle shutdown
 coordinator and selected video ownership/callback methods with modeled platform
 leaves. It covers a blocked cleanup worker, finishing `onStop`, repeated and
 reentrant cleanup, an entered scene mutation, late callbacks and a fresh
-coordinator. It does not run Android, Meta native code or a codec.
+coordinator, same-slot predecessor callbacks and a disabled diagnostic route.
+It does not run Android, Meta native code or a codec.
 Enabled room, skybox, staged-asset and retained panel-carrier cases cover the
 same boundary, including late load/adoption and blocked or failed Native stop.
+
+`tools/checks/Test-SpatialNativeInteropLifecycleHost.py` takes the same four
+explicit path arguments. It compiles the actual interop coordinator with modeled
+SDK/JNI leaves and checks that each entry/completion stage surrounds the owning
+call, generations advance, and scene-ready does not acquire a probe Surface.
 
 This check does not establish same-process display reattachment after Whole
 retirement. A later launch still needs its actual scene, carrier and typed

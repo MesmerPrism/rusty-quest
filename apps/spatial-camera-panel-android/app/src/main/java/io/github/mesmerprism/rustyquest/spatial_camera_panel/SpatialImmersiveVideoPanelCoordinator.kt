@@ -48,6 +48,7 @@ import com.meta.spatial.toolkit.Visible
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 internal class SpatialImmersiveVideoPanelCoordinator(
     private val context: Context,
@@ -61,6 +62,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     initialBackgroundMode: SpatialBackgroundMode = SpatialBackgroundMode.Passthrough,
     directVideoConsumerInitiallyRequired: Boolean = true,
 ) {
+  private val sceneEpoch = nextSceneEpoch.incrementAndGet()
+  private var videoEntityEpoch = 0L
+  private var backingEntityEpoch = 0L
   private var entity: Entity? = null
   private var blackBackdropEntity: Entity? = null
   private var panelSceneObject: PanelSceneObject? = null
@@ -393,10 +397,15 @@ internal class SpatialImmersiveVideoPanelCoordinator(
               blackBackdropPanelRegistration(index, registeredMode),
               VideoSurfacePanelRegistration(
                   requireNotNull(panelRegistrationIds[registeredMode]).get(index),
-                  surfaceConsumer = { _, videoSurface ->
-                    acceptVideoSurface(index, registeredMode, videoSurface)
+                  surfaceConsumer = { callbackEntity, videoSurface ->
+                    acceptVideoSurface(index, registeredMode, callbackEntity, videoSurface)
                   },
-                  settingsCreator = {
+                  settingsCreator = { callbackEntity ->
+                    emitResourceMarker(
+                        "channel=spatial-immersive-video status=panel-settings-requested " +
+                            "registrationOrdinal=${index + 1} registeredMode=${registeredMode.token} " +
+                            resourceMarkerFields(callbackEntity)
+                    )
                     mediaPanelSettings(
                         requireNotNull(catalog.getOrNull(index)) {
                           "immersive-video-registration-slot-without-catalog-item"
@@ -404,8 +413,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                         registeredMode,
                     )
                   },
-                  panelSetup = { panel, _ ->
-                    acceptVideoPanel(index, registeredMode, panel)
+                  panelSetup = { panel, callbackEntity ->
+                    acceptVideoPanel(index, registeredMode, callbackEntity, panel)
                   },
               ),
           )
@@ -416,11 +425,23 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private fun acceptVideoSurface(
       index: Int,
       registeredMode: SpatialImmersiveVideoPresentationMode,
+      callbackEntity: Entity,
       videoSurface: Surface,
   ) {
-    if (sceneRetired || index != activeIndex || registeredMode != presentationMode) return
+    if (sceneRetired || entity != callbackEntity || index != activeIndex ||
+        registeredMode != presentationMode) {
+      emitResourceMarker(
+          "channel=spatial-immersive-video status=surface-callback-rejected " +
+              resourceMarkerFields(callbackEntity, videoSurface)
+      )
+      return
+    }
     val config = catalog.getOrNull(index) ?: return
     surface = videoSurface
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=surface-adopted " +
+            resourceMarkerFields(callbackEntity, videoSurface)
+    )
     startPlayer(config, videoSurface)
   }
 
@@ -428,9 +449,17 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private fun acceptVideoPanel(
       index: Int,
       registeredMode: SpatialImmersiveVideoPresentationMode,
+      callbackEntity: Entity,
       panel: PanelSceneObject,
   ) {
-    if (sceneRetired || index != activeIndex || registeredMode != presentationMode) return
+    if (sceneRetired || entity != callbackEntity || index != activeIndex ||
+        registeredMode != presentationMode) {
+      emitResourceMarker(
+          "channel=spatial-immersive-video status=panel-callback-rejected " +
+              resourceMarkerFields(callbackEntity)
+      )
+      return
+    }
     val config = catalog.getOrNull(index) ?: return
     panelSceneObject = panel
     if (transitionTargetIndex == index) applyDirectLayerOpacity(0.0f)
@@ -438,7 +467,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         "channel=spatial-immersive-video status=panel-ready " +
             "registrationOrdinal=${index + 1} ${config.markerFields()} " +
             "${SpatialImmersiveVideoSessionPolicy.directPanelPresentation(config, registeredMode).markerFields()} " +
-            "surfaceValid=${panel.surface.isValid}"
+            "surfaceValid=${panel.surface.isValid} panelHandle=${panel.handle} " +
+            resourceMarkerFields(callbackEntity, panel.surface)
     )
   }
 
@@ -459,7 +489,12 @@ internal class SpatialImmersiveVideoPanelCoordinator(
               }
             }
           },
-          settingsCreator = {
+          settingsCreator = { callbackEntity ->
+            emitResourceMarker(
+                "channel=spatial-immersive-video status=black-backing-settings-requested " +
+                    "registrationOrdinal=${index + 1} registeredMode=${registeredMode.token} " +
+                    resourceMarkerFields(callbackEntity)
+            )
             blackBackdropMediaPanelSettings(
                 requireNotNull(catalog.getOrNull(index)) {
                   "immersive-video-black-registration-slot-without-catalog-item"
@@ -467,7 +502,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                 registeredMode,
             )
           },
-          panelSetupWithComposeView = { _, _, _ ->
+          panelSetupWithComposeView = { _, panel, callbackEntity ->
             val config = catalog.getOrNull(index) ?: return@ComposeViewPanelRegistration
             emitMarker(
                 "channel=spatial-immersive-video status=black-backing-panel-ready " +
@@ -475,7 +510,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                     "backingShape=${SpatialImmersiveVideoBlackBackingPolicy.shapeToken(config, registeredMode)} " +
                     "backgroundMode=${backgroundMode.token} " +
                     "backingRegistrationImmutable=true " +
-                    "uncoveredVideoPixelsRevealPassthrough=false"
+                    "uncoveredVideoPixelsRevealPassthrough=false " +
+                    "panelHandle=${panel.handle} " + resourceMarkerFields(callbackEntity, panel.surface)
             )
           },
       )
@@ -533,6 +569,24 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   private fun catalogIdentity(config: SpatialImmersiveVideoConfig): String =
       config.offlinePack?.packId ?: config.plainMedia?.mediaId ?: config.path
+
+  private fun emitResourceMarker(marker: String) {
+    if (requested) emitMarker(marker)
+  }
+
+  /** Process-local identities only: never a media URI, filename, key or native pointer. */
+  @Synchronized
+  private fun resourceMarkerFields(
+      callbackEntity: Entity? = null,
+      observedSurface: Surface? = surface,
+  ): String {
+    return "sceneEpoch=$sceneEpoch videoLayerOwner=${layerOwner.token} sceneRetired=$sceneRetired " +
+          "videoEntityEpoch=$videoEntityEpoch videoEntityId=${entity?.id ?: 0L} " +
+          "backingEntityEpoch=$backingEntityEpoch backingEntityId=${blackBackdropEntity?.id ?: 0L} " +
+          "callbackEntityId=${callbackEntity?.id ?: 0L} " +
+          "surfaceIdentity=${observedSurface?.let(System::identityHashCode) ?: 0} " +
+          "observedDecoderGeneration=$directDecoderGeneration"
+  }
 
   @Synchronized
   fun spawnAtViewer(viewerPose: Pose) {
@@ -654,22 +708,38 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     // A delete callback or repeated cleanup must not reacquire either handle.
     entity = null
     blackBackdropEntity = null
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=scene-entities-destroy-begin " +
+            "retiringVideoEntityId=${video?.id ?: 0L} retiringBackingEntityId=${backdrop?.id ?: 0L} " +
+            resourceMarkerFields()
+    )
     video?.destroy()
     backdrop?.destroy()
+    emitResourceMarker("channel=spatial-immersive-video status=scene-entities-destroy-end " + resourceMarkerFields())
   }
 
   @Synchronized
   private fun destroyVideoEntity() {
     val video = entity
     entity = null
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=video-entity-destroy-begin " +
+            "retiringVideoEntityId=${video?.id ?: 0L} " + resourceMarkerFields()
+    )
     video?.destroy()
+    emitResourceMarker("channel=spatial-immersive-video status=video-entity-destroy-end " + resourceMarkerFields())
   }
 
   @Synchronized
   private fun destroyBackdropEntity() {
     val backdrop = blackBackdropEntity
     blackBackdropEntity = null
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=black-backing-destroy-begin " +
+            "retiringBackingEntityId=${backdrop?.id ?: 0L} " + resourceMarkerFields()
+    )
     backdrop?.destroy()
+    emitResourceMarker("channel=spatial-immersive-video status=black-backing-destroy-end " + resourceMarkerFields())
   }
 
   @Synchronized
@@ -986,11 +1056,13 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       return
     }
     val registrationId = panelRegistrationIds[presentationMode]?.getOrNull(activeIndex) ?: return
+    videoEntityEpoch += 1L
+    emitResourceMarker("channel=spatial-immersive-video status=entity-create-begin " + resourceMarkerFields())
     entity =
         Entity.create(
             Panel(registrationId),
             Transform(entityPose),
-              Visible(directVideoConsumerRequired),
+            Visible(directVideoConsumerRequired),
         )
     val presentation = customCarrierPresentation
     emitMarker(
@@ -1003,6 +1075,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             "backgroundMode=${backgroundMode.token} " +
             "uncoveredVideoPixelsRevealPassthrough=${!backgroundMode.usesOpaqueVideoBacking()} " +
             "${SpatialImmersiveVideoSessionPolicy.directPanelPresentation(config, presentationMode).markerFields()} " +
+            resourceMarkerFields() + " " +
             (presentation?.markerFields()
                 ?: "videoCarrierPresentation=${presentationMode.token}")
     )
@@ -1028,6 +1101,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     val registrationId =
         blackBackdropRegistrationIds[presentationMode]?.getOrNull(activeIndex) ?: return
     val previousBackdrop = blackBackdropEntity
+    backingEntityEpoch += 1L
+    emitResourceMarker("channel=spatial-immersive-video status=black-backing-create-begin " + resourceMarkerFields())
     blackBackdropEntity =
         Entity.create(
             Panel(registrationId),
@@ -1039,7 +1114,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         "channel=spatial-immersive-video status=black-backing-spawned " +
             "reason=${activityMarkerToken(reason)} backgroundMode=${backgroundMode.token} " +
             "videoPlaybackEnabled=$playbackEnabled registrationOrdinal=${activeIndex + 1} " +
-            "backingShape=${SpatialImmersiveVideoBlackBackingPolicy.shapeToken(config, presentationMode)}"
+            "backingShape=${SpatialImmersiveVideoBlackBackingPolicy.shapeToken(config, presentationMode)} " +
+            resourceMarkerFields()
     )
   }
 
@@ -1165,6 +1241,11 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       quitThreadAfterRelease: Boolean = false,
   ) {
     directDecoderActive = false
+    val requestedResources = resourceMarkerFields()
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=decoder-release-queued " +
+            "reason=${activityMarkerToken(reason)} $requestedResources"
+    )
     directPlayerHandler.post {
       val currentPlayer = player
       val releasedGeneration = if (currentPlayer == null) 0L else directDecoderGeneration
@@ -1180,12 +1261,22 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       // looper guarantees that a queued successor cannot acquire until release() has returned.
       player = null
       playerSurface = null
+      emitResourceMarker(
+          "channel=spatial-immersive-video status=decoder-release-begin " +
+              "reason=${activityMarkerToken(reason)} releasedGeneration=$releasedGeneration " +
+              requestedResources
+      )
       currentPlayer?.run {
         playWhenReady = false
         clearVideoSurface()
         clearMediaItems()
         release()
       }
+      emitResourceMarker(
+          "channel=spatial-immersive-video status=decoder-release-end " +
+              "reason=${activityMarkerToken(reason)} releasedGeneration=$releasedGeneration " +
+              requestedResources
+      )
       if (releasedGeneration > 0L) {
         emitMarker(
             "channel=spatial-immersive-video status=decoder-released " +
@@ -1214,6 +1305,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       return
     }
     directDecoderActive = true
+    val requestedResources = resourceMarkerFields(observedSurface = videoSurface)
+    emitResourceMarker("channel=spatial-immersive-video status=decoder-start-queued $requestedResources")
     directPlayerHandler.post {
       if (sceneRetired || !directDecoderActive || !directVideoConsumerRequired) return@post
       val currentPlayer = player
@@ -1270,7 +1363,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             resumeAfterPause = config.autoplay
             exoPlayer.apply {
               repeatMode = if (config.loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-              addListener(playerListener(config, generation))
+              addListener(playerListener(config, generation, requestedResources))
               setMediaItem(
                   if (config.isEncryptedOfflinePack) {
                     MediaItem.Builder().setUri(mediaUri).setMimeType(MimeTypes.VIDEO_MP4).build()
@@ -1286,7 +1379,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                 "channel=spatial-immersive-video status=player-preparing " +
                     "decoderRoute=direct-spatial decoderGeneration=$generation " +
                     "activeDecoderCount=1 decoderOverlap=false playerThread=$DIRECT_PLAYER_THREAD_NAME " +
-                    "xrActivityThreadBlocked=false ${config.markerFields()} " +
+                    "xrActivityThreadBlocked=false $requestedResources ${config.markerFields()} " +
                     "surfaceValid=${videoSurface.isValid} " +
                     "source=${when {
                       config.isEncryptedOfflinePack -> "encrypted-offline-media-pack"
@@ -1311,6 +1404,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private fun playerListener(
       config: SpatialImmersiveVideoConfig,
       generation: Long,
+      requestedResources: String,
   ): Player.Listener =
       object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1325,7 +1419,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
               }
           emitMarker(
               "channel=spatial-immersive-video status=playback-state state=$state " +
-                  "playing=${player?.isPlaying == true} ${config.markerFields()}"
+                  "playing=${player?.isPlaying == true} playerGeneration=$generation " +
+                  "$requestedResources ${config.markerFields()}"
           )
           if (playbackState == Player.STATE_READY) {
             val resumeTargetMs = pendingDirectResumeTargetMs
@@ -1360,7 +1455,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
           val firstFramePositionMs = player?.currentPosition ?: 0L
           emitMarker(
               "channel=spatial-immersive-video status=first-frame-rendered " +
-                  "${config.markerFields()}"
+                  "playerGeneration=$generation $requestedResources ${config.markerFields()}"
           )
           transitionHandler.post {
             if (generation == directDecoderGeneration && directDecoderActive) {
@@ -1407,6 +1502,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             }
             emitMarker(
                 "channel=spatial-immersive-video status=playback-error " +
+                    "playerGeneration=$generation $requestedResources " +
                     "errorCode=${error.errorCode} " +
                     "error=${activityMarkerToken(error.javaClass.simpleName)} " +
                     "message=${activityMarkerToken(error.message ?: "none")} " +
@@ -1505,6 +1601,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   companion object {
     private const val DIRECT_PLAYER_THREAD_NAME = "RqImmersiveVideoPlayer"
+    private val nextSceneEpoch = AtomicLong(0L)
     private const val DIRECT_VIDEO_BACKGROUND_Z_INDEX = -40
     private const val DIRECT_VIDEO_BLACK_BACKING_Z_INDEX = -41
     private const val BLACK_BACKING_DISPLAY_SIZE_PX = 16

@@ -3,6 +3,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.Scene
+import java.util.concurrent.atomic.AtomicLong
 
 internal data class SpatialNativeInteropBindings(
     val scene: Scene,
@@ -15,6 +16,7 @@ internal data class SpatialNativeInteropBindings(
 internal class SpatialNativeInteropCoordinator(
     private val bindings: SpatialNativeInteropBindings,
 ) {
+  private val probeSequence = AtomicLong(0L)
   var receiptLibraryLoaded = false
     private set
 
@@ -35,10 +37,12 @@ internal class SpatialNativeInteropCoordinator(
   }
 
   fun logProbe(phase: String, probeSurface: Boolean) {
+    val generation = probeSequence.incrementAndGet()
+    lifecycleMarker("probe-begin", generation, phase)
     val probe = SpatialNativeInteropProbe.capture(bindings.scene)
     val surfaceProbe =
         if (probeSurface) {
-          createNoRenderSurfaceProbe()
+          createNoRenderSurfaceProbe(generation, phase)
         } else {
           NativeInteropSurfaceProbeResult(
               capability = "PanelSurface",
@@ -47,7 +51,9 @@ internal class SpatialNativeInteropCoordinator(
               error = "none",
           )
         }
+    lifecycleMarker("receipt-begin", generation, phase)
     val nativeReceipt = recordNativeInteropReceipt(probe, surfaceProbe)
+    lifecycleMarker("receipt-end", generation, phase)
     bindings.marker(SpatialOpenXrRouteModule.nativeInteropProbeMarker(phase, probe, surfaceProbe))
     bindings.marker(
         SpatialOpenXrRouteModule.nativeInteropReceiptMarker(
@@ -58,6 +64,7 @@ internal class SpatialNativeInteropCoordinator(
     )
     bindings.requestMultimodalInput(probe, phase)
     bindings.startControllerActions(probe, phase)
+    lifecycleMarker("probe-end", generation, phase)
   }
 
   private fun recordNativeInteropReceipt(
@@ -82,11 +89,23 @@ internal class SpatialNativeInteropCoordinator(
         }
   }
 
-  private fun createNoRenderSurfaceProbe(): NativeInteropSurfaceProbeResult {
+  private fun lifecycleMarker(stage: String, generation: Long, phase: String) {
+    bindings.marker(
+        "channel=native-interop-lifecycle status=observed stage=$stage " +
+            "probeGeneration=$generation phase=${activityMarkerToken(phase)} renderPolicy=no-render"
+    )
+  }
+
+  private fun createNoRenderSurfaceProbe(
+      generation: Long,
+      phase: String,
+  ): NativeInteropSurfaceProbeResult {
     var panelSurface: PanelSurface? = null
     return runCatching {
+          lifecycleMarker("surface-create-begin", generation, phase)
           panelSurface =
               PanelSurface(bindings.scene, 64, 64, 1, SamplerConfig(), true, false, "", false)
+          lifecycleMarker("surface-create-end", generation, phase)
           NativeInteropSurfaceProbeResult(
               capability = "PanelSurface",
               status = "created-destroyed-no-render",
@@ -102,7 +121,13 @@ internal class SpatialNativeInteropCoordinator(
               error = throwable.javaClass.simpleName,
           )
         }
-        .also { panelSurface?.destroy() }
+        .also {
+          panelSurface?.let {
+            lifecycleMarker("surface-destroy-begin", generation, phase)
+            it.destroy()
+            lifecycleMarker("surface-destroy-end", generation, phase)
+          }
+        }
   }
 
   companion object {

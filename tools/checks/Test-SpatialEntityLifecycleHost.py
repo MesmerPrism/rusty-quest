@@ -36,7 +36,7 @@ coordinator = '\n'.join(method('SpatialImmersiveVideoPanelCoordinator.kt', s, op
     ('  fun destroy(', False), ('  fun retireScene(', True),
     ('  private fun destroySceneEntities(', True),
     ('  private fun destroyVideoEntity(', True), ('  private fun destroyBackdropEntity(', True),
-    ('  private fun acceptVideoSurface(', True), ('  private fun acceptVideoPanel(', True),
+    ('  private fun emitResourceMarker(', False), ('  private fun resourceMarkerFields(', False), ('  private fun acceptVideoSurface(', True), ('  private fun acceptVideoPanel(', True),
     ('  fun spawnAtViewer(', False), ('  fun updateFromViewer(', False),
     ('  private fun dispatchPendingVideoLoadRecenter(', False),
 ])
@@ -77,7 +77,7 @@ object SystemClock {fun elapsedRealtime()=System.nanoTime()/1000000;fun elapsedR
 import java.util.concurrent.*
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.*
 class Model { var live=true; var deletes=0;var invalidNativeCalls=0;fun requireLive(){if(!live)invalidNativeCalls++;check(live){"DataModel native pointer null"}} }
-class Entity(val model:Model) { var onDelete:(()->Unit)?=null;var beforeMutation:(()->Unit)?=null;fun destroy(){model.requireLive();model.deletes++;onDelete?.invoke()};fun setComponent(x:Any){beforeMutation?.invoke();model.requireLive()};inline fun <reified T> tryGetComponent():T?{model.requireLive();return null};companion object{lateinit var creationModel:Model;fun create(vararg c:Any)=Entity(creationModel).also{creationModel.requireLive()}} }
+class Entity(val model:Model) { val id=System.identityHashCode(this).toLong(); var onDelete:(()->Unit)?=null;var beforeMutation:(()->Unit)?=null;fun destroy(){model.requireLive();model.deletes++;onDelete?.invoke()};fun setComponent(x:Any){beforeMutation?.invoke();model.requireLive()};inline fun <reified T> tryGetComponent():T?{model.requireLive();return null};companion object{lateinit var creationModel:Model;fun create(vararg c:Any)=Entity(creationModel).also{creationModel.requireLive()}} }
 class Mesh(val uri:Any?=null,val hittable:Any?=null,val shader:String="")
 class Intent(val enabled:Boolean=true)
 object Uri{fun parse(s:String)=s}
@@ -101,7 +101,7 @@ class Node(val entity:Entity)
 class Surface(val isValid:Boolean=true)
 class Pose(val t:Int=0,val q:Int=0){constructor(v:Vector3,q:Quaternion):this()}
 class Transform(val pose:Pose)
-class PanelSceneObject(val surface:Surface=Surface(),val model:Model?=null){fun destroy(){model?.requireLive()}}
+class PanelSceneObject(val surface:Surface=Surface(),val model:Model?=null){val handle=1L;fun destroy(){model?.requireLive()}}
 typealias AndroidSurface=Surface
 data class CameraHwbProjectionPlane(val center:Vector3=Vector3(0f),val targetDistanceMeters:Float=1f,val projectionWidthMeters:Float=1f,val projectionHeightMeters:Float=1f)
 fun activityVectorMarker(v:Vector3)="fixture"
@@ -126,11 +126,13 @@ class RecenterGate {fun consume(path:String,route:String)=RecenterRequest()}
 class Presentation(val value:Int=0) { val token="head-fixed";companion object {val HeadFixedBorder=Presentation();val entries=listOf(HeadFixedBorder)} }
 typealias SpatialImmersiveVideoPresentationMode=Presentation
 object SpatialImmersiveVideoSessionPolicy {fun directPanelPresentation(c:Config,p:Presentation)=Config()}
-class VideoSurfacePanelRegistration(val id:Int,val surfaceConsumer:(Any?,Surface)->Unit,val settingsCreator:()->Unit,val panelSetup:(PanelSceneObject,Any?)->Unit)
+class VideoSurfacePanelRegistration(val id:Int,val surfaceConsumer:(Entity,Surface)->Unit,val settingsCreator:(Entity)->Unit,val panelSetup:(PanelSceneObject,Entity)->Unit)
 typealias PanelRegistration=VideoSurfacePanelRegistration
 class Handler { var removed=false;fun removeCallbacksAndMessages(x:Any?){removed=true} }
 fun activityMarkerToken(x:String)=x
+class Owner{val token="fixture"}
 class SpatialImmersiveVideoPanelCoordinator(val model:Model) {
+ val layerOwner=Owner();val sceneEpoch=1L;var videoEntityEpoch=1L;var backingEntityEpoch=1L;var directDecoderGeneration=0L
  var entity:Entity?=Entity(model);var blackBackdropEntity:Entity?=Entity(model)
  var panelSceneObject:PanelSceneObject?=PanelSceneObject();var surface:Surface?=Surface()
  var spawnPose:Pose?=null;var latestViewerPose:Pose?=null
@@ -141,10 +143,10 @@ class SpatialImmersiveVideoPanelCoordinator(val model:Model) {
  fun lateRecenter()=dispatchPendingVideoLoadRecenter(Config(),"fixture")
  var activeIndex=0;var presentationMode=Presentation.HeadFixedBorder
  var transitionTargetIndex:Int?=null;var transitionGeneration=0L;var transitionSource="";var incomingFadeGeneration=-1L
- val transitionHandler=Handler();val requested=true;val catalog=listOf(Config());val MAX_SESSION_PACKS=1
+ val transitionHandler=Handler();var requested=true;val catalog=listOf(Config());val MAX_SESSION_PACKS=1
  val panelRegistrationIds=mapOf(Presentation.HeadFixedBorder to listOf(1))
  val activeConfig:Config? get()=catalog.getOrNull(activeIndex)
- fun emitMarker(s:String){}
+ val markers=ArrayList<String>();fun emitMarker(s:String){markers+=s}
  fun cancelSelectionTransition(s:String){transitionGeneration++;transitionTargetIndex=null}
  fun releasePlayer(s:String,quitThreadAfterRelease:Boolean=false){releaseCount++}
  fun startPlayer(c:Config,s:Surface){starts++}
@@ -231,7 +233,7 @@ fun main(){
  val c=a.immersiveVideoPanelCoordinator;val beforeSpawns=c.spawns;c.spawnAtViewer(Pose());c.updateFromViewer(Pose())
  check(c.spawns==beforeSpawns){"retired coordinator respawned"}
  val starts=c.starts
- for(reg in c.panelRegistrations()){reg.surfaceConsumer(null,Surface());reg.panelSetup(PanelSceneObject(),null)}
+ for(reg in c.panelRegistrations()){reg.surfaceConsumer(Entity(c.model),Surface());reg.panelSetup(PanelSceneObject(),Entity(c.model))}
  check(c.starts==starts&&c.surface==null&&c.panelSceneObject==null){"late SDK callback rebound retired handles"}
  check(!c.lateRecenter()&&c.recenterCalls==0){"retired video callback reentered Activity scene recenter"}
  val finishing=SpatialCameraPanelActivity(Model());finishing.block();finishing.finishingStop();finishing.onDestroy();finishing.release.countDown()
@@ -240,9 +242,29 @@ fun main(){
  coordinator.entity!!.onDelete={coordinator.destroy("reentrant")};coordinator.destroy("first");check(live.deletes==2){"reentrant destroy did not take both handles first"}
  val replacement=SpatialImmersiveVideoPanelCoordinator(Model());replacement.spawnAtViewer(Pose());check(replacement.spawns==0){"existing live carrier should be retained"}
  replacement.entity=null;replacement.blackBackdropEntity=null;replacement.spawnAtViewer(Pose());check(replacement.spawns==1){"fresh coordinator could not spawn"}
- for(reg in replacement.panelRegistrations()){reg.surfaceConsumer(null,Surface());reg.panelSetup(PanelSceneObject(),null)}
- check(replacement.starts==1&&replacement.panelSceneObject!=null){"live callbacks were suppressed"}
+ val registration = replacement.panelRegistrations().last()
+ val previousEntity = replacement.entity!!
+ val previousSurface = Surface()
+ val previousPanel = PanelSceneObject()
+ registration.surfaceConsumer(previousEntity,previousSurface);registration.panelSetup(previousPanel,previousEntity)
+ val priorStarts = replacement.starts
+ val successorEntity = Entity(replacement.model)
+ val successorSurface = Surface()
+ val successorPanel = PanelSceneObject()
+ replacement.entity = successorEntity
+ registration.surfaceConsumer(successorEntity,successorSurface);registration.panelSetup(successorPanel,successorEntity)
+ val successorStarts = replacement.starts
+ registration.surfaceConsumer(previousEntity,previousSurface);registration.panelSetup(previousPanel,previousEntity)
+ check(replacement.starts==successorStarts&&replacement.surface===successorSurface&&replacement.panelSceneObject===successorPanel){"previous Entity callback rebound the successor carrier at the same registration slot"}
+ replacement.entity=null
+ registration.surfaceConsumer(successorEntity,Surface());registration.panelSetup(PanelSceneObject(),successorEntity)
+ check(replacement.starts==successorStarts&&replacement.surface===successorSurface&&replacement.panelSceneObject===successorPanel){"callback reacquired a carrier without a current Entity"}
+ replacement.entity=successorEntity
+ check(priorStarts+1==successorStarts){"current Entity callback was suppressed"}
+ check(replacement.starts==2&&replacement.panelSceneObject!=null){"live callbacks were suppressed"}
  replacement.destroy("replacement")
+ val disabled=SpatialImmersiveVideoPanelCoordinator(Model());disabled.requested=false
+ disabled.destroy("disabled");check(disabled.markers.isEmpty()){"disabled route emitted resource diagnostics"}
  val concurrent=SpatialCameraPanelActivity(Model());val mutationEntered=CountDownLatch(1);val mutationRelease=CountDownLatch(1)
  concurrent.immersiveVideoPanelCoordinator.entity!!.beforeMutation={mutationEntered.countDown();mutationRelease.await()}
  val mutation=CompletableFuture.runAsync{concurrent.immersiveVideoPanelCoordinator.updateFromViewer(Pose())}
