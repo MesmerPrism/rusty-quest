@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class PackedStereoMediaReceiver implements AutoCloseable {
     private static final String MIME_H264 = "video/avc";
     private static final AtomicLong NEXT_HANDLE = new AtomicLong(1L);
+    private static final long EXTENDED_INPUT_PRESSURE_MS = 100L;
 
     private final Object lock = new Object();
     private final Surface surface;
@@ -90,6 +91,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private long preRenderRejected, identityWindowOverflows, maxQueuedWindow, maxRenderWindow;
     private String decoderClass = "NONE";
     private boolean connectionBytesSeen, connectionConfigSeen, connectionKeyframeSeen;
+    // At most five pressure observations per receiver owner. These markers do
+    // not change the closed activation/status payload or the codec wait policy.
+    private boolean firstInputPressureReported, firstInputRecoveryReported;
+    private boolean firstInputTimeoutReported, firstInputTerminalReported;
+    private boolean firstExtendedInputRecoveryReported;
 
     public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
             Bounds bounds, FrameListener listener) {
@@ -567,13 +573,48 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
 
     private void queuePacket(MediaCodec codec, long activeConnection,
             RmanvidPacketReader.Packet packet) throws Exception {
-        long deadline = SystemClock.elapsedRealtime() + bounds.codecInputTimeoutMs;
-        int inputIndex;
-        do {
-            inputIndex = codec.dequeueInputBuffer(10_000L);
-            if (inputIndex < 0) drain(codec, activeConnection);
-        } while (inputIndex < 0 && !stopRequested && SystemClock.elapsedRealtime() < deadline);
-        if (inputIndex < 0) throw closed("DECODER_INPUT_TIMEOUT", null);
+        long startedMs = SystemClock.elapsedRealtime();
+        long deadline = startedMs + bounds.codecInputTimeoutMs;
+        int inputIndex = -1, attempts = 0, lastInputCode = 0;
+        long beforeOutputs = 0, beforeReleased = 0, beforeAcquired = 0;
+        boolean pressure = false, timedOut = false;
+        try {
+            do {
+                inputIndex = codec.dequeueInputBuffer(10_000L);
+                attempts++;
+                if (inputIndex < 0) {
+                    lastInputCode = inputIndex;
+                    if (!pressure) {
+                        synchronized (lock) {
+                            beforeOutputs = outputsDequeued;
+                            beforeReleased = outputsReleasedForRender;
+                            beforeAcquired = acquiredFrames;
+                        }
+                        pressure = true;
+                        logInputPressure(activeConnection, startedMs, attempts, lastInputCode,
+                                beforeOutputs, beforeReleased, beforeAcquired, "waiting");
+                    }
+                    drain(codec, activeConnection);
+                }
+            } while (inputIndex < 0 && !stopRequested && SystemClock.elapsedRealtime() < deadline);
+            if (inputIndex < 0) {
+                timedOut = !stopRequested;
+                throw closed("DECODER_INPUT_TIMEOUT", null);
+            }
+        } finally {
+            if (pressure) {
+                // Capture before outcome logging so those calls cannot classify
+                // an otherwise short input wait as an extended recovery.
+                long waitElapsedMs = Math.max(0L, SystemClock.elapsedRealtime() - startedMs);
+                logInputPressure(activeConnection, startedMs, attempts, lastInputCode,
+                        beforeOutputs, beforeReleased, beforeAcquired,
+                        inputIndex >= 0 ? "recovered" : stopRequested ? "stopped" : timedOut ? "timeout" : "failed");
+                if (inputIndex >= 0 && waitElapsedMs > EXTENDED_INPUT_PRESSURE_MS) {
+                    logInputPressure(activeConnection, startedMs, attempts, lastInputCode,
+                            beforeOutputs, beforeReleased, beforeAcquired, "extended-recovered");
+                }
+            }
+        }
         ByteBuffer input = codec.getInputBuffer(inputIndex);
         if (input == null || packet.payload.length > input.capacity()) {
             throw closed("DECODER_INPUT_CAPACITY", null);
@@ -606,6 +647,43 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             stageTrace.progress(ReceiverStageTrace.INPUT, activeConnection,
                     SystemClock.elapsedRealtimeNanos(), packet.ptsUs, config ? 0L : packet.pair.pairId);
         }
+    }
+
+    /** Observation only; never extends a deadline, polls a Surface or changes packet custody. */
+    private void logInputPressure(long activeConnection, long startedMs, int attempts, int lastInputCode,
+            long beforeOutputs, long beforeReleased, long beforeAcquired, String outcome) {
+        try {
+            String observation;
+            synchronized (lock) {
+                if ("waiting".equals(outcome)) {
+                    if (firstInputPressureReported) return;
+                    firstInputPressureReported = true;
+                } else if ("recovered".equals(outcome)) {
+                    if (firstInputRecoveryReported) return;
+                    firstInputRecoveryReported = true;
+                } else if ("timeout".equals(outcome)) {
+                    if (firstInputTimeoutReported) return;
+                    firstInputTimeoutReported = true;
+                } else if ("extended-recovered".equals(outcome)) {
+                    if (firstExtendedInputRecoveryReported) return;
+                    firstExtendedInputRecoveryReported = true;
+                } else {
+                    if (firstInputTerminalReported) return;
+                    firstInputTerminalReported = true;
+                }
+                observation = "channel=packed-receiver status=decoder-input-pressure outcome=" + outcome
+                        + " receiverGeneration=" + generation + " connectionGeneration=" + activeConnection
+                        + " waitStartedElapsedMs=" + startedMs
+                        + " waitElapsedMs=" + Math.max(0L, SystemClock.elapsedRealtime() - startedMs)
+                        + " inputBudgetMs=" + bounds.codecInputTimeoutMs + " inputAttempts=" + attempts
+                        + " lastInputCode=" + lastInputCode
+                        + " outputsDrained=" + Math.max(0L, outputsDequeued - beforeOutputs)
+                        + " outputsReleased=" + Math.max(0L, outputsReleasedForRender - beforeReleased)
+                        + " hostAcquiredObserved=" + Math.max(0L, acquiredFrames - beforeAcquired)
+                        + " queuedWindow=" + queuedWindowLocked() + " renderWindow=" + renderWindowLocked();
+            }
+            android.util.Log.i("RQSpatialCameraPanel", observation);
+        } catch (RuntimeException ignored) { /* A diagnostic cannot change packet or failure custody. */ }
     }
 
     private void awaitIdentityCapacity(MediaCodec codec, long activeConnection) throws Exception {
