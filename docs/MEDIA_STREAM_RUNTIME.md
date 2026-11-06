@@ -75,6 +75,10 @@ must appear in effective state rather than leaving a stale active label.
 
 ### Shared packed capture
 
+The default RECORD template has a separately packaged debug-only
+[PREVIEW experiment and request/result readback](PACKED_CAMERA2_REQUEST_EXPERIMENT.md).
+It changes no FPS override, media closure or enrollment selection.
+
 An embedded host may own one `PackedStereoCaptureOwner` independently of a
 Peer media subscription. `createSharedCapturePipeline` attaches a bounded
 encoder consumer to an already started, configuration-matching owner; closing

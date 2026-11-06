@@ -1,0 +1,122 @@
+package io.github.mesmerprism.rustyquest.media;
+
+import android.content.Context;
+import android.hardware.camera2.*;
+import android.util.Range;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.charset.StandardCharsets;
+import org.json.JSONObject;
+
+public final class PackedCameraRequestHost {
+    final CameraDevice device = new CameraDevice();
+    final CameraCharacteristics characteristics = new CameraCharacteristics();
+    final Object surface = new Object();
+    final Object handler = new Object();
+    final Session session = new Session();
+    static final class Session { CaptureRequest received;
+        int setRepeatingRequest(CaptureRequest r, Object callback, Object handler) { received=r;return 17; } }
+    final String eye;
+    final int frameRate = 60;
+    boolean leftFpsRangePresent, rightFpsRangePresent;
+    int leftFpsLower, leftFpsUpper, rightFpsLower, rightFpsUpper;
+    final PackedStereoCameraRequestPolicy requestPolicy;
+    final PackedStereoCameraRequestPolicy.Diagnostic leftRequestDiagnostic = new PackedStereoCameraRequestPolicy.Diagnostic();
+    final PackedStereoCameraRequestPolicy.Diagnostic rightRequestDiagnostic = new PackedStereoCameraRequestPolicy.Diagnostic();
+    static final class PackedStereoFramePairer { static final String LEFT = "left"; }
+    PackedCameraRequestHost(Context context, String eye) {
+        requestPolicy = PackedStereoCameraRequestPolicy.resolve(context); this.eye = eye;
+    }
+    CaptureRequest setup() {
+        PRODUCTION_REQUEST_SETUP
+        PRODUCTION_SUBMISSION_CALL
+        check(session.received == submittedRequest, "same built request reaches repeating submission");
+        return submittedRequest;
+    }
+    static void check(boolean pass, String message) { if (!pass) throw new AssertionError(message); }
+    @SuppressWarnings("unchecked")
+    public static void main(String[] args) throws Exception {
+        for (boolean debug : new boolean[]{false, true}) {
+            for (int selected : new int[]{1,3,0,2,7,-1}) {
+                for (String eye : new String[]{"left","right"}) {
+                    Context context = new Context(); context.info.flags = debug ? 2 : 0;
+                    context.resources.value = selected;
+                    PackedCameraRequestHost host = new PackedCameraRequestHost(context, eye);
+                    host.characteristics.ranges = (Range<Integer>[])new Range<?>[]{new Range<>(30,60),new Range<>(60,60),new Range<>(15,30)};
+                    CaptureRequest request = host.setup();
+                    check(host.device.actual == (debug && selected == 1 ? 1 : 3), "actual camera template selection");
+                    check(debug || context.resources.reads == 0, "release never consults override resource");
+                    check(request.target == host.surface && request.setters == 1, "same target and only original FPS setter");
+                    check(request.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE).getLower() == 60,
+                            "original narrowest supported 60fps selection");
+                    check(eye.equals("left") ? host.leftFpsRangePresent && !host.rightFpsRangePresent
+                            : host.rightFpsRangePresent && !host.leftFpsRangePresent, "per-eye existing range markers");
+                }
+            }
+        }
+        Context absent = new Context(); absent.info.flags = 2; absent.resources.id = 0;
+        check(new PackedCameraRequestHost(absent,"left").setup().get(CaptureRequest.CONTROL_CAPTURE_INTENT) == 3, "absent keeps record");
+        Context broken = new Context(); broken.info.flags = 2; broken.resources.fail = true;
+        check(new PackedCameraRequestHost(broken,"left").device.actual == 0, "resolution does not touch camera");
+        check(PackedStereoCameraRequestPolicy.resolve(broken).template == 3, "unavailable resource keeps record");
+        Context preview = new Context(); preview.info.flags = 2; preview.resources.value = 1;
+        PackedCameraRequestHost host = new PackedCameraRequestHost(preview,"left");
+        CaptureRequest request = host.setup();
+        check(request.setters == 0 && request.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE) == null,
+                "unsupported FPS performs no new override");
+        PackedStereoCameraRequestPolicy.Diagnostic diagnostic = new PackedStereoCameraRequestPolicy.Diagnostic();
+        check(diagnostic.snapshot().isNull("request") && diagnostic.snapshot().isNull("result"), "unsubmitted is unknown");
+        diagnostic.built(1,request);
+        JSONObject observed = diagnostic.snapshot();
+        check(observed.getJSONObject("request").getInt("capture_intent") == 1
+                && observed.getJSONObject("request").isNull("ae_target_fps_range")
+                && observed.getJSONObject("request").isNull("noise_reduction_mode"), "request defaults are read, optional values stay null");
+        final long[] now = {1_000_000_000L};
+        CaptureStallDiagnostics probe = new CaptureStallDiagnostics(() -> now[0]);
+        TotalCaptureResult result = new TotalCaptureResult(); result.frame = Long.MAX_VALUE;
+        result.values.put(CaptureResult.CONTROL_CAPTURE_INTENT, 3);
+        result.values.put(CaptureResult.CONTROL_AE_TARGET_FPS_RANGE,new Range<>(60,60));
+        result.values.put(CaptureResult.NOISE_REDUCTION_MODE, 2);
+        result.values.put(CaptureResult.EDGE_MODE, 2);
+        result.values.put(CaptureResult.COLOR_CORRECTION_ABERRATION_MODE, 2);
+        result.values.put(CaptureResult.CONTROL_VIDEO_STABILIZATION_MODE, 1);
+        result.values.put(CaptureResult.SENSOR_FRAME_DURATION,Long.MAX_VALUE);
+        result.values.put(CaptureResult.SENSOR_EXPOSURE_TIME,Long.MAX_VALUE);
+        result.values.put(CaptureResult.SENSOR_TIMESTAMP,Long.MAX_VALUE);
+        diagnostic.completed(null,result);
+        check(diagnostic.snapshot().isNull("result"), "off callback cannot populate result");
+        probe.arm("process",Long.MAX_VALUE,Long.MAX_VALUE,null);
+        CaptureStallDiagnostics.Window window = probe.active();
+        diagnostic.completed(window,result);
+        observed = diagnostic.snapshot();
+        JSONObject readback = observed.getJSONObject("result");
+        check(readback.getInt("capture_intent") == 3 && readback.getLong("frame_number") == Long.MAX_VALUE,
+                "result intent differs truthfully from preview request");
+        check(readback.getJSONObject("probe").getLong("deadline_ns") - readback.getJSONObject("probe").getLong("start_ns") == 600_000_000_000L,
+                "result retains exact finite probe identity");
+        // Populate every optional request field too, using modeled platform defaults.
+        CaptureRequest.Builder full = new CaptureRequest.Builder(1);
+        full.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,new Range<>(60,60));
+        full.set(CaptureRequest.NOISE_REDUCTION_MODE,2); full.set(CaptureRequest.EDGE_MODE,2);
+        full.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE,2);
+        full.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,1);
+        CaptureRequest fullRequest = full.build(); diagnostic.built(1,fullRequest);
+        Files.write(Paths.get(args[0]),diagnostic.snapshot().toString().getBytes(StandardCharsets.UTF_8));
+        now[0] += 600_000_000_000L;
+        TotalCaptureResult late = new TotalCaptureResult(); late.frame=7L;
+        diagnostic.completed(window,late);
+        check(diagnostic.snapshot().getJSONObject("result").getLong("frame_number") == Long.MAX_VALUE
+                && !diagnostic.snapshot().getJSONObject("result").getJSONObject("probe").getBoolean("active"), "expiry retains old sample without extending it");
+        probe.arm("process-next",2L,2L,null);
+        diagnostic.completed(probe.active(),late);
+        diagnostic.completed(window,result);
+        check(diagnostic.snapshot().getJSONObject("result").getLong("frame_number") == 7L
+                && diagnostic.snapshot().getJSONObject("result").getJSONObject("probe").getLong("arm_generation") == 2L,
+                "old window cannot overwrite a later arm sample");
+        diagnostic.completed(probe.active(),result);
+        fullRequest.fail = true; result.fail = true;
+        check(diagnostic.snapshot().getJSONObject("request").isNull("capture_intent")
+                && diagnostic.snapshot().getJSONObject("result").isNull("capture_intent"), "unsupported getters are nullable");
+        System.out.println("packed-camera-request:pass");
+    }
+}

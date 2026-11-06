@@ -8,6 +8,13 @@ public final class CaptureStallWiringHost {
             () -> android.os.SystemClock.elapsedRealtimeNanos());
     final CaptureFrameTrace leftFrameTrace = new CaptureFrameTrace(), rightFrameTrace = new CaptureFrameTrace();
     final CaptureFrameTrace trace;
+    final Diagnostic requestDiagnostic = new Diagnostic();
+    final Diagnostic leftRequestDiagnostic = new Diagnostic(), rightRequestDiagnostic = new Diagnostic();
+    final Diagnostic requestPolicy = new Diagnostic();
+    static final class Diagnostic {
+        void completed(CaptureStallDiagnostics.Window window, TotalCaptureResult result) {}
+        JSONObject snapshot() { return new JSONObject(); }
+    }
     final long captureInstance = 1L;
     static final int FAILURE_NONE = 0, DETAIL_OTHER = 0;
     static final class FirstFailure { int originCode, causeCode, detailCode; long elapsedNs; }

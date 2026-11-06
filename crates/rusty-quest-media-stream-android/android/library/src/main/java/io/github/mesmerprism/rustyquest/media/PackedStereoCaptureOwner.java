@@ -35,6 +35,11 @@ public final class PackedStereoCaptureOwner {
     private final PackedStereoStreamMetadata.Layout layout;
     private final String leftId, rightId;
     private final int frameRate;
+    private final PackedStereoCameraRequestPolicy requestPolicy;
+    private final PackedStereoCameraRequestPolicy.Diagnostic leftRequestDiagnostic =
+            new PackedStereoCameraRequestPolicy.Diagnostic();
+    private final PackedStereoCameraRequestPolicy.Diagnostic rightRequestDiagnostic =
+            new PackedStereoCameraRequestPolicy.Diagnostic();
     private final PackedStereoPoolExecutor poolExecutor;
     private final long captureInstance = NEXT_CAPTURE_INSTANCE.incrementAndGet();
     private final CaptureFrameTrace leftFrameTrace = new CaptureFrameTrace();
@@ -297,6 +302,7 @@ public final class PackedStereoCaptureOwner {
                 || leftId.equals(rightId) || maxPairDeltaNs <= 0)
             throw new IllegalArgumentException("invalid app capture binding");
         this.context = context.getApplicationContext();
+        this.requestPolicy = PackedStereoCameraRequestPolicy.resolve(this.context);
         this.layout = new PackedStereoStreamMetadata.Layout(eyeWidth * 2, eyeHeight,
                 eyeWidth, eyeHeight, maxPairDeltaNs);
         this.frameRate = frameRate; this.leftId = leftId; this.rightId = rightId;
@@ -472,6 +478,9 @@ public final class PackedStereoCaptureOwner {
                 .put("consistency", "per_stage_non_atomic")
                 .put("capture_instance", captureInstance)
                 .put("stall_probe", stallDiagnostics.snapshot())
+                .put("camera2_request_template", requestPolicy.snapshot())
+                .put("left_camera2_request", leftRequestDiagnostic.snapshot())
+                .put("right_camera2_request", rightRequestDiagnostic.snapshot())
                 .put("left_frame_trace", leftFrameTrace.snapshot())
                 .put("right_frame_trace", rightFrameTrace.snapshot())
                 .put("first_failure_origin_code", first == null ? FAILURE_NONE : first.originCode)
@@ -651,7 +660,7 @@ public final class PackedStereoCaptureOwner {
             }
             if (error != null || closeRequested || stopRequested)
                 throw new IllegalStateException("camera session unavailable", error);
-            CaptureRequest.Builder request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+            CaptureRequest.Builder request = device.createCaptureRequest(requestPolicy.template);
             request.addTarget(surface);
             Range<Integer>[] ranges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
             Range<Integer> chosen = null;
@@ -668,10 +677,14 @@ public final class PackedStereoCaptureOwner {
                     rightFpsRangePresent = true;
                 }
             }
+            PackedStereoCameraRequestPolicy.Diagnostic requestDiagnostic = PackedStereoFramePairer.LEFT.equals(eye)
+                    ? leftRequestDiagnostic : rightRequestDiagnostic;
+            CaptureRequest submittedRequest = request.build();
+            requestDiagnostic.built(requestPolicy.template, submittedRequest);
             CaptureFrameTrace trace = PackedStereoFramePairer.LEFT.equals(eye)
                     ? leftFrameTrace : rightFrameTrace;
             long submissionEntryNs = android.os.SystemClock.elapsedRealtimeNanos();
-            int requestSequence = session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
+            int requestSequence = session.setRepeatingRequest(submittedRequest, new CameraCaptureSession.CaptureCallback() {
                 public void onCaptureStarted(CameraCaptureSession active, CaptureRequest request,
                         long timestamp, long frameNumber) {
                     boolean probeLeft = PackedStereoFramePairer.LEFT.equals(eye);
@@ -704,6 +717,7 @@ public final class PackedStereoCaptureOwner {
                     int callbackStage = probeLeft ? CaptureStallDiagnostics.LEFT_COMPLETED : CaptureStallDiagnostics.RIGHT_COMPLETED;
                     long callbackToken = probe == null ? 0L : probe.begin(callbackStage, -1L);
                     try {
+                        requestDiagnostic.completed(probe, result);
                         int epochStage = probeLeft ? CaptureStallDiagnostics.LEFT_COMPLETED_EPOCH : CaptureStallDiagnostics.RIGHT_COMPLETED_EPOCH;
                         long epochToken = probe == null ? 0L : probe.begin(epochStage, -1L);
                         long traceEpoch;
