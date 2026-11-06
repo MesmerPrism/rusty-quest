@@ -89,6 +89,13 @@ sensor timestamps survive encoding and decoding; an allocation handle alone
 is not a frame identity. Whole-capture shutdown keeps the capture context
 alive until actual camera closure and all retained consumers retire.
 
+The existing explicit diagnostic ARM can also start a finite observation window
+for outer Camera2 callbacks, trace calls, pool polling, encoder offers and
+handler heartbeat delays. See [capture stall diagnostics](CAPTURE_STALL_DIAGNOSTICS.md)
+for its effective readback, 600-second lifetime, inherited trace-read blocking,
+focused host controls and limits. These observations do not change media state
+or supply performance or qualification authority.
+
 Run the bounded host and source checks before Android compilation:
 
 ```powershell

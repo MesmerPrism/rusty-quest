@@ -39,6 +39,9 @@ public final class PackedStereoCaptureOwner {
     private final long captureInstance = NEXT_CAPTURE_INSTANCE.incrementAndGet();
     private final CaptureFrameTrace leftFrameTrace = new CaptureFrameTrace();
     private final CaptureFrameTrace rightFrameTrace = new CaptureFrameTrace();
+    private final CaptureStallDiagnostics stallDiagnostics = new CaptureStallDiagnostics(
+            () -> android.os.SystemClock.elapsedRealtimeNanos());
+    private volatile Handler cameraHandler;
     /** Observation-only epoch boundary; never changes camera requests or media state. */
     public void armDiagnosticTrace(String processEpoch, long appGeneration, long armGeneration) {
         if (processEpoch == null || processEpoch.isEmpty() || appGeneration <= 0L || armGeneration <= 0L)
@@ -46,6 +49,15 @@ public final class PackedStereoCaptureOwner {
         long boundary = android.os.SystemClock.elapsedRealtimeNanos();
         leftFrameTrace.arm(processEpoch, appGeneration, armGeneration, boundary);
         rightFrameTrace.arm(processEpoch, appGeneration, armGeneration, boundary);
+        Handler handler = cameraHandler;
+        stallDiagnostics.arm(processEpoch, appGeneration, armGeneration, handler == null ? null
+                : new CaptureStallDiagnostics.Scheduler() {
+                    public boolean postDelayed(Runnable action, long delayMs) {
+                        return handler.postDelayed(action, delayMs);
+                    }
+                    public void remove(Runnable action) { handler.removeCallbacks(action); }
+                });
+        if (stopRequested) stallDiagnostics.stop();
     }
     private final Object subscriptionLock = new Object();
     private EncoderConsumer encoderConsumer;
@@ -308,13 +320,14 @@ public final class PackedStereoCaptureOwner {
                             Endpoint a = left, b = right;
                             return startupSettled && (a == null || a.retired()) && (b == null || b.retired());
                         }
-                    }, leftFrameTrace, rightFrameTrace);
+                    }, leftFrameTrace, rightFrameTrace, stallDiagnostics);
             compositor.awaitStarted();
             poolExecutor.awaitCameraOwnership();
             if (stopRequested) throw new IllegalStateException("capture stopped during startup");
             cameraThread = new HandlerThread("rusty-app-stereo-capture-camera2");
             cameraThread.start();
             Handler handler = new Handler(cameraThread.getLooper());
+            cameraHandler = handler;
             CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
             if (manager == null) throw new IllegalStateException("CameraManager unavailable");
             // Publish each endpoint BEFORE a platform call: late callbacks remain accounted for.
@@ -359,11 +372,17 @@ public final class PackedStereoCaptureOwner {
     /** Native producer readiness transfers a SECOND content lease here. */
     public void offerEncoderFrame(PackedStereoEncoderInput frame) {
         if (frame == null) throw new NullPointerException("frame");
-        EncoderConsumer target;
-        synchronized (subscriptionLock) { target = stopRequested ? null : encoderConsumer; }
-        // The detached consumer must fence late offers itself. No platform callback under the lock.
-        if (target == null) frame.releaseUnsubmitted();
-        else target.offer(frame);
+        CaptureStallDiagnostics.Window probe = stallDiagnostics.active();
+        long token = probe == null ? 0L : probe.begin(CaptureStallDiagnostics.ENCODER_OFFER, -1L);
+        try {
+            EncoderConsumer target;
+            synchronized (subscriptionLock) { target = stopRequested ? null : encoderConsumer; }
+            // The detached consumer must fence late offers itself. No platform callback under the lock.
+            if (target == null) frame.releaseUnsubmitted();
+            else target.offer(frame);
+        } finally {
+            if (probe != null) probe.end(CaptureStallDiagnostics.ENCODER_OFFER, token);
+        }
     }
 
     public boolean fresh() {
@@ -452,6 +471,7 @@ public final class PackedStereoCaptureOwner {
                 .put("sample_elapsed_ns", sampleNs)
                 .put("consistency", "per_stage_non_atomic")
                 .put("capture_instance", captureInstance)
+                .put("stall_probe", stallDiagnostics.snapshot())
                 .put("left_frame_trace", leftFrameTrace.snapshot())
                 .put("right_frame_trace", rightFrameTrace.snapshot())
                 .put("first_failure_origin_code", first == null ? FAILURE_NONE : first.originCode)
@@ -507,6 +527,7 @@ public final class PackedStereoCaptureOwner {
             stopRequested = true;
             if (!started) startupSettled = true;
         }
+        stallDiagnostics.stop();
         synchronized (subscriptionLock) { encoderConsumer = null; }
         Endpoint a = left, b = right;
         if (a != null) a.requestClose();
@@ -653,42 +674,70 @@ public final class PackedStereoCaptureOwner {
             int requestSequence = session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
                 public void onCaptureStarted(CameraCaptureSession active, CaptureRequest request,
                         long timestamp, long frameNumber) {
-                    long traceEpoch = trace.epoch();
-                    long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
-                    CameraResultCadence raw = PackedStereoFramePairer.LEFT.equals(eye)
-                            ? leftCameraStarted : rightCameraStarted;
-                    raw.observeAt(callbackElapsedNs, frameNumber + 1L, frameNumber, timestamp);
-                    Looper looper = Looper.myLooper();
-                    trace.started(traceEpoch, frameNumber, callbackElapsedNs,
-                            android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
-                            looper != null && looper == Looper.getMainLooper(), timestamp);
+                    boolean probeLeft = PackedStereoFramePairer.LEFT.equals(eye);
+                    CaptureStallDiagnostics.Window probe = stallDiagnostics.active();
+                    int callbackStage = probeLeft ? CaptureStallDiagnostics.LEFT_STARTED : CaptureStallDiagnostics.RIGHT_STARTED;
+                    long callbackToken = probe == null ? 0L : probe.begin(callbackStage, frameNumber);
+                    try {
+                        int epochStage = probeLeft ? CaptureStallDiagnostics.LEFT_TRACE_EPOCH : CaptureStallDiagnostics.RIGHT_TRACE_EPOCH;
+                        long epochToken = probe == null ? 0L : probe.begin(epochStage, frameNumber);
+                        long traceEpoch;
+                        try { traceEpoch = trace.epoch(); }
+                        finally { if (probe != null) probe.end(epochStage, epochToken); }
+                        long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
+                        CameraResultCadence raw = PackedStereoFramePairer.LEFT.equals(eye)
+                                ? leftCameraStarted : rightCameraStarted;
+                        raw.observeAt(callbackElapsedNs, frameNumber + 1L, frameNumber, timestamp);
+                        Looper looper = Looper.myLooper();
+                        int recordStage = probeLeft ? CaptureStallDiagnostics.LEFT_STARTED_RECORD : CaptureStallDiagnostics.RIGHT_STARTED_RECORD;
+                        long recordToken = probe == null ? 0L : probe.begin(recordStage, frameNumber);
+                        try {
+                            trace.started(traceEpoch, frameNumber, callbackElapsedNs,
+                                    android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
+                                    looper != null && looper == Looper.getMainLooper(), timestamp);
+                        } finally { if (probe != null) probe.end(recordStage, recordToken); }
+                    } finally { if (probe != null) probe.end(callbackStage, callbackToken); }
                 }
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
-                    long traceEpoch = trace.epoch();
-                    long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
-                    long frameNumber = result.getFrameNumber();
-                    long sourceFrame = frameNumber + 1L;
-                    Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
-                    Long exposureTimeNs = null, frameDurationNs = null;
-                    try { exposureTimeNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME); }
-                    catch (RuntimeException ignored) { /* Optional diagnostic only. */ }
-                    try { frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION); }
-                    catch (RuntimeException ignored) { /* Optional diagnostic only. */ }
-                    CameraResultCadence raw =
-                            PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
-                    raw.observeAt(callbackElapsedNs, sourceFrame, frameNumber,
-                            timestamp, exposureTimeNs, frameDurationNs);
-                    if (!closeRequested && !stopRequested && timestamp != null && timestamp > 0) {
-                        PackedStereoGlCompositor.StageCadence valid =
-                                PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraMetadata : rightCameraMetadata;
-                        valid.observeAt(android.os.SystemClock.elapsedRealtimeNanos(), sourceFrame);
-                        compositor.recordCapture(eye, sourceFrame, timestamp);
-                    }
-                    Looper looper = Looper.myLooper();
-                    trace.completed(traceEpoch, frameNumber, callbackElapsedNs,
-                            android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
-                            looper != null && looper == Looper.getMainLooper(),
-                            timestamp, exposureTimeNs, frameDurationNs);
+                    boolean probeLeft = PackedStereoFramePairer.LEFT.equals(eye);
+                    CaptureStallDiagnostics.Window probe = stallDiagnostics.active();
+                    int callbackStage = probeLeft ? CaptureStallDiagnostics.LEFT_COMPLETED : CaptureStallDiagnostics.RIGHT_COMPLETED;
+                    long callbackToken = probe == null ? 0L : probe.begin(callbackStage, -1L);
+                    try {
+                        int epochStage = probeLeft ? CaptureStallDiagnostics.LEFT_COMPLETED_EPOCH : CaptureStallDiagnostics.RIGHT_COMPLETED_EPOCH;
+                        long epochToken = probe == null ? 0L : probe.begin(epochStage, -1L);
+                        long traceEpoch;
+                        try { traceEpoch = trace.epoch(); }
+                        finally { if (probe != null) probe.end(epochStage, epochToken); }
+                        long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
+                        long frameNumber = result.getFrameNumber();
+                        long sourceFrame = frameNumber + 1L;
+                        Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                        Long exposureTimeNs = null, frameDurationNs = null;
+                        try { exposureTimeNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME); }
+                        catch (RuntimeException ignored) { /* Optional diagnostic only. */ }
+                        try { frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION); }
+                        catch (RuntimeException ignored) { /* Optional diagnostic only. */ }
+                        CameraResultCadence raw =
+                                PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
+                        raw.observeAt(callbackElapsedNs, sourceFrame, frameNumber,
+                                timestamp, exposureTimeNs, frameDurationNs);
+                        if (!closeRequested && !stopRequested && timestamp != null && timestamp > 0) {
+                            PackedStereoGlCompositor.StageCadence valid =
+                                    PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraMetadata : rightCameraMetadata;
+                            valid.observeAt(android.os.SystemClock.elapsedRealtimeNanos(), sourceFrame);
+                            compositor.recordCapture(eye, sourceFrame, timestamp);
+                        }
+                        Looper looper = Looper.myLooper();
+                        int recordStage = probeLeft ? CaptureStallDiagnostics.LEFT_COMPLETED_RECORD : CaptureStallDiagnostics.RIGHT_COMPLETED_RECORD;
+                        long recordToken = probe == null ? 0L : probe.begin(recordStage, frameNumber);
+                        try {
+                            trace.completed(traceEpoch, frameNumber, callbackElapsedNs,
+                                    android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
+                                    looper != null && looper == Looper.getMainLooper(),
+                                    timestamp, exposureTimeNs, frameDurationNs);
+                        } finally { if (probe != null) probe.end(recordStage, recordToken); }
+                    } finally { if (probe != null) probe.end(callbackStage, callbackToken); }
                 }
                 public void onCaptureFailed(CameraCaptureSession active, CaptureRequest request,
                         CaptureFailure captureFailure) {
