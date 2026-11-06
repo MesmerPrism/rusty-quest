@@ -42,6 +42,8 @@ try {
     Invoke-Checked "native app-build static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeAppBuildStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "native renderer panel composition static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeRendererPanelCompositionStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "premerge source composition regression" "pwsh" @("-NoProfile", "-File", "tools\checks\Test-SourceCompositionPremerge.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Native generated identity asset destination gate" "pwsh" @("-NoProfile", "-File", "tools/checks/Test-NativeRendererBuildIdentityAssetDestinations.ps1")
+    Invoke-Checked "Native Android packaging version and capsule gate" "pwsh" @("-NoProfile", "-File", "tools/checks/Test-NativeRendererAndroidPackaging.ps1")
     Invoke-Checked "APK build and run isolation static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-ApkRunIsolationStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "recording host reliability gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestRecordingHostReliability.ps1", "-RepoRoot", ".")
     $externalAuthorityArguments = @(
