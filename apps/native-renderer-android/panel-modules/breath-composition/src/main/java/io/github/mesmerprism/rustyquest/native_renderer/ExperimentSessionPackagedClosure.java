@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -18,12 +19,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Worker-only verifier/materializer for the packaged experiment-session trust closure. */
+/** Verifier/materializer for the packaged experiment-session trust closure.
+ * The selected app initializer materializes it before native cold startup; panel
+ * initialization re-verifies the same exact closure on its session worker. */
 final class ExperimentSessionPackagedClosure {
     static final String PROFILE_ASSET_ID = "experiment-session-profile";
     static final String PROFILE_DESTINATION = "session-config/experiment-session.json";
     static final String MATERIALIZED_DIRECTORY = "viscereality-recordings";
     static final String MATERIALIZED_FILE = "experiment-session-profile.json";
+    static final String PACKAGED_CLOSURES_DIRECTORY = "packaged-closures";
     private static final String CLOSURE_SCHEMA =
         "rusty.quest.native_app_private_asset_closure.v1";
     private static final String OUTER_SCHEMA =
@@ -100,27 +104,31 @@ final class ExperimentSessionPackagedClosure {
 
     static final class Result {
         final boolean active;
+        final boolean openControlDefault;
         final String providerId;
         final String inventorySha256;
         final String nonAudioProfileSha256;
         final AudioEntry[] audioEntries;
         final GuidanceEntry[] guidanceEntries;
+        final AudioEntry[] phaseAudioEntries;
 
-        private Result(boolean active, String providerId, String inventorySha256,
+        private Result(boolean active, boolean openControlDefault, String providerId, String inventorySha256,
                 String nonAudioProfileSha256,
                 AudioEntry[] audioEntries,
-                GuidanceEntry[] guidanceEntries) {
+                GuidanceEntry[] guidanceEntries, AudioEntry[] phaseAudioEntries) {
             this.active = active;
+            this.openControlDefault = active && openControlDefault;
             this.providerId = safe(providerId);
             this.inventorySha256 = safe(inventorySha256);
             this.nonAudioProfileSha256 = safe(nonAudioProfileSha256);
             this.audioEntries = audioEntries == null ? new AudioEntry[0] : audioEntries.clone();
+            this.phaseAudioEntries = phaseAudioEntries == null ? new AudioEntry[0] : phaseAudioEntries.clone();
             this.guidanceEntries = guidanceEntries == null
                 ? new GuidanceEntry[0] : guidanceEntries.clone();
         }
 
         static Result inactive() {
-            return new Result(false, "", "", "", new AudioEntry[0], new GuidanceEntry[0]);
+            return new Result(false, false, "", "", "", new AudioEntry[0], new GuidanceEntry[0], new AudioEntry[0]);
         }
 
         GuidanceEntry guidanceFor(String conditionId) {
@@ -240,13 +248,32 @@ final class ExperimentSessionPackagedClosure {
 
     private ExperimentSessionPackagedClosure() {}
 
+    static void requireOwnerProfilePolicy(String schema, Object kioskRequested, boolean standaloneOwner) {
+        if (standaloneOwner) {
+            if (!"rusty.viscereality.experiment_session_profile.standalone.v2".equals(schema))
+                fail("experiment-session-standalone-profile-schema-required");
+            if (!Boolean.FALSE.equals(kioskRequested))
+                fail("experiment-session-standalone-kiosk-policy-must-be-false");
+        } else if (!OUTER_SCHEMA.equals(schema)) {
+            fail("experiment-session-outer-schema-invalid");
+        }
+    }
+
     static Result prepare(byte[] featureLockBytes, AssetReader assets, Path filesRoot,
             Anchors anchors) throws Exception {
+        return prepare(featureLockBytes, assets, filesRoot, anchors, false);
+    }
+
+    static Result prepare(byte[] featureLockBytes, AssetReader assets, Path filesRoot,
+            Anchors anchors, boolean standaloneOwner) throws Exception {
         if (featureLockBytes == null || assets == null || filesRoot == null || anchors == null) {
             fail("experiment-session-packaged-closure-input-missing");
         }
         Map<String, Object> lock = object(parse(strictUtf8(featureLockBytes,
             "feature-lock")), "feature-lock");
+        Object selected = lock.get("selected_feature_ids");
+        boolean selectedOwner = selected instanceof List && ((List<?>) selected).contains("ui.experiment_session_owner");
+        if (selectedOwner != standaloneOwner) fail("experiment-session-owner-selection-mismatch");
         Map<String, Object> buildInputs = object(lock.get("build_inputs"), "build_inputs");
         Map<String, Object> closure = object(buildInputs.get("private_asset_closure"),
             "private_asset_closure");
@@ -262,7 +289,7 @@ final class ExperimentSessionPackagedClosure {
             }
             return Result.inactive();
         }
-        if (!"linked-provider".equals(mode) || assetCount < 3L || assetCount > 5L
+        if (!"linked-provider".equals(mode) || assetCount < 3L || assetCount > 8L
                 || encodedAssets.size() != (int) assetCount) {
             fail("experiment-session-closure-cardinality-invalid");
         }
@@ -285,7 +312,8 @@ final class ExperimentSessionPackagedClosure {
         }
         java.util.LinkedHashSet<String> allowedAssetIds = new java.util.LinkedHashSet<String>(
             Arrays.asList("condition-audio-a", "condition-audio-b", PROFILE_ASSET_ID,
-                "breath-guidance-a", "breath-guidance-b"));
+                "breath-guidance-a", "breath-guidance-b",
+                "phase-audio-inhale", "phase-audio-retention", "phase-audio-exhale"));
         if (!entries.keySet().containsAll(Arrays.asList(
                 "condition-audio-a", "condition-audio-b", PROFILE_ASSET_ID))
                 || !allowedAssetIds.containsAll(entries.keySet())) {
@@ -305,13 +333,20 @@ final class ExperimentSessionPackagedClosure {
         }
         String profileText = strictUtf8(profileBytes, "experiment-session-profile");
         Map<String, Object> profile = object(parse(profileText), "experiment-session-profile");
-        requireExactFields(profile, "schema_id", "profile_id", "visibility",
+        Map<String, Object> profileFields = new LinkedHashMap<String, Object>(profile);
+        Object phaseAudio = profileFields.remove("phase_audio");
+        if (profile.containsKey("phase_audio") && phaseAudio == null) fail("phase-audio-config-invalid");
+        Object openDefault = profileFields.remove("open_control_default");
+        if (profile.containsKey("open_control_default") && !(openDefault instanceof Boolean)) {
+            fail("experiment-session-open-control-default-invalid");
+        }
+        boolean openControlDefault = Boolean.TRUE.equals(openDefault);
+        requireExactFields(profileFields, "schema_id", "profile_id", "visibility",
             "recording_default", "kiosk_requested_default", "non_audio_profile",
             "non_audio_profile_sha256", "radius_observation", "runtime_projection",
             "conditions");
-        if (!OUTER_SCHEMA.equals(string(profile, "schema_id"))) {
-            fail("experiment-session-outer-schema-invalid");
-        }
+        requireOwnerProfilePolicy(string(profile, "schema_id"),
+            profile.get("kiosk_requested_default"), standaloneOwner);
 
         Map<String, ConditionIdentity> outerConditions = parseOuterConditions(profile);
         String nonAudioProfileSha256 = string(profile, "non_audio_profile_sha256");
@@ -346,25 +381,56 @@ final class ExperimentSessionPackagedClosure {
             fail("experiment-session-audio-identities-not-distinct");
         }
 
-        materialize(filesRoot, profileBytes);
+        ArrayList<AudioEntry> phaseEntries = new ArrayList<AudioEntry>();
+        if (phaseAudio != null) {
+            Map<String, Object> config = object(phaseAudio, "phase audio");
+            requireExactFields(config, "enabled", "inhale", "retention", "exhale");
+            if (!(config.get("enabled") instanceof Boolean)) fail("phase-audio-enabled-invalid");
+            if (guidanceA == null || guidanceB == null) fail("phase-audio-guidance-required");
+            for (String role : new String[]{"inhale", "retention", "exhale"}) {
+                AudioIdentity identity = new AudioIdentity(object(config.get(role), role));
+                AssetEntry asset = entries.get("phase-audio-" + role);
+                if (asset == null || !identity.logicalDestination.equals("phase-audio/" + role + ".mp3")
+                        || identity.sourceBytes > 16777216L || !"audio/mpeg".equals(identity.mediaType)
+                        || !identity.logicalDestination.equals(asset.logicalDestination)
+                        || !identity.sourceSha256.equals(asset.sourceSha256)
+                        || identity.sourceBytes != asset.sourceBytes
+                        || !identity.mediaType.equals(asset.mediaType)) fail("phase-audio-asset-drift");
+                byte[] bytes = assets.read(asset.logicalDestination);
+                if (bytes == null || bytes.length != asset.sourceBytes
+                        || !digest(bytes).equals(asset.sourceSha256)) fail("phase-audio-bytes-drift");
+                if (Boolean.TRUE.equals(config.get("enabled"))) phaseEntries.add(new AudioEntry(role, asset));
+            }
+        } else {
+            for (String id : entries.keySet()) if (id.startsWith("phase-audio-")) fail("phase-audio-unselected-asset");
+        }
+        Path selectedDirectory = materializedDirectory(filesRoot, anchors.profileSha256);
         ArrayList<GuidanceEntry> guidanceEntries = new ArrayList<GuidanceEntry>();
+        byte[] guidanceABytes = null, guidanceBBytes = null;
         if (guidanceA != null) {
             byte[] bytes = requireGuidanceBytes(
                 assets, guidanceA, outerConditions.get("condition-a").audio.sourceSha256);
-            materializeGuidance(filesRoot, "condition-a", bytes);
+            guidanceABytes = bytes;
+            // All packaged identities are checked before publishing any selected bytes.
             guidanceEntries.add(new GuidanceEntry("condition-a", guidanceA));
         }
         if (guidanceB != null) {
             byte[] bytes = requireGuidanceBytes(
                 assets, guidanceB, outerConditions.get("condition-b").audio.sourceSha256);
-            materializeGuidance(filesRoot, "condition-b", bytes);
+            guidanceBBytes = bytes;
             guidanceEntries.add(new GuidanceEntry("condition-b", guidanceB));
         }
-        return new Result(true, providerId, inventorySha256, nonAudioProfileSha256,
+        materialize(selectedDirectory, filesRoot, profileBytes);
+        if (guidanceA != null) materializeGuidance(selectedDirectory, filesRoot, "condition-a",
+            guidanceABytes);
+        if (guidanceB != null) materializeGuidance(selectedDirectory, filesRoot, "condition-b",
+            guidanceBBytes);
+        return new Result(true, openControlDefault, providerId, inventorySha256, nonAudioProfileSha256,
             new AudioEntry[] {
             new AudioEntry("condition-a", packagedA),
             new AudioEntry("condition-b", packagedB)
-        }, guidanceEntries.toArray(new GuidanceEntry[guidanceEntries.size()]));
+        }, guidanceEntries.toArray(new GuidanceEntry[guidanceEntries.size()]),
+            phaseEntries.toArray(new AudioEntry[phaseEntries.size()]));
     }
 
     private static Map<String, ConditionIdentity> parseOuterConditions(Map<String, Object> profile) {
@@ -503,18 +569,39 @@ final class ExperimentSessionPackagedClosure {
         return bytes;
     }
 
-    private static void materialize(Path filesRoot, byte[] profileBytes) throws IOException {
-        Path directory = filesRoot.resolve(MATERIALIZED_DIRECTORY);
-        Files.createDirectories(directory);
+    static Path materializedDirectory(Path filesRoot, String profileSha256) {
+        if (filesRoot == null || !filesRoot.isAbsolute() || !filesRoot.equals(filesRoot.normalize())
+                || !sha256(profileSha256)) fail("experiment-session-materialized-path-invalid");
+        return filesRoot.resolve(MATERIALIZED_DIRECTORY).resolve(PACKAGED_CLOSURES_DIRECTORY)
+            .resolve(profileSha256);
+    }
+
+    private static void ensureDirectoryNoLinks(Path filesRoot, Path directory) throws IOException {
+        if (!directory.startsWith(filesRoot) || !Files.isDirectory(filesRoot, LinkOption.NOFOLLOW_LINKS))
+            fail("experiment-session-materialized-path-invalid");
+        Path canonicalRoot = filesRoot.toRealPath();
+        Path current = filesRoot;
+        for (Path component : filesRoot.relativize(directory)) {
+            current = current.resolve(component);
+            try { Files.createDirectory(current); }
+            catch (FileAlreadyExistsException existing) { /* Verify the existing owner directory. */ }
+            if (!Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)
+                    || !current.toRealPath().equals(canonicalRoot.resolve(filesRoot.relativize(current))))
+                fail("experiment-session-materialized-path-invalid");
+        }
+    }
+
+    private static void materialize(Path directory, Path filesRoot, byte[] profileBytes) throws IOException {
+        ensureDirectoryNoLinks(filesRoot, directory);
         Path target = directory.resolve(MATERIALIZED_FILE);
-        if (Files.exists(target)) {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             requireExistingExact(target, profileBytes);
             return;
         }
         boolean created = false;
         try {
             try (FileChannel channel = FileChannel.open(target,
-                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                 created = true;
                 ByteBuffer source = ByteBuffer.wrap(profileBytes);
                 while (source.hasRemaining()) channel.write(source);
@@ -533,24 +620,24 @@ final class ExperimentSessionPackagedClosure {
         requireExistingExact(target, profileBytes);
     }
 
-    private static void materializeGuidance(Path filesRoot, String conditionId, byte[] bytes)
+    private static void materializeGuidance(Path selectedDirectory, Path filesRoot, String conditionId, byte[] bytes)
             throws IOException {
-        Path directory = filesRoot.resolve(MATERIALIZED_DIRECTORY).resolve("breath-guidance");
-        Files.createDirectories(directory);
+        Path directory = selectedDirectory.resolve("breath-guidance");
+        ensureDirectoryNoLinks(filesRoot, directory);
         materializeExact(directory.resolve(conditionId + ".json"), bytes,
             "experiment-session-materialized-breath-guidance-drift");
     }
 
     private static void materializeExact(Path target, byte[] bytes, String driftReason)
             throws IOException {
-        if (Files.exists(target)) {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             requireExistingExact(target, bytes, driftReason);
             return;
         }
         boolean created = false;
         try {
             try (FileChannel channel = FileChannel.open(target,
-                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                 created = true;
                 ByteBuffer source = ByteBuffer.wrap(bytes);
                 while (source.hasRemaining()) channel.write(source);
@@ -575,7 +662,14 @@ final class ExperimentSessionPackagedClosure {
 
     private static void requireExistingExact(Path target, byte[] expected, String reason)
             throws IOException {
-        if (!Arrays.equals(expected, Files.readAllBytes(target))) fail(reason);
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS))
+            fail("experiment-session-materialized-path-invalid");
+        ByteBuffer actual = ByteBuffer.allocate(expected.length + 1);
+        try (FileChannel channel = FileChannel.open(target, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            while (actual.hasRemaining() && channel.read(actual) != -1) { /* Bounded exact read. */ }
+        }
+        if (actual.position() != expected.length
+                || !Arrays.equals(expected, Arrays.copyOf(actual.array(), actual.position()))) fail(reason);
     }
 
     private static String strictUtf8(byte[] bytes, String label) {

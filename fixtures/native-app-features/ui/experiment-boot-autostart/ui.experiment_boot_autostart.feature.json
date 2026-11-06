@@ -1,0 +1,26 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.experiment_boot_autostart",
+  "module_path": "ui/experiment-boot-autostart",
+  "module_kind": "own-app-system-boot-entry",
+  "settings_surface": {"authority": "rusty.quest.native_app_settings.v1", "adapter": "packaged-feature-selection"},
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit own-app boot entry for remote VR preparation, requiring an existing user-granted overlay permission and actual system boot identity. Dispatch is not foreground acceptance.",
+  "provides": ["ui.experiment_boot_autostart"],
+  "depends_on": ["ui.same_apk_soft_kiosk", "ui.experiment_session_ble_control"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": ["android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.SYSTEM_ALERT_WINDOW"],
+    "uses_features": [], "activities": [], "receivers": ["NativeRendererBootReceiver"], "services": [], "queries": []
+  },
+  "runtime_profile": {
+    "set": {"debug.rustyquest.native_renderer.experiment.preparation_mode": "remote-vr"},
+    "clear_families": [], "expected_render_modes": []
+  },
+  "build_inputs": {"env": [], "assets": [], "shaders": []},
+  "markers": {"required": [], "forbidden": []},
+  "validation": {"quick": ["pwsh -NoProfile -File tools/checks/Test-NativeRendererBootEntry.ps1 -RepoRoot ."], "standard": [], "device": []},
+  "public_private_boundary": "Only the installed own-package NativeActivity front door is available. No generic launch target, device-owner policy, hidden permission activation, app data, or experiment content is carried."
+}

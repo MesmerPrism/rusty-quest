@@ -130,7 +130,7 @@ public final class ConnectionHubAdmissionService extends Service {
                         sessionGeneration);
                 JSONObject mutationReceipt = response.optJSONObject("mutation_receipt");
                 Log.i(TAG, "status=receipt operation=" + operation.optString("operation", "runtime")
-                        + " applied=" + ConnectionHubReceiptLogProjection.applied(response)
+                        + " applied=" + ConnectionHubRuntimeEvidenceProjection.operationApplied(response)
                         + " rejection=" + ConnectionHubReceiptLogProjection.rejection(response)
                         + " outcome=" + response.optString("status", "none")
                         + " mutationReceipt=" + (mutationReceipt != null)

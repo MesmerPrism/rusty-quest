@@ -23,7 +23,7 @@ pub(super) fn write_projection_scorecard(
     frame_timings: FrameCpuTimings,
     gpu_stage_timings: GpuStageTimings,
     extent: vk::Extent2D,
-    replay: &RecordedHandReplaySummary,
+    replay: Option<&RecordedHandReplaySummary>,
     replay_visual_stats: ReplayVisualStats,
     gpu_mesh_stats: &GpuMeshReplayStats,
     hand_mesh_visual_stats: &GpuHandMeshVisualFrameSetStats,
@@ -103,7 +103,7 @@ pub(super) fn write_projection_scorecard(
         direct_projection_active && camera_output_mode.direct_hwb_forced();
     let camera_projection_path = if render_mode.uses_native_passthrough() {
         render_mode.disabled_camera_projection_path()
-    } else if render_mode.uses_solid_black_background() {
+    } else if render_mode.uses_solid_black_background(native_passthrough_requested) {
         render_mode.disabled_camera_projection_path()
     } else if remote_broker_camera_projection_active {
         "metadata-target-remote-broker-camera2-h264"
@@ -140,8 +140,9 @@ pub(super) fn write_projection_scorecard(
     let actual_guide_texture_samples = planned_guide_texture_samples;
     let native_passthrough_real_hand_mesh_visible =
         native_passthrough_requested && hand_mesh_real_hands_visible;
-    let solid_black_real_hand_mesh_visible =
-        render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible;
+    let solid_black_real_hand_mesh_visible = render_mode
+        .uses_solid_black_background(native_passthrough_requested)
+        && hand_mesh_real_hands_visible;
     let hand_mesh_visual_evidence_rects =
         replay_visual_stats.hand_mesh_screen_rect_marker_fields(projection_metadata);
     let sdf_visual_evidence_rects =
@@ -203,11 +204,15 @@ pub(super) fn write_projection_scorecard(
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
             native_passthrough_requested,
-            render_mode.uses_solid_black_background(),
+            render_mode.uses_solid_black_background(native_passthrough_requested),
             render_mode.requests_openxr_default_hand_visual(),
             native_passthrough_layer_active,
             environment_blend_mode,
-            render_mode.projection_layer_alpha_blend(),
+            crate::native_scene_composition::projection_alpha_blend(
+                render_mode.uses_scene_depth(),
+                native_passthrough_requested,
+                render_mode.projection_layer_alpha_blend(),
+            ),
             render_mode.camera_runtime_mode(),
             camera_output_mode.marker_value(),
             camera_ycbcr_mode.marker_value(),
@@ -277,7 +282,7 @@ pub(super) fn write_projection_scorecard(
             camera_projection_stats.luma_diagnostic.marker_fields(),
             guide_blur_stats.marker_fields(),
             replay_visual_proof_enabled,
-            replay.marker_fields(),
+            replay.map(|source| source.marker_fields()).unwrap_or_else(|| "recordedHandReplayReady=false recordedHandReplaySource=unselected handGeometrySelected=false".into()),
             live_hand_stats.marker_fields(),
             replay_visual_stats.frame_index,
             replay_visual_stats.timestamp_ns,
@@ -290,7 +295,7 @@ pub(super) fn write_projection_scorecard(
                 replay_visual_proof_enabled,
                 compact_hand_input_source_mode.marker_value(),
                 compact_hand_input_source_mode.selects_live_frame(),
-                compact_hand_input_source_mode.allows_recorded_fallback(),
+                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
                 if replay_visual_proof_enabled {
                     "pending-headset-screenshot"
                 } else {
@@ -340,7 +345,11 @@ pub(super) fn write_projection_scorecard(
                 observed_openxr_fps,
                 render_mode.marker_value(),
                 native_passthrough_requested,
-                render_mode.projection_layer_alpha_blend(),
+                crate::native_scene_composition::projection_alpha_blend(
+                    render_mode.uses_scene_depth(),
+                    native_passthrough_requested,
+                    render_mode.projection_layer_alpha_blend(),
+                ),
                 gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
                 gpu_stage_timings.stage_ms(GpuTimestampStage::StimulusVolumeCompute),
                 gpu_stage_timings.stage_ms(GpuTimestampStage::StimulusVolumeProjection),
@@ -362,7 +371,7 @@ pub(super) fn write_projection_scorecard(
             replay_visual_proof_enabled,
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
-            compact_hand_input_source_mode.allows_recorded_fallback(),
+            compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
             gpu_sdf_stats.marker_fields(),
             sdf_visual_evidence_rects
         ),
@@ -407,7 +416,7 @@ pub(super) fn write_projection_scorecard(
             replay_visual_proof_enabled,
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
-            compact_hand_input_source_mode.allows_recorded_fallback(),
+            compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
             hand_mesh_visual_stats.marker_fields(),
             hand_mesh_visual_evidence_rects
         ),

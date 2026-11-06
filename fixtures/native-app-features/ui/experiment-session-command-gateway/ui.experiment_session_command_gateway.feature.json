@@ -1,0 +1,51 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.experiment_session_command_gateway",
+  "module_path": "ui/experiment-session-command-gateway",
+  "module_kind": "same-apk-authenticated-command-gateway",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Optional authenticated app-owned LAN command adapter with headset-approved controller membership and native owner lifetime.",
+  "provides": [
+    "ui.experiment_session_command_gateway"
+  ],
+  "depends_on": [
+    "ui.experiment_session_ble_control"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Generic authenticated commands and receipts only; no credentials, private study data or runtime evidence are packaged."
+}

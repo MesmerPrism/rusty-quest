@@ -42,6 +42,21 @@ const PROP_CONTROL_PANEL_MODE: &str = "debug.rustyquest.native_renderer.control_
 static PACKAGED_CONTROL_PANEL_MODE: OnceLock<Option<String>> = OnceLock::new();
 
 #[cfg(target_os = "android")]
+static PACKAGED_PREPARATION_MODE: OnceLock<crate::experiment_session::PreparationMode> =
+    OnceLock::new();
+
+pub(crate) fn packaged_preparation_mode() -> crate::experiment_session::PreparationMode {
+    #[cfg(target_os = "android")]
+    {
+        PACKAGED_PREPARATION_MODE.get().copied().unwrap_or_default()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        crate::experiment_session::PreparationMode::default()
+    }
+}
+
+#[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PanelRouteReceipt<'a> {
     pub(crate) route_generation: u64,
@@ -55,6 +70,12 @@ pub(crate) fn install_packaged_control_panel_mode(
     defaults: &crate::native_app_settings::NativeAppSettingsDefaults,
 ) {
     let _ = PACKAGED_CONTROL_PANEL_MODE.set(defaults.lookup(PROP_CONTROL_PANEL_MODE));
+    let _ =
+        PACKAGED_PREPARATION_MODE.set(crate::experiment_session::PreparationMode::from_packaged(
+            defaults
+                .lookup(crate::native_renderer_properties::PROP_EXPERIMENT_PREPARATION_MODE)
+                .as_deref(),
+        ));
 }
 
 #[cfg(target_os = "android")]
@@ -65,6 +86,23 @@ pub(crate) fn packaged_control_panel_mode_is_breath_mapping(
         .lookup(PROP_CONTROL_PANEL_MODE)
         .as_deref()
         .is_some_and(|value| value == "breath-mapping")
+}
+
+/// Read the class of this actual AndroidApp owner, never an Intent-selected
+/// alias or a process-global latest Activity. The caller captures it for its
+/// own projection-loop lifetime; failure remains unknown in focus readback.
+#[cfg(target_os = "android")]
+pub(crate) fn observed_activity_class_name(
+    app: &android_activity::AndroidApp,
+) -> Result<String, String> {
+    use jni::{objects::JObject, JavaVM};
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<String> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        Ok(env.get_object_class(&activity)?.get_name(env)?.to_string())
+    })
+    .map_err(|error| format!("actual Activity class observation failed: {error}"))
 }
 
 #[cfg(target_os = "android")]
@@ -120,6 +158,7 @@ pub(crate) struct ControlPanelCommandPoller {
     last_control_receipt_generation: u64,
     last_control_receipt_revision: u64,
     last_open_token: String,
+    last_audio_phase: Option<(u64, usize)>,
     startup_open_sent: bool,
     explicit_experiment_startup: ExplicitExperimentPanelStartupGate,
 }
@@ -127,6 +166,7 @@ pub(crate) struct ControlPanelCommandPoller {
 #[cfg(target_os = "android")]
 impl ControlPanelCommandPoller {
     pub(crate) fn poll_and_apply(&mut self, app: &android_activity::AndroidApp, frame_count: u64) {
+        let mut audio_control_delivered = false;
         if let Some((_, generation, revision, event)) =
             crate::experiment_session_runtime::current_control_receipt()
         {
@@ -155,6 +195,36 @@ impl ControlPanelCommandPoller {
                     }
                 }
             }
+            // A failed audio bridge must not block unrelated panel/control polling.
+            // Only consume an edge after this exact current control revision arrived.
+            audio_control_delivered = generation > 0
+                && generation == self.last_control_receipt_generation
+                && revision == self.last_control_receipt_revision;
+        }
+        if let Some((generation, index, start, end, target)) =
+            crate::experiment_session_runtime::current_breath_phase_audio_sample()
+        {
+            if audio_control_delivered
+                && generation == self.last_control_receipt_generation
+                && self.last_control_receipt_revision > 0
+                && self.last_audio_phase != Some((generation, index))
+            {
+                if apply_breath_phase_audio_sample(
+                    app,
+                    generation,
+                    index as u64,
+                    start,
+                    end,
+                    target.official_active_time_ms,
+                    target.expected_phase_token,
+                )
+                .is_ok()
+                {
+                    self.last_audio_phase = Some((generation, index));
+                }
+            }
+        } else if let Some((generation, _)) = self.last_audio_phase.take() {
+            let _ = apply_breath_phase_audio_sample(app, generation, 0, 0, 0, 0, "inactive");
         }
         if frame_count % PANEL_COMMAND_POLL_INTERVAL_FRAMES != 0 {
             return;
@@ -251,6 +321,17 @@ impl ControlPanelCommandPoller {
         else {
             return;
         };
+        if !crate::experiment_control_mode::read().startup_panel_required(
+            packaged_preparation_mode() == crate::experiment_session::PreparationMode::RemoteVr,
+        ) {
+            match consume_remote_preparation_launch(app, epoch, openxr_session_generation) {
+                Ok(true) => crate::marker("experiment-session-panel", format!(
+                    "event=remote-vr-preparation status=launch-consumed launchEpoch={} submittedFrame={} panelOpened=false officialActiveTimeMs=0", epoch, submitted_frame)),
+                Ok(false) => crate::marker("experiment-session-panel", "event=remote-vr-preparation status=launch-rejected panelOpened=false"),
+                Err(error) => crate::marker("experiment-session-panel", format!("event=remote-vr-preparation status=authority-error reason={}", crate::sanitize(&error))),
+            }
+            return;
+        }
         crate::marker(
             "experiment-session-panel",
             format!(
@@ -323,6 +404,56 @@ fn apply_condition_audio_control_receipt(
     .map_err(|error| format!("condition-audio-control-receipt:{error}"))
 }
 
+#[cfg(target_os = "android")]
+fn apply_breath_phase_audio_sample(
+    app: &android_activity::AndroidApp,
+    generation: u64,
+    index: u64,
+    start: u64,
+    end: u64,
+    time: u64,
+    event: &str,
+) -> Result<(), String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env
+            .new_string("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity")?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        let event = env.new_string(event)?;
+        env.call_static_method(
+            class,
+            jni_str!("applyBreathPhaseAudioSample"),
+            jni_sig!("(JJJJJLjava/lang/String;)V"),
+            &[
+                JValue::Long(generation as i64),
+                JValue::Long(index as i64),
+                JValue::Long(start as i64),
+                JValue::Long(end as i64),
+                JValue::Long(time as i64),
+                JValue::Object(&event),
+            ],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("condition-audio-control-receipt:{error}"))
+}
+
 #[derive(Debug, Default)]
 struct ExplicitExperimentPanelStartupGate {
     closed: bool,
@@ -351,7 +482,7 @@ impl ExplicitExperimentPanelStartupGate {
 }
 
 #[cfg(target_os = "android")]
-fn packaged_control_panel_mode_is_breath_mapping_installed() -> bool {
+pub(crate) fn packaged_control_panel_mode_is_breath_mapping_installed() -> bool {
     PACKAGED_CONTROL_PANEL_MODE
         .get()
         .and_then(|value| value.as_deref())
@@ -770,6 +901,7 @@ fn stop_current_condition_audio_for_terminal_impl(
 }
 
 #[cfg(target_os = "android")]
+#[deny(unexpected_cfgs)]
 fn send_control_panel_intent(
     app: &android_activity::AndroidApp,
     action_name: &str,
@@ -911,6 +1043,37 @@ fn send_control_panel_intent(
         let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
         let panel_class_name = env.new_string(PANEL_CLASS_NAME)?;
         let panel_class = JClass::for_name_with_loader(env, panel_class_name, true, class_loader)?;
+        // Capture the renderer's producer generation before Java queues UI work.
+        // The selected original host pins that exact Activity/controller/producer;
+        // an uncertain or retired native route must not launch a replacement2D task.
+        let producer_generation = crate::native_mesh_ui::snapshot().generation;
+        let native_route = env
+            .call_static_method(
+                &panel_class,
+                jni_str!("routeToNativePanelFromNative"),
+                jni_sig!("(Landroid/app/Activity;Landroid/content/Intent;J)I"),
+                &[
+                    JValue::Object(&activity),
+                    JValue::Object(&intent),
+                    JValue::Long(producer_generation as i64),
+                ],
+            )?
+            .i()?;
+        if native_route != 0 {
+            crate::marker(
+                "native-panel-route",
+                format!(
+                    "status={} producerGeneration={} source=original-intent noReplay=true",
+                    if native_route > 0 {
+                        "queued"
+                    } else {
+                        "rejected"
+                    },
+                    producer_generation
+                ),
+            );
+            return Ok(());
+        }
         let desired_route = env.new_string(route.unwrap_or("experimenter"))?;
         env.call_static_method(
             panel_class,
@@ -969,6 +1132,30 @@ fn pending_experiment_launch_epoch(
     })
     .map(|epoch| if epoch == 0 { None } else { Some(epoch) })
     .map_err(|error| format!("experiment launch authority readback failed: {error}"))
+}
+
+#[cfg(target_os = "android")]
+fn consume_remote_preparation_launch(
+    app: &android_activity::AndroidApp,
+    epoch: u64,
+    openxr_session_generation: u64,
+) -> Result<bool, String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<bool> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env.call_method(&activity, jni_str!("getClassLoader"), jni_sig!("()Ljava/lang/ClassLoader;"), &[])?.l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLaunchAuthority")?;
+        let authority = JClass::for_name_with_loader(env, name, true, loader)?;
+        env.call_static_method(authority, jni_str!("consumeRemotePreparation"), jni_sig!("(Landroid/app/Activity;JJ)Z"),
+            &[JValue::Object(&activity), JValue::Long(epoch as i64), JValue::Long(openxr_session_generation as i64)])?.z()
+    }).map_err(|error| format!("remote preparation launch consumption failed: {error}"))
 }
 
 #[cfg(target_os = "android")]
@@ -1051,4 +1238,191 @@ mod startup_gate_tests {
         gate.close();
         assert_eq!(gate.after_submitted_frame(Some(31), 1), None);
     }
+}
+
+pub(crate) fn prepare_before_initialize(
+    prepare: impl FnOnce() -> Result<(), String>,
+    initialize: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    prepare()?;
+    initialize()
+}
+
+/// Canonical packaged-closure preparation; feature-OFF bridge is inert.
+/// Exceptions prevent native initialization and immersive-owner capture.
+#[cfg(target_os = "android")]
+pub(crate) fn prepare_app_owner(app: &android_activity::AndroidApp) -> Result<(), String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env.new_string(
+            "io.github.mesmerprism.rustyquest.native_renderer.NativeRendererAppStatusBridge",
+        )?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        env.call_static_method(
+            class,
+            jni_str!("prepare"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(&activity)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("app-owner-preparation-failed:{error}"))
+}
+
+#[cfg(test)]
+mod cold_owner_preparation_tests {
+    use super::prepare_before_initialize;
+    use std::cell::RefCell;
+
+    #[test]
+    fn canonical_preparation_precedes_native_initialization() {
+        let calls = RefCell::new(Vec::new());
+        assert!(prepare_before_initialize(
+            || {
+                calls.borrow_mut().push("prepare");
+                Ok(())
+            },
+            || {
+                calls.borrow_mut().push("initialize");
+                Ok(())
+            },
+        )
+        .is_ok());
+        assert_eq!(*calls.borrow(), ["prepare", "initialize"]);
+    }
+
+    #[test]
+    fn failed_preparation_does_not_enter_native_initialization() {
+        let calls = RefCell::new(Vec::new());
+        assert_eq!(
+            prepare_before_initialize(
+                || {
+                    calls.borrow_mut().push("prepare");
+                    Err("bad-closure".into())
+                },
+                || {
+                    calls.borrow_mut().push("initialize");
+                    Ok(())
+                },
+            ),
+            Err("bad-closure".into())
+        );
+        assert_eq!(*calls.borrow(), ["prepare"]);
+    }
+
+    #[test]
+    fn initialization_failure_stays_failed_after_successful_preparation() {
+        assert_eq!(
+            prepare_before_initialize(|| Ok(()), || Err("bad-materialization".into())),
+            Err("bad-materialization".into())
+        );
+    }
+}
+
+/// Application-context composition only: no Activity global reference escapes
+/// this synchronous JNI call. Java fences the exact native identity and epoch.
+#[cfg(target_os = "android")]
+pub(crate) fn notify_app_status_owner(
+    app: &android_activity::AndroidApp,
+    identity: u64,
+    epoch: u64,
+    live: bool,
+) -> Result<(), String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env.new_string(
+            "io.github.mesmerprism.rustyquest.native_renderer.NativeRendererAppStatusBridge",
+        )?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        env.call_static_method(
+            class,
+            jni_str!("changed"),
+            jni_sig!("(JJZ)V"),
+            &[
+                JValue::Long(identity as i64),
+                JValue::Long(epoch as i64),
+                JValue::Bool(live),
+            ],
+        )?;
+        Ok(())
+    })
+    .map_err(|_| "app-status-owner-jni-unavailable".to_owned())
+}
+
+/// Application-context composition only: no Activity global reference escapes
+/// this synchronous JNI call. Java fences the exact native identity and epoch.
+#[cfg(target_os = "android")]
+pub(crate) fn notify_app_status_lifecycle(
+    app: &android_activity::AndroidApp,
+    identity: u64,
+    epoch: u64,
+    resumed: bool,
+) -> Result<(), String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env.new_string(
+            "io.github.mesmerprism.rustyquest.native_renderer.NativeRendererAppStatusBridge",
+        )?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        env.call_static_method(
+            class,
+            jni_str!("lifecycle"),
+            jni_sig!("(JJZ)V"),
+            &[
+                JValue::Long(identity as i64),
+                JValue::Long(epoch as i64),
+                JValue::Bool(resumed),
+            ],
+        )?;
+        Ok(())
+    })
+    .map_err(|_| "app-status-lifecycle-jni-unavailable".to_owned())
 }

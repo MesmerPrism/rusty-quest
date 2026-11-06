@@ -64,26 +64,7 @@ impl ClockAnchor {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SourceClock {
-    AndroidElapsedRealtime,
-    JavaNanoTime,
-    PolarSensor,
-    OpenXrTime,
-    UtcUnix,
-}
-
-impl SourceClock {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::AndroidElapsedRealtime => "android-elapsed-realtime",
-            Self::JavaNanoTime => "java-nano-time",
-            Self::PolarSensor => "polar-sensor",
-            Self::OpenXrTime => "openxr-time",
-            Self::UtcUnix => "utc-unix",
-        }
-    }
-}
+pub(crate) use crate::source_clock::SourceClock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourceTimestamp {

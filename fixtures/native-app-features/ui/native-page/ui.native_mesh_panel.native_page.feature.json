@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.native_mesh_panel.native_page",
+  "module_path": "ui/native-page",
+  "module_kind": "mesh-ui",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile" },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit native vector and shaped-text presentation of the retained original form owner, with original input and system keyboard authority.",
+  "provides": ["ui.native_form_presentation"],
+  "depends_on": ["ui.native_mesh_panel.hybrid"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": { "permissions": [], "uses_features": [], "activities": [], "services": [], "queries": [] },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": ["solid-black-private-particles"] },
+  "build_inputs": {
+    "env": [{ "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_NATIVE_PAGE", "value": "true" }],
+    "assets": [],
+    "shaders": ["apps/native-renderer-android/native/shaders/native_panel_ui.vert.glsl", "apps/native-renderer-android/native/shaders/native_panel_ui.frag.glsl", "apps/native-renderer-android/native/shaders/native_panel_text.vert.glsl", "apps/native-renderer-android/native/shaders/native_panel_text.frag.glsl"]
+  },
+  "markers": { "required": ["nativePageSelected=true"], "forbidden": [] },
+  "validation": { "quick": [], "standard": [], "device": [] },
+  "public_private_boundary": "Generic platform drawing only. Existing application views, listeners, editor connection and scientific policy retain authority; transient field content is not diagnostic telemetry."
+}

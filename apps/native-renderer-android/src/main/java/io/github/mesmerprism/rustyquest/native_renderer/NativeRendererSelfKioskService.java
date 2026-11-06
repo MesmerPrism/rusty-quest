@@ -76,7 +76,7 @@ public final class NativeRendererSelfKioskService extends Service {
     @Override public void onTaskRemoved(Intent rootIntent) {
         ComponentName removed = rootIntent == null ? null : rootIntent.getComponent();
         if (removed != null && getPackageName().equals(removed.getPackageName())
-                && NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY.equals(
+                && NativeRendererActivityComponents.nativeClass(this).equals(
                     removed.getClassName())) {
             // A wearer-closing the VR task ends this app session. The panel's
             // separate task, however, is routinely removed during a valid handoff.
@@ -134,6 +134,7 @@ public final class NativeRendererSelfKioskService extends Service {
             panelFocused, immersiveFocused);
         boolean present = NativeRendererForegroundGuardPolicy.matchesDesiredOwnedSurface(
             state.presentation, observedOwnComponent);
+        if (!present || protectedState) coordinator.observeSelfPresentationAbsent(state.generation);
         String component = present ? observedOwnComponent : state.presentation.componentClass;
         // Quest can show Meta Navigator while NativeActivity stays resumed. Its own
         // window loses focus, but no lifecycle pause arrives until our return launch.
@@ -184,7 +185,9 @@ public final class NativeRendererSelfKioskService extends Service {
                 && claimed.kind != NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_PANEL) return;
         nextAttemptMs = now + 1_500L;
         try {
-            startActivity(recoveryIntent(claimed));
+            Intent recovery=recoveryIntent(claimed);
+            if(claimed.kind!=NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_PANEL
+                    ||!ControlPanelActivity.routeToNativePanel(recovery,true))startActivity(recovery);
             returnPending = true;
             readback = "return requested; awaiting own lifecycle/focus confirmation";
             Log.i(TAG, "status=self-return-requested confirmed=false attempt=" + claimed.recoveryAttempt
@@ -209,7 +212,7 @@ public final class NativeRendererSelfKioskService extends Service {
             long stamp = state.optLong("updated_at_unix_ms", 0L);
             long age = System.currentTimeMillis() - stamp;
             return "rusty.quest.native_renderer.renderer_focus_state.v1".equals(state.optString("schema"))
-                && NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY.equals(state.optString("activity"))
+                && NativeRendererActivityComponents.nativeClass(this).equals(state.optString("activity"))
                 && "FOCUSED".equals(state.optString("session_state"))
                 && state.optBoolean("submitted", false) && state.optLong("frame_count", -1L) >= 0L
                 && stamp >= generationStartedUnixMs && age >= 0L && age <= 3_000L;
@@ -218,7 +221,7 @@ public final class NativeRendererSelfKioskService extends Service {
 
     private Intent recoveryIntent(NativeRendererSoftKioskCoordinator.Action action) {
         Intent intent = new Intent(Intent.ACTION_MAIN)
-            .setComponent(new ComponentName(getPackageName(), action.presentation.componentClass))
+            .setComponent(new ComponentName(getPackageName(), action.presentation==NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE?NativeRendererActivityComponents.nativeClass(this):action.presentation.componentClass))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                 | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         if (action.presentation == NativeRendererForegroundGuardPolicy.Presentation.PANEL) {
@@ -254,6 +257,7 @@ public final class NativeRendererSelfKioskService extends Service {
             .putExtra(NativeRendererSoftKioskCoordinator.EXTRA_GUARD_GENERATION, action.generation)
             .putExtra(NativeRendererSoftKioskCoordinator.EXTRA_HOME_EPISODE, action.homeEpisodeId);
         try {
+            if(ControlPanelActivity.routeToNativePanel(intent,false)){readback="terminal save and exit delivered to original native controller; awaiting acknowledgement";return true;}
             context.startActivity(intent);
             readback = "terminal save and exit pending acknowledgement; saved=false";
             Log.i(TAG, "status=terminal-save-exit-requested admitted=false saved=false physical_home=false"

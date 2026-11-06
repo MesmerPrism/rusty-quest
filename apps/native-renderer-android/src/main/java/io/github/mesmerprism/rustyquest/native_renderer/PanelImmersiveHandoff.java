@@ -198,7 +198,7 @@ final class PanelImmersiveHandoff {
 
     private boolean launch(String source, long expectedGeneration) {
         Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.setComponent(new ComponentName(activity.getPackageName(), "android.app.NativeActivity"));
+        intent.setComponent(new ComponentName(activity.getPackageName(), NativeRendererActivityComponents.nativeClass(activity)));
         intent.addCategory("com.oculus.intent.category.VR");
         intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         synchronized (APPLICATION_LOCK) {
@@ -347,7 +347,7 @@ final class PanelImmersiveHandoff {
     private boolean isCurrent(FocusState state) {
         return state != null
             && "rusty.quest.native_renderer.renderer_focus_state.v1".equals(state.schema)
-            && "android.app.NativeActivity".equals(state.activity)
+            && NativeRendererActivityComponents.nativeClass(activity).equals(state.activity)
             && state.updatedAtUnixMs > 0L
             && Math.max(0L, System.currentTimeMillis() - state.updatedAtUnixMs) <= FRESH_MS;
     }

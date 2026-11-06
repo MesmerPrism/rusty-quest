@@ -30,6 +30,24 @@ pub(crate) struct HandAdapterEffectRequest {
 }
 
 impl HandAdapterEffectRequest {
+    pub(crate) fn from_selection(
+        hand_geometry_enabled: bool,
+        compact_live_frame_selected: bool,
+        default_hand_visual: bool,
+        graft_copies: bool,
+        real_hand_meshes: bool,
+        hand_anchor_particles: bool,
+    ) -> Self {
+        Self {
+            // Raw UI hand-pointer tracking is independent of compact rig input.
+            live_hand_input: hand_geometry_enabled && compact_live_frame_selected,
+            default_hand_visual,
+            graft_copies,
+            real_hand_meshes,
+            hand_anchor_particles,
+        }
+    }
+
     pub(crate) fn any(self) -> bool {
         self.live_hand_input
             || self.default_hand_visual
@@ -100,6 +118,65 @@ fn property_value(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excluded_geometry_does_not_request_default_compact_hand_input() {
+        use crate::native_renderer_visual_options::CompactHandInputSourceMode;
+        let disabled = resolve_activation(&HandAdapterRuntimeActivationInput {
+            enabled: false,
+            ..accepted_input()
+        });
+        for source in [
+            CompactHandInputSourceMode::Auto,
+            CompactHandInputSourceMode::LiveMeta,
+        ] {
+            let excluded = HandAdapterEffectRequest::from_selection(
+                false,
+                source.selects_live_frame(),
+                false,
+                false,
+                false,
+                false,
+            );
+            assert!(!excluded.any());
+            assert!(effects_authorized(&disabled, excluded));
+            let selected = HandAdapterEffectRequest::from_selection(
+                true,
+                source.selects_live_frame(),
+                false,
+                false,
+                false,
+                false,
+            );
+            assert!(selected.live_hand_input);
+            assert!(!effects_authorized(&disabled, selected));
+            assert!(effects_authorized(
+                &resolve_activation(&accepted_input()),
+                selected
+            ));
+        }
+    }
+
+    #[test]
+    fn excluded_compact_geometry_does_not_authorize_requested_hand_effects() {
+        let disabled = resolve_activation(&HandAdapterRuntimeActivationInput {
+            enabled: false,
+            ..accepted_input()
+        });
+        for flags in [
+            [true, false, false, false],
+            [false, true, false, false],
+            [false, false, true, false],
+            [false, false, false, true],
+        ] {
+            let request = HandAdapterEffectRequest::from_selection(
+                false, true, flags[0], flags[1], flags[2], flags[3],
+            );
+            assert!(!request.live_hand_input);
+            assert!(request.any());
+            assert!(!effects_authorized(&disabled, request));
+        }
+    }
 
     fn accepted_input() -> HandAdapterRuntimeActivationInput {
         HandAdapterRuntimeActivationInput {

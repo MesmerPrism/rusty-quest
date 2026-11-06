@@ -753,7 +753,11 @@ separate 16-byte push at offset zero: frame low/high words, particle count,
 and diagnostic schema. It must not extend the semantic push beyond Vulkan's
 guaranteed 128-byte floor. Every shared-layout push update includes compute,
 vertex, and fragment stages; sort and draw re-upload their own constants after
-the observer. `private_particle_push_abi.rs` owns host-tested sizes, offsets,
+the observer. Before each eye's sort init overwrites the shared remap, private
+and hand-anchor sorting order preceding vertex-shader reads before compute
+writes with an execution-only barrier outside render passes. Existing compute
+visibility barriers still order sort passes and subsequent vertex reads.
+`private_particle_push_abi.rs` owns host-tested sizes, offsets,
 and integer frame encoding; `gpu_private_particles.rs` owns Vulkan submission.
 The diagnostic buffer is generic: private
 compute shaders may write compact integer counters or fixed-point reductions,

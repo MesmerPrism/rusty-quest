@@ -13,6 +13,31 @@ use crate::{
 
 const OPERATION_HISTORY_CAPACITY: usize = 64;
 
+/// Packaged app policy; absence or an unknown value preserves the local panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PreparationMode {
+    #[default]
+    LocalPanel,
+    RemoteVr,
+}
+
+impl PreparationMode {
+    pub(crate) fn from_packaged(value: Option<&str>) -> Self {
+        if value == Some("remote-vr") {
+            Self::RemoteVr
+        } else {
+            Self::LocalPanel
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalPanel => "local-panel",
+            Self::RemoteVr => "remote-vr",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct OperationToken(u64);
 
@@ -226,6 +251,7 @@ pub(crate) struct CommandEnvelope {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SessionEffect {
+    ReturnToPreparation,
     RecordControl(crate::session_recording_contract::SessionEventKind),
     PrepareRecording {
         generation: u64,
@@ -283,6 +309,7 @@ struct AppliedOperation {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ExperimentSessionController {
+    preparation_mode: PreparationMode,
     phase: SessionPhase,
     control_state: ExperimentControlState,
     explicit_start: bool,
@@ -305,6 +332,37 @@ pub(crate) struct ExperimentSessionController {
 }
 
 impl ExperimentSessionController {
+    pub(crate) fn with_preparation_mode(preparation_mode: PreparationMode) -> Self {
+        Self {
+            preparation_mode,
+            presentation: if preparation_mode == PreparationMode::RemoteVr {
+                PresentationState::Unfocused
+            } else {
+                PresentationState::Experimenter
+            },
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn preparation_mode(&self) -> PreparationMode {
+        self.preparation_mode
+    }
+
+    /// Actual renderer observations in waiting do not create a recording or clock.
+    pub(crate) fn observe_preparation_presentation(
+        &mut self,
+        presentation: PresentationState,
+    ) -> bool {
+        if self.phase != SessionPhase::Idle
+            || self.preparation_mode != PreparationMode::RemoteVr
+            || self.presentation == presentation
+        {
+            return false;
+        }
+        self.presentation = presentation;
+        self.revision = self.revision.saturating_add(1);
+        true
+    }
     pub(crate) fn control_state(&self) -> ExperimentControlState {
         self.control_state
     }
@@ -322,6 +380,10 @@ impl ExperimentSessionController {
 
     pub(crate) fn active_time_ns(&self) -> u64 {
         self.active_time_ns
+    }
+
+    pub(crate) fn active_interval_started(&self) -> Option<MonotonicNanos> {
+        self.active_since
     }
 
     pub(crate) fn completion(&self) -> CompletionProgress {
@@ -539,15 +601,29 @@ impl ExperimentSessionController {
                 } else {
                     self.phase = SessionPhase::Idle;
                     self.control_state = ExperimentControlState::Idle;
-                    self.presentation = PresentationState::Experimenter;
+                    self.presentation = if self.preparation_mode == PreparationMode::RemoteVr {
+                        PresentationState::Unfocused
+                    } else {
+                        PresentationState::Experimenter
+                    };
                     self.condition = None;
                     Ok(vec![
                         SessionEffect::ResetRuntimeDefaults,
-                        SessionEffect::ShowExperimenter,
+                        if self.preparation_mode == PreparationMode::RemoteVr {
+                            SessionEffect::ReturnToPreparation
+                        } else {
+                            SessionEffect::ShowExperimenter
+                        },
                     ])
                 }
             }
             SessionCommand::PresentationChanged(presentation) => {
+                if self.phase == SessionPhase::Idle
+                    && self.preparation_mode == PreparationMode::RemoteVr
+                {
+                    self.presentation = *presentation;
+                    return Ok(Vec::new());
+                }
                 if self.phase != SessionPhase::Active {
                     return Err(CommandRejection::InvalidPhase);
                 }
@@ -628,7 +704,9 @@ impl ExperimentSessionController {
                 self.active_since = None;
                 self.phase = SessionPhase::FinalizingRestart;
                 self.control_state = ExperimentControlState::Finalizing;
-                self.presentation = PresentationState::Experimenter;
+                if self.preparation_mode == PreparationMode::LocalPanel {
+                    self.presentation = PresentationState::Experimenter;
+                }
                 effects.push(SessionEffect::FinalizeRecording {
                     generation: self.generation,
                     reason: FinalizationReason::RestartToExperimenter,
@@ -751,7 +829,9 @@ impl ExperimentSessionController {
         self.control_state = ExperimentControlState::Idle;
         if self.phase == SessionPhase::FinalizingRestart {
             self.phase = SessionPhase::Idle;
-            self.presentation = PresentationState::Experimenter;
+            if self.preparation_mode == PreparationMode::LocalPanel {
+                self.presentation = PresentationState::Experimenter;
+            }
             self.condition = None;
             self.completion = CompletionProgress::NotReached;
             self.completion_threshold_ns = 0;
@@ -761,7 +841,11 @@ impl ExperimentSessionController {
             self.audio_error = false;
             vec![
                 SessionEffect::ResetRuntimeDefaults,
-                SessionEffect::ShowExperimenter,
+                if self.preparation_mode == PreparationMode::RemoteVr {
+                    SessionEffect::ReturnToPreparation
+                } else {
+                    SessionEffect::ShowExperimenter
+                },
             ]
         } else {
             self.phase = SessionPhase::Closed;
@@ -1280,6 +1364,99 @@ mod tests {
         ));
         assert_eq!(exit.phase(), SessionPhase::Closed);
         assert_eq!(finished.effects, vec![SessionEffect::ShutdownApp]);
+    }
+
+    #[test]
+    fn remote_preparation_waits_without_a_recording_or_official_clock() {
+        let mut controller =
+            ExperimentSessionController::with_preparation_mode(PreparationMode::RemoteVr);
+        assert!(controller.observe_preparation_presentation(PresentationState::ImmersiveActive));
+        assert_eq!(controller.phase(), SessionPhase::Idle);
+        assert_eq!(controller.control_state(), ExperimentControlState::Idle);
+        assert_eq!(controller.generation(), 0);
+        assert_eq!(controller.active_time_ns(), 0);
+        assert!(
+            !controller
+                .apply(command(1, 0, 1_000_000, SessionCommand::OfficialStart))
+                .accepted
+        );
+        assert_eq!(controller.active_time_ns(), 0);
+        assert_eq!(
+            PreparationMode::from_packaged(None),
+            PreparationMode::LocalPanel
+        );
+        assert_eq!(
+            PreparationMode::from_packaged(Some("invalid")),
+            PreparationMode::LocalPanel
+        );
+        assert_eq!(
+            PreparationMode::from_packaged(Some("remote-vr")),
+            PreparationMode::RemoteVr
+        );
+    }
+
+    #[test]
+    fn remote_save_next_waits_for_durable_finalize_then_returns_without_panel() {
+        let mut controller =
+            ExperimentSessionController::with_preparation_mode(PreparationMode::RemoteVr);
+        let generation = start(&mut controller);
+        controller.apply(command(
+            3,
+            generation,
+            2,
+            SessionCommand::PresentationChanged(PresentationState::ImmersiveActive),
+        ));
+        let saving = controller.apply(command(
+            4,
+            generation,
+            10,
+            SessionCommand::RestartToExperimenter,
+        ));
+        assert_eq!(controller.phase(), SessionPhase::FinalizingRestart);
+        assert!(!saving.effects.contains(&SessionEffect::ReturnToPreparation));
+        let durable = controller.apply(command(
+            5,
+            generation,
+            11,
+            SessionCommand::RecordingFinalized {
+                durable_completion: false,
+                saved: true,
+            },
+        ));
+        assert!(durable.accepted);
+        assert_eq!(
+            durable.effects,
+            vec![
+                SessionEffect::ResetRuntimeDefaults,
+                SessionEffect::ReturnToPreparation
+            ]
+        );
+        assert_eq!(controller.phase(), SessionPhase::Idle);
+        assert_eq!(
+            controller.presentation(),
+            PresentationState::ImmersiveActive
+        );
+        assert_eq!(controller.active_time_ns(), 0);
+        assert!(controller.observe_preparation_presentation(PresentationState::Unfocused));
+        assert_eq!(controller.active_time_ns(), 0);
+        assert!(
+            !controller
+                .apply(command(6, generation, 12, SessionCommand::Resume))
+                .accepted
+        );
+    }
+
+    #[test]
+    fn remote_maintenance_exit_still_shuts_down_and_disarms() {
+        let mut controller =
+            ExperimentSessionController::with_preparation_mode(PreparationMode::RemoteVr);
+        let exit = controller.apply(command(1, 0, 0, SessionCommand::SaveAndExit));
+        assert_eq!(
+            exit.effects,
+            vec![SessionEffect::DisarmKiosk, SessionEffect::ShutdownApp]
+        );
+        assert_eq!(controller.phase(), SessionPhase::Closed);
+        assert!(!controller.observe_preparation_presentation(PresentationState::ImmersiveActive));
     }
 
     #[test]

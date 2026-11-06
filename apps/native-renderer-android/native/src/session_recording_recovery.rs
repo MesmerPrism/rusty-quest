@@ -14,7 +14,7 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    session_recording_clock::SessionTimestampKey,
+    session_recording_clock::{SessionTimestampKey, SourceClock},
     session_recording_contract::{
         ConditionKey, ExperimentIdentity, SessionCounts, SessionEventKind,
         SESSION_CHECKPOINT_SCHEMA, SESSION_FINAL_SCHEMA, SESSION_MANIFEST_SCHEMA,
@@ -63,6 +63,16 @@ pub(crate) struct RecoveryReport {
     pub(crate) sessions: Vec<RecoveredSession>,
     pub(crate) counts: SessionCounts,
     pub(crate) condition_counts: RecoveredConditionCounts,
+    pub(crate) work: RecoveryWork,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RecoveryWork {
+    pub(crate) elapsed_us: u64,
+    pub(crate) validated_sessions: u64,
+    pub(crate) reused_sessions: u64,
+    pub(crate) metadata_entries: u64,
+    pub(crate) recent_bytes_hashed: u64,
 }
 
 pub(crate) fn recover_recordings(root: &Path) -> Result<RecoveryReport, String> {
@@ -91,35 +101,51 @@ pub(crate) fn recover_recordings(root: &Path) -> Result<RecoveryReport, String> 
         let Ok(started_at) = SessionTimestampKey::parse(name) else {
             continue;
         };
-        // Bind the per-condition summary while still on the recording actor.
-        // A corrupt/unreadable manifest stays in aggregate counts only and is
-        // never guessed into a condition bucket.
-        let manifest = validate_manifest(&directory, &started_at).ok();
-        let recovered = recover_session(&directory, started_at);
-        match recovered.disposition {
-            RecoveryDisposition::FinalizedCompleted | RecoveryDisposition::InterruptedCompleted => {
-                report.counts.completed = report.counts.completed.saturating_add(1);
-            }
-            RecoveryDisposition::FinalizedEarly | RecoveryDisposition::InterruptedEarly => {
-                report.counts.stopped_early = report.counts.stopped_early.saturating_add(1);
-            }
-            RecoveryDisposition::CorruptEarly => {
-                report.counts.stopped_early = report.counts.stopped_early.saturating_add(1);
-            }
-        }
-        if recovered.error.is_some() {
-            report.counts.errors = report.counts.errors.saturating_add(1);
-        }
-        if let Some(manifest) = manifest.as_ref() {
-            add_condition_count(
-                &mut report.condition_counts,
-                &manifest.condition,
-                &recovered,
-            );
-        }
-        report.sessions.push(recovered);
+        let entry = recover_directory(&directory, started_at);
+        append_recovered(&mut report, &entry);
+        report.work.validated_sessions += 1;
     }
     Ok(report)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RecoveredEntry {
+    pub(crate) session: RecoveredSession,
+    pub(crate) condition: Option<ConditionKey>,
+}
+
+pub(crate) fn recover_directory(
+    directory: &Path,
+    started_at: SessionTimestampKey,
+) -> RecoveredEntry {
+    // Keep the existing complete manifest/terminal/stream validation. A failed
+    // manifest never acquires a guessed condition bucket or reusable identity.
+    let condition = validate_manifest(directory, &started_at)
+        .ok()
+        .map(|m| m.condition);
+    RecoveredEntry {
+        session: recover_session(directory, started_at),
+        condition,
+    }
+}
+
+pub(crate) fn append_recovered(report: &mut RecoveryReport, entry: &RecoveredEntry) {
+    let recovered = &entry.session;
+    match recovered.disposition {
+        RecoveryDisposition::FinalizedCompleted | RecoveryDisposition::InterruptedCompleted => {
+            report.counts.completed = report.counts.completed.saturating_add(1);
+        }
+        _ => {
+            report.counts.stopped_early = report.counts.stopped_early.saturating_add(1);
+        }
+    }
+    if recovered.error.is_some() {
+        report.counts.errors = report.counts.errors.saturating_add(1);
+    }
+    if let Some(condition) = entry.condition.as_ref() {
+        add_condition_count(&mut report.condition_counts, condition, recovered);
+    }
+    report.sessions.push(recovered.clone());
 }
 
 pub(crate) fn validate_recording_root_no_links(root: &Path) -> Result<(), String> {
@@ -276,6 +302,7 @@ fn recover_from_checkpoint(
 struct ValidatedManifest {
     condition: ConditionKey,
     experiment_identity: Option<ExperimentIdentity>,
+    breath_tracking_configuration: Option<Value>,
 }
 
 fn validate_manifest(
@@ -283,6 +310,13 @@ fn validate_manifest(
     started_at: &SessionTimestampKey,
 ) -> Result<ValidatedManifest, String> {
     let value = read_json(&directory.join("manifest.json"))?;
+    validate_manifest_value(&value, started_at)
+}
+
+fn validate_manifest_value(
+    value: &Value,
+    started_at: &SessionTimestampKey,
+) -> Result<ValidatedManifest, String> {
     if value.get("schema").and_then(Value::as_str) != Some(SESSION_MANIFEST_SCHEMA) {
         return Err("recording-manifest-schema-invalid".to_owned());
     }
@@ -299,9 +333,34 @@ fn validate_manifest(
         .map(|identity| ExperimentIdentity::parse_encoded(identity, &condition))
         .transpose()
         .map_err(str::to_owned)?;
+    let breath_tracking_configuration = value
+        .get("breath_tracking_configuration")
+        .filter(|v| !v.is_null())
+        .cloned();
+    if let Some(configuration) = &breath_tracking_configuration {
+        crate::breath_composition_runtime::validate_tracking_configuration(configuration)
+            .map_err(str::to_owned)?;
+        if value["clock_anchor"]["monotonic_ns"]
+            .as_u64()
+            .is_none_or(|arm_at| {
+                configuration["prepared_monotonic_ns"]
+                    .as_u64()
+                    .is_none_or(|prepared| prepared < arm_at)
+            })
+        {
+            return Err("recording-tracking-prepared-time-invalid".to_owned());
+        }
+        if experiment_identity
+            .as_ref()
+            .is_none_or(|identity| identity.breath_guidance.is_none())
+        {
+            return Err("recording-tracking-configuration-without-guidance".to_owned());
+        }
+    }
     Ok(ValidatedManifest {
         condition,
         experiment_identity,
+        breath_tracking_configuration,
     })
 }
 
@@ -359,12 +418,149 @@ fn checkpoint_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
+/// A caller-owned file custody boundary. Export supplies only its eight pinned
+/// handles; ordinary recovery keeps its directory-backed prefix/fallback policy.
+pub(crate) trait RecordingFiles {
+    fn stream_names(&self) -> Result<BTreeSet<String>, String>;
+    fn len(&self, name: &str) -> Result<u64, String>;
+    fn reader(&mut self, name: &str) -> Result<Box<dyn Read + '_>, String>;
+}
+
+/// The native inventory predicate: regular entries with UTF-8 JSONL names.
+/// Export and ordinary recovery share this filename/type interpretation.
+pub(crate) fn recording_stream_name(name: &std::ffi::OsStr, regular: bool) -> Option<String> {
+    if !regular {
+        return None;
+    }
+    name.to_str()
+        .filter(|name| name.ends_with(".jsonl"))
+        .map(str::to_owned)
+}
+
+struct DirectoryFiles<'a>(&'a Path);
+impl RecordingFiles for DirectoryFiles<'_> {
+    fn stream_names(&self) -> Result<BTreeSet<String>, String> {
+        Ok(fs::read_dir(self.0)
+            .map_err(|error| format!("recording-directory-read:{error}"))?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                entry
+                    .file_type()
+                    .ok()
+                    .and_then(|kind| recording_stream_name(&entry.file_name(), kind.is_file()))
+            })
+            .collect())
+    }
+    fn len(&self, name: &str) -> Result<u64, String> {
+        fs::metadata(self.0.join(name))
+            .map(|m| m.len())
+            .map_err(|e| format!("recording-stream-metadata:{e}"))
+    }
+    fn reader(&mut self, name: &str) -> Result<Box<dyn Read + '_>, String> {
+        File::open(self.0.join(name))
+            .map(|f| Box::new(f) as Box<dyn Read>)
+            .map_err(|e| format!("recording-stream-open:{e}"))
+    }
+}
+
+fn bounded_json(files: &mut impl RecordingFiles, name: &str, max: u64) -> Result<Value, String> {
+    let len = files.len(name)?;
+    if len > max {
+        return Err("recording-json-size-limit".into());
+    }
+    let bytes = {
+        let reader = files.reader(name)?;
+        let mut bytes = Vec::with_capacity(len as usize);
+        reader
+            .take(len + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("recording-json-read:{e}"))?;
+        bytes
+    };
+    if bytes.len() as u64 != len || files.len(name)? != len {
+        return Err("recording-json-length-changed".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|e| format!("recording-json-parse:{e}"))
+}
+
+/// Strict export eligibility over exactly the caller's pinned core files. This
+/// function has no path/checkpoint input and cannot enter interrupted recovery.
+pub(crate) fn validate_finalized_core(
+    files: &mut impl RecordingFiles,
+    started_at: SessionTimestampKey,
+    max_metadata_bytes: u64,
+    max_total_bytes: u64,
+) -> Result<(Value, RecoveredEntry), String> {
+    let mut total = 0u64;
+    for name in ["manifest.json", "final.json"]
+        .into_iter()
+        .chain(SESSION_STREAM_FILES)
+    {
+        total = total
+            .checked_add(files.len(name)?)
+            .filter(|n| *n <= max_total_bytes)
+            .ok_or("recording-core-size-limit")?;
+    }
+    let original = bounded_json(files, "manifest.json", max_metadata_bytes)?;
+    let manifest = validate_manifest_value(&original, &started_at)?;
+    let terminal = bounded_json(files, "final.json", max_metadata_bytes)?;
+    if terminal.get("saved").and_then(Value::as_bool) != Some(true) {
+        return Err("recording-final-not-saved".into());
+    }
+    let (completed, lengths, error) = validate_terminal_files(
+        &terminal,
+        SESSION_FINAL_SCHEMA,
+        &started_at,
+        &manifest,
+        files,
+        true,
+    )?;
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok((
+        original,
+        RecoveredEntry {
+            condition: Some(manifest.condition),
+            session: RecoveredSession {
+                started_at,
+                experiment_identity: manifest.experiment_identity,
+                disposition: if completed {
+                    RecoveryDisposition::FinalizedCompleted
+                } else {
+                    RecoveryDisposition::FinalizedEarly
+                },
+                durable_stream_lengths: lengths,
+                error: None,
+            },
+        },
+    ))
+}
+
 fn validate_terminal_value(
     value: &Value,
     schema: &str,
     started_at: &SessionTimestampKey,
     manifest: &ValidatedManifest,
     directory: &Path,
+) -> Result<(bool, BTreeMap<String, u64>, Option<String>), String> {
+    validate_terminal_files(
+        value,
+        schema,
+        started_at,
+        manifest,
+        &mut DirectoryFiles(directory),
+        false,
+    )
+}
+
+fn validate_terminal_files(
+    value: &Value,
+    schema: &str,
+    started_at: &SessionTimestampKey,
+    manifest: &ValidatedManifest,
+    files: &mut impl RecordingFiles,
+    exact_lengths: bool,
 ) -> Result<(bool, BTreeMap<String, u64>, Option<String>), String> {
     if value.get("schema").and_then(Value::as_str) != Some(schema) {
         return Err("recording-terminal-schema-invalid".to_owned());
@@ -413,43 +609,86 @@ fn validate_terminal_value(
     if declared_streams != expected_streams {
         return Err("recording-terminal-stream-set-invalid".to_owned());
     }
-    let actual_streams = fs::read_dir(directory)
-        .map_err(|error| format!("recording-directory-read:{error}"))?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            entry
-                .file_type()
-                .ok()
-                .filter(|file_type| file_type.is_file())
-                .and_then(|_| entry.file_name().to_str().map(str::to_owned))
-        })
-        .filter(|name| name.ends_with(".jsonl"))
-        .collect::<BTreeSet<_>>();
+    let actual_streams = files.stream_names()?;
     if actual_streams != expected_streams {
         return Err("recording-directory-stream-set-invalid".to_owned());
     }
     let mut lifecycle = LifecycleEvidence::default();
-    for (name, expected_length) in &lengths {
-        let actual_length = fs::metadata(directory.join(name))
-            .map_err(|error| format!("recording-stream-metadata:{error}"))?
-            .len();
+    if value
+        .get("breath_tracking_configuration")
+        .filter(|v| !v.is_null())
+        != manifest.breath_tracking_configuration.as_ref()
+    {
+        return Err("recording-tracking-terminal-mismatch".to_owned());
+    }
+    let initial_bias = manifest
+        .experiment_identity
+        .as_ref()
+        .map_or(0, |i| i.breath_guidance_bias_percent);
+    let mut bias_history = BiasHistory {
+        breath_tracking_configuration: manifest.breath_tracking_configuration.clone(),
+        guidance_bound: manifest
+            .experiment_identity
+            .as_ref()
+            .is_some_and(|i| i.breath_guidance.is_some()),
+        revisions: vec![(initial_bias, 0)],
+        generation: manifest
+            .breath_tracking_configuration
+            .as_ref()
+            .and_then(|v| v["experiment_generation"].as_u64()),
+        operation_ids: BTreeSet::new(),
+    };
+    // Establish the committed decision chain before validating references in breath rows.
+    for (name, expected_length) in lengths
+        .iter()
+        .filter(|(name, _)| name.as_str() == "events.jsonl")
+        .chain(
+            lengths
+                .iter()
+                .filter(|(name, _)| name.as_str() != "events.jsonl"),
+        )
+    {
+        let actual_length = files.len(name)?;
         if actual_length < *expected_length {
             return Err("recording-stream-shorter-than-durable-prefix".to_owned());
         }
-        let evidence = validate_stream_prefix(
-            &directory.join(name),
-            name,
-            *expected_length,
-            started_at,
-            &manifest.condition,
-            manifest.experiment_identity.is_some(),
-        )?;
+        if exact_lengths && actual_length != *expected_length {
+            return Err("recording-stream-length-not-exact".to_owned());
+        }
+        let evidence = if *expected_length == 0 {
+            LifecycleEvidence::default()
+        } else {
+            validate_stream_prefix(
+                files.reader(name)?,
+                name,
+                *expected_length,
+                started_at,
+                &manifest.condition,
+                manifest.experiment_identity.is_some(),
+                &mut bias_history,
+            )?
+        };
+        if exact_lengths && files.len(name)? != actual_length {
+            return Err("recording-stream-length-changed".into());
+        }
         if name == "events.jsonl" {
             lifecycle = evidence;
         }
     }
     if lifecycle.started != 1 {
         return Err("recording-lifecycle-start-invalid".to_owned());
+    }
+    if let Some(state) = value.get("breath_guidance_state") {
+        let (percent, _) = bias_history.revisions.last().expect("initial revision");
+        if state.as_object().is_none_or(|o| o.len() != 3)
+            || state["bias_percent"].as_u64() != Some(u64::from(*percent))
+            || state["bias_revision"].as_u64() != Some((bias_history.revisions.len() - 1) as u64)
+            || state["decision_status"].as_str() != Some("committed-before-application")
+        {
+            return Err("recording-bias-terminal-state-invalid".to_owned());
+        }
+    } else if bias_history.revisions.len() > 1 {
+        return Err("recording-bias-terminal-state-missing".to_owned());
     }
     if lifecycle.completed > 1 || completed != (lifecycle.completed == 1) {
         return Err("recording-lifecycle-completion-inconsistent".to_owned());
@@ -559,18 +798,74 @@ enum RowLifecycle {
     Completed,
 }
 
+struct BiasHistory {
+    breath_tracking_configuration: Option<Value>,
+    guidance_bound: bool,
+    revisions: Vec<(u8, u64)>,
+    generation: Option<u64>,
+    operation_ids: BTreeSet<String>,
+}
+
+impl BiasHistory {
+    fn observe(&mut self, row: &Value, stream: &str) -> Result<(), String> {
+        if stream == "events.jsonl" && row["event"].as_str() == Some("breath-guidance-bias-changed")
+        {
+            let revision = row["bias_revision"].as_u64().unwrap_or(0);
+            let generation = row["generation"].as_u64().unwrap_or(0);
+            let old = row["old_bias_percent"].as_u64().unwrap_or(101);
+            let new = row["new_bias_percent"].as_u64().unwrap_or(101);
+            let at = row["observed_monotonic_ns"].as_u64().unwrap_or(0);
+            let (previous, previous_at) = self.revisions.last().expect("initial revision");
+            let operation = row["operation_id"].as_str().unwrap_or("");
+            if !self.guidance_bound
+                || revision != self.revisions.len() as u64
+                || generation == 0
+                || self.generation.is_some_and(|g| g != generation)
+                || old != u64::from(*previous)
+                || new > 100
+                || at < *previous_at
+                || operation.is_empty()
+                || !self.operation_ids.insert(operation.to_owned())
+            {
+                return Err("recording-bias-history-invalid".to_owned());
+            }
+            self.generation = Some(generation);
+            self.revisions.push((new as u8, at));
+        } else if stream == "breath.jsonl" {
+            let revision = match row.get("guidance_bias_revision") {
+                Some(value) => value
+                    .as_u64()
+                    .ok_or_else(|| "recording-breath-bias-revision-invalid".to_owned())?,
+                None if self.revisions.len() == 1 => return Ok(()), // Historical immutable rows.
+                None => return Err("recording-breath-bias-revision-missing".to_owned()),
+            };
+            let (percent, committed_at) = usize::try_from(revision)
+                .ok()
+                .and_then(|index| self.revisions.get(index))
+                .ok_or_else(|| "recording-breath-bias-revision-unknown".to_owned())?;
+            let applied = row["guidance_bias_percent"].as_u64().unwrap_or(0);
+            if (applied != 0 && applied != u64::from(*percent))
+                || row["observed_monotonic_ns"].as_u64().unwrap_or(0) < *committed_at
+            {
+                return Err("recording-breath-bias-decision-mismatch".to_owned());
+            }
+        }
+        Ok(())
+    }
+}
+
 fn validate_stream_prefix(
-    path: &Path,
+    file: impl Read,
     stream_name: &str,
     expected_length: u64,
     started_at: &SessionTimestampKey,
     condition: &ConditionKey,
     strict_source_clocks: bool,
+    bias_history: &mut BiasHistory,
 ) -> Result<LifecycleEvidence, String> {
     if expected_length == 0 {
         return Ok(LifecycleEvidence::default());
     }
-    let file = File::open(path).map_err(|error| format!("recording-stream-open:{error}"))?;
     let mut reader = BufReader::new(file.take(expected_length));
     let mut consumed = 0_u64;
     let mut line = Vec::new();
@@ -597,9 +892,19 @@ fn validate_stream_prefix(
             strict_source_clocks,
         )? {
             RowLifecycle::None => {}
-            RowLifecycle::Started => lifecycle.started = lifecycle.started.saturating_add(1),
+            RowLifecycle::Started => {
+                if row
+                    .get("breath_tracking_configuration")
+                    .filter(|v| !v.is_null())
+                    != bias_history.breath_tracking_configuration.as_ref()
+                {
+                    return Err("recording-tracking-started-mismatch".to_owned());
+                }
+                lifecycle.started = lifecycle.started.saturating_add(1);
+            }
             RowLifecycle::Completed => lifecycle.completed = lifecycle.completed.saturating_add(1),
         }
+        bias_history.observe(&row, stream_name)?;
     }
     if consumed != expected_length {
         return Err("recording-stream-prefix-length-mismatch".to_owned());
@@ -664,6 +969,38 @@ fn validate_row(
                 .and_then(SessionEventKind::parse)
                 .ok_or_else(|| "recording-stream-row-field-invalid:event".to_owned())?;
             match event {
+                SessionEventKind::BiasChanged => {
+                    for field in [
+                        "generation",
+                        "old_bias_percent",
+                        "new_bias_percent",
+                        "bias_revision",
+                    ] {
+                        require_u64(object, field)?;
+                    }
+                    if object.get("decision_status").and_then(Value::as_str)
+                        != Some("committed-before-application")
+                        || object
+                            .get("operation_id")
+                            .and_then(Value::as_str)
+                            .is_none_or(|s| {
+                                s.is_empty()
+                                    || s.len() > 96
+                                    || !s
+                                        .bytes()
+                                        .all(|b| b.is_ascii_alphanumeric() || b"._-/".contains(&b))
+                            })
+                        || !matches!(
+                            object.get("operator_origin").and_then(Value::as_str),
+                            Some(
+                                "shell-experiment-operator-v1" | "ble-session-v2" | "ui-session-v2"
+                            )
+                        )
+                    {
+                        return Err("recording-bias-event-invalid".to_owned());
+                    }
+                    RowLifecycle::None
+                }
                 SessionEventKind::Started => RowLifecycle::Started,
                 SessionEventKind::CompletionReached => RowLifecycle::Completed,
                 _ => RowLifecycle::None,
@@ -723,6 +1060,52 @@ fn validate_row(
             RowLifecycle::None
         }
         "breath" => {
+            if object.contains_key("assessment_source") {
+                require_enum(object, "assessment_source", &["controller", "polar-acc"])?;
+                require_enum(
+                    object,
+                    "tracking_status",
+                    &[
+                        "disabled",
+                        "calibrating",
+                        "valid",
+                        "missing",
+                        "stale",
+                        "malformed",
+                        "out-of-order",
+                        "rejected-motion",
+                        "rejected-rotation",
+                    ],
+                )?;
+                if row["sampled_clock"] != SourceClock::OpenXrTime.as_str()
+                    || row["observed_source_clock"] != SourceClock::OpenXrTime.as_str()
+                {
+                    return Err("recording-assessment-source-clock-mismatch".to_owned());
+                }
+                if row["assessment_source"] == "polar-acc"
+                    && row["tracking_status"] == "valid"
+                    && !object.contains_key("polar_source_provenance")
+                {
+                    return Err("recording-valid-polar-provenance-missing".to_owned());
+                }
+            } else if object.contains_key("tracking_status") {
+                return Err("recording-tracking-status-source-missing".to_owned());
+            }
+            if let Some(provenance) = object.get("polar_source_provenance") {
+                if row["assessment_source"] != "polar-acc" {
+                    return Err("recording-polar-provenance-source-mismatch".to_owned());
+                }
+                crate::session_recording_contract::validate_breath_polar_provenance(
+                    provenance,
+                    row["sampled_time_ns"]
+                        .as_u64()
+                        .ok_or("recording-polar-sampled-time-invalid")?,
+                    row["observed_source_time_ns"]
+                        .as_u64()
+                        .ok_or("recording-polar-observed-time-invalid")?,
+                )
+                .map_err(str::to_owned)?;
+            }
             for field in ["source_sequence", "sampled_time_ns", "settings_revision"] {
                 require_u64(object, field)?;
             }
@@ -999,7 +1382,7 @@ mod tests {
         let started_at = SessionTimestampKey::parse("utc-ns-01725000000000000000").unwrap();
         let condition = ConditionKey::parse("condition-a").unwrap();
         for (sequence, event) in SessionEventKind::ALL.into_iter().enumerate() {
-            let row = json!({
+            let mut row = json!({
                 "schema": SESSION_ROW_SCHEMA,
                 "record_sequence": sequence as u64,
                 "kind": "event",
@@ -1009,6 +1392,16 @@ mod tests {
                 "observed_utc_ns": sequence as u64 + 2,
                 "event": event.as_str(),
             });
+            if event == SessionEventKind::BiasChanged {
+                assert!(validate_row(&row, "events.jsonl", &started_at, &condition, true).is_err());
+                row["generation"] = serde_json::json!(1);
+                row["bias_revision"] = serde_json::json!(1);
+                row["old_bias_percent"] = serde_json::json!(0);
+                row["new_bias_percent"] = serde_json::json!(60);
+                row["operation_id"] = serde_json::json!("canonical-bias-change");
+                row["operator_origin"] = serde_json::json!("ui-session-v2");
+                row["decision_status"] = serde_json::json!("committed-before-application");
+            }
             let expected = match event {
                 SessionEventKind::Started => RowLifecycle::Started,
                 SessionEventKind::CompletionReached => RowLifecycle::Completed,

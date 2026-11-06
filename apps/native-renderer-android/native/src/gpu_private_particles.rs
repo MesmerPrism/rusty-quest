@@ -8,6 +8,10 @@ use std::{
 
 use ash::vk;
 
+#[cfg(feature = "showcase")]
+#[path = "private_particle_material_overlay.rs"]
+mod material_overlay;
+
 use crate::breath_composition_driver::{BreathCompositionDriver, BreathCompositionDriverSettings};
 use crate::gpu_hand_mesh_visual::HandMeshVisualEyeProjection;
 use crate::manifold_scalar_driver_bridge::{
@@ -73,9 +77,11 @@ use crate::private_particle_breath_state_driver::{
 use crate::private_particle_heartbeat_pulse_adapter::{
     PrivateParticleHeartbeatPulseAdapter, PrivateParticleHeartbeatPulseAdapterSettings,
 };
+use crate::private_particle_orbit_settings::{OrbitDistanceSettings, OrbitDistanceSource};
 use crate::private_particle_push_abi::{
     private_particle_diagnostic_push, PrivateParticlePush, PrivateParticleSortPush,
 };
+use crate::private_particle_tracer_budget::tracer_budget;
 use crate::private_particle_world_basis::PrivateParticleFrameEyeProjections;
 use crate::{
     native_renderer_diagnostics_contract::{
@@ -108,7 +114,8 @@ const PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS: usize =
     PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT: usize = 3;
 const PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS: usize = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
-    + PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT;
+    + PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
+    + if cfg!(feature = "showcase") { 2 } else { 0 };
 const PRIVATE_PARTICLE_DIAGNOSTIC_WORDS: usize = 24;
 const PRIVATE_PARTICLE_DIAGNOSTIC_BYTES: vk::DeviceSize =
     (PRIVATE_PARTICLE_DIAGNOSTIC_WORDS * mem::size_of::<i32>()) as vk::DeviceSize;
@@ -183,6 +190,7 @@ struct PrivateParticleRuntimeSettings {
     particle_size_sphere_percent: f32,
     particle_size_oscillation_percent: f32,
     particle_size_parameter_source: &'static str,
+    orbit_distance: OrbitDistanceSettings,
     driver0_value01: f32,
     driver1_value01: f32,
     driver_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
@@ -242,6 +250,7 @@ pub(crate) struct GpuPrivateParticlePanelSettings {
     pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
     pub(crate) material_override_enabled: bool,
     pub(crate) polar_rr_orbit_boost_enabled: bool,
+    pub(crate) orbit_distance: OrbitDistanceSettings,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -278,6 +287,7 @@ pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
     pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
     pub(crate) material_parameter_source: &'static str,
     pub(crate) polar_rr_orbit_boost_enabled: bool,
+    pub(crate) orbit_distance: OrbitDistanceSettings,
     pub(crate) heartbeat_pulse_parameter_source: &'static str,
 }
 
@@ -345,6 +355,8 @@ impl GpuPrivateParticlePanelSettings {
             self.material_preset = newer.material_preset;
             self.material_override_enabled = newer.material_override_enabled;
         }
+        self.orbit_distance
+            .apply_mask(newer.orbit_distance, mask.orbit_distance);
         if mask.polar_rr_orbit_boost {
             self.polar_rr_orbit_boost_enabled = newer.polar_rr_orbit_boost_enabled;
         }
@@ -450,6 +462,7 @@ impl GpuPrivateParticlePanelSettings {
             material_preset: self.material_preset,
             material_override_enabled: self.material_override_enabled,
             polar_rr_orbit_boost_enabled: self.polar_rr_orbit_boost_enabled,
+            orbit_distance: self.orbit_distance,
         }
     }
 }
@@ -512,6 +525,63 @@ fn generated_private_particle_material_default() -> Option<PrivateParticleMateri
 }
 
 impl PrivateParticleRuntimeSettings {
+    #[cfg(feature = "showcase")]
+    fn showcase_material_state(&self) -> material_overlay::Material {
+        material_overlay::Material {
+            coefficients: [
+                self.transparency_opacity,
+                self.transparency_output_alpha_scale,
+                self.transparency_depth_suppression_strength,
+                self.transparency_rgb_alpha_coupling,
+                self.color_facing_attenuation_strength,
+            ],
+            premultiplied: self.transparency_blend_mode
+                == PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver,
+        }
+    }
+
+    #[cfg(feature = "showcase")]
+    fn apply_showcase_explicit_material(&mut self, panel: GpuPrivateParticlePanelSettings) {
+        let panel = panel.clamped();
+        let mask = panel.update_mask;
+        let selected = [
+            mask.transparency_opacity,
+            mask.transparency_output_alpha_scale,
+            mask.transparency_depth_suppression_strength,
+            mask.transparency_rgb_alpha_coupling,
+            mask.color_facing_attenuation_strength,
+        ];
+        let effective = material_overlay::resolve(
+            true,
+            self.showcase_material_state(),
+            [
+                panel.transparency_opacity,
+                panel.transparency_output_alpha_scale,
+                panel.transparency_depth_suppression_strength,
+                panel.transparency_rgb_alpha_coupling,
+                panel.color_facing_attenuation_strength,
+            ],
+            selected,
+        );
+        [
+            self.transparency_opacity,
+            self.transparency_output_alpha_scale,
+            self.transparency_depth_suppression_strength,
+            self.transparency_rgb_alpha_coupling,
+            self.color_facing_attenuation_strength,
+        ] = effective.coefficients;
+        if selected[..4].iter().any(|selected| *selected) {
+            self.transparency_parameter_source = "showcase-profile-explicit";
+        }
+        if selected[4] {
+            self.color_parameter_source = "showcase-profile-explicit";
+        }
+        if selected.iter().any(|selected| *selected) {
+            self.material_parameter_source = "showcase-profile-template-and-explicit-coefficients";
+        }
+        // No blend, template, driver/event-bank or other visual field is replayed.
+    }
+
     fn from_generated_defaults() -> Self {
         let driver_values01 = private_particle_driver_values01_from_generated();
         let visual_scale = PRIVATE_PARTICLE_VISUAL_SCALE.clamp(0.05, 1.0);
@@ -542,6 +612,7 @@ impl PrivateParticleRuntimeSettings {
                 legacy_size_oscillation
             },
             particle_size_parameter_source: PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE,
+            orbit_distance: OrbitDistanceSettings::defaults(PRIVATE_PARTICLE_DEFAULT_ORBIT_ENABLED),
             driver0_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[0].clamp(0.0, 1.0),
             driver1_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[1].clamp(0.0, 1.0),
             driver_values01,
@@ -699,6 +770,7 @@ impl PrivateParticleRuntimeSettings {
                 legacy_size_oscillation
             },
             particle_size_parameter_source: PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE,
+            orbit_distance: OrbitDistanceSettings::defaults(PRIVATE_PARTICLE_DEFAULT_ORBIT_ENABLED),
             driver0_value01,
             driver1_value01,
             driver_values01,
@@ -768,6 +840,15 @@ impl PrivateParticleRuntimeSettings {
     ) {
         let panel = panel.clamped();
         let mask = panel.update_mask;
+        self.orbit_distance
+            .apply_mask(panel.orbit_distance, mask.orbit_distance);
+        if mask.polar_rr_orbit_boost && !mask.orbit_distance[0] && self.orbit_distance.enabled {
+            self.orbit_distance.source = if panel.polar_rr_orbit_boost_enabled {
+                OrbitDistanceSource::PolarHeartbeat
+            } else {
+                OrbitDistanceSource::StaticMinimum
+            };
+        }
         if mask.visual_scale {
             self.visual_scale = panel.visual_scale;
             self.visual_parameter_source = "same-apk-panel-live";
@@ -879,6 +960,14 @@ impl PrivateParticleRuntimeSettings {
         let Some(enabled) = requested else {
             return;
         };
+        if self.orbit_distance.enabled {
+            self.orbit_distance.source = if enabled {
+                OrbitDistanceSource::PolarHeartbeat
+            } else {
+                OrbitDistanceSource::StaticMinimum
+            };
+            return;
+        }
         self.driver_control_modes[5] = if enabled {
             PANEL_DRIVER_MODE_PRIVATE_HEARTBEAT_ORBIT
         } else {
@@ -1333,6 +1422,49 @@ pub(crate) struct GpuPrivateParticleFrameStats {
 }
 
 impl GpuPrivateParticleFrameStats {
+    /// Actual consuming-frame values. The caller owns the successful xrEndFrame
+    /// acknowledgement and associates this projection with that frame's revision.
+    #[cfg(feature = "showcase")]
+    pub(crate) fn showcase_material_projection(&self) -> serde_json::Value {
+        let settings = self.runtime_settings;
+        let actual = settings.showcase_material_state();
+        let (template, canonical) = match settings.material_preset {
+            Some(preset) => {
+                let parameters = preset.parameters();
+                (
+                    preset.marker_name(),
+                    material_overlay::Material {
+                        coefficients: [
+                            parameters.opacity,
+                            parameters.output_alpha_scale,
+                            parameters.depth_suppression_strength,
+                            parameters.rgb_alpha_coupling,
+                            parameters.facing_attenuation_strength,
+                        ],
+                        premultiplied: parameters.uses_premultiplied_alpha_over,
+                    },
+                )
+            }
+            None => (
+                "packaged-default",
+                PrivateParticleRuntimeSettings::from_generated_defaults().showcase_material_state(),
+            ),
+        };
+        serde_json::json!({
+            "template": template,
+            "modified": material_overlay::modified(actual, canonical),
+            "blend": settings.transparency_blend_mode.marker_name(),
+            "transparency": {
+                "opacity": settings.transparency_opacity,
+                "output_alpha_scale": settings.transparency_output_alpha_scale,
+                "depth_suppression_strength": settings.transparency_depth_suppression_strength,
+                "rgb_alpha_coupling": settings.transparency_rgb_alpha_coupling,
+            },
+            "color": {"facing_attenuation_strength": settings.color_facing_attenuation_strength},
+            "source": "submitted-private-particle-frame",
+        })
+    }
+
     pub(crate) fn unavailable() -> Self {
         Self::default()
     }
@@ -1492,7 +1624,7 @@ impl GpuPrivateParticleFrameStats {
 fn private_particle_driver_bank_marker_fields(
     runtime_settings: PrivateParticleRuntimeSettings,
 ) -> String {
-    format!(
+    let bank = format!(
         "privateParticleDriverBankSlotCount={} privateParticleDriverBankStorageBinding=8 privateParticleDriver2Value01={:.3} privateParticleDriver3Value01={:.3} privateParticleDriver4Value01={:.3} privateParticleDriver5Value01={:.3} privateParticleDriver6Value01={:.3} privateParticleDriver7Value01={:.3}",
         PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT,
         runtime_settings.driver_bank_values01[2],
@@ -1501,7 +1633,8 @@ fn private_particle_driver_bank_marker_fields(
         runtime_settings.driver_bank_values01[5],
         runtime_settings.driver_bank_values01[6],
         runtime_settings.driver_bank_values01[7],
-    )
+    );
+    format!("{bank} {}", runtime_settings.orbit_distance.marker_fields())
 }
 
 fn private_particle_size_limits(runtime_settings: PrivateParticleRuntimeSettings) -> (f32, f32) {
@@ -1618,6 +1751,7 @@ mod auxiliary_compute_contract_tests {
 
 fn private_particle_driver_bank_rows(
     runtime_settings: PrivateParticleRuntimeSettings,
+    #[cfg(feature = "showcase")] extension: Option<[[f32; 4]; 2]>,
 ) -> [[f32; 4]; PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS] {
     let mut rows = [[0.0; 4]; PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS];
     for slot in 0..PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT {
@@ -1655,7 +1789,18 @@ fn private_particle_driver_bank_rows(
                 runtime_settings.particle_size_oscillation_percent,
             ];
         }
+        if slot == 5 {
+            rows[control_row + 2] = runtime_settings.orbit_distance.aux_row();
+        }
     }
+    #[cfg(feature = "showcase")]
+    {
+        if let Some(extension) = extension {
+            rows[26] = extension[0];
+            rows[27] = extension[1];
+        }
+    }
+
     rows
 }
 
@@ -1783,10 +1928,13 @@ impl GpuPrivateParticleRenderer {
         }
         let tracer_max_count =
             PRIVATE_PARTICLE_TRACER_MAX_COUNT.min((u32::MAX - particle_count) as usize) as u32;
-        let tracer_state_slots_per_oscillator = tracer_max_count / particle_count;
-        let tracer_draw_slots_per_oscillator = (PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR
-            .min(u32::MAX as usize) as u32)
-            .min(tracer_state_slots_per_oscillator);
+        // Allocate output/sort capacity for every resident tracer state slot.
+        // The runtime startup draw request may be zero and can increase later.
+        let (tracer_draw_slots_per_oscillator, _) = tracer_budget(
+            particle_count,
+            tracer_max_count,
+            PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR.min(u32::MAX as usize) as u32,
+        );
         let tracer_draw_count = particle_count
             .checked_mul(tracer_draw_slots_per_oscillator)
             .ok_or_else(|| {
@@ -1915,7 +2063,11 @@ impl GpuPrivateParticleRenderer {
             PrivateParticleHeartbeatPulseAdapter::new(heartbeat_pulse_adapter_settings);
         let breath_composition_driver =
             BreathCompositionDriver::new(breath_composition_driver_settings);
-        let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
+        let driver_bank_rows = private_particle_driver_bank_rows(
+            runtime_settings,
+            #[cfg(feature = "showcase")]
+            None,
+        );
         let driver_bank_buffer = match OwnedBuffer::new_with_data(
             device,
             memory_properties,
@@ -2878,9 +3030,14 @@ impl GpuPrivateParticleRenderer {
         dt_seconds: f32,
         frame_count: u64,
     ) {
+        #[cfg(feature = "showcase")]
+        {
+            return;
+        }
         let settings = self.breath_composition_driver.settings();
         self.breath_composition_driver
             .update_frame(settings, snapshot, observed_at, dt_seconds);
+        #[cfg(not(feature = "showcase"))]
         crate::breath_capture::record_driver_apply(
             frame_count,
             observed_at.get(),
@@ -2915,21 +3072,40 @@ impl GpuPrivateParticleRenderer {
         world_anchor_forward_axis: [f32; 4],
         frame_count: u64,
         mesh_ui_animation: Option<(u64, bool, f32)>,
+        #[cfg(feature = "showcase")] showcase_frame: Option<
+            &crate::showcase_runtime::PreparedVisualFrame,
+        >,
     ) -> GpuPrivateParticleFrameStats {
         let mut runtime_settings = self.runtime_settings(frame_count);
+        #[cfg(feature = "showcase")]
+        if let Some(frame) = showcase_frame {
+            let progress = frame.progress();
+            runtime_settings.driver0_value01 = progress;
+            runtime_settings.driver_values01[0] = progress;
+            runtime_settings.driver_bank_values01[0] = progress;
+        }
         if let Some((_, _, scale_factor)) = mesh_ui_animation {
             runtime_settings.visual_scale *= scale_factor.clamp(0.5, 1.5);
             runtime_settings.visual_parameter_source = "native-mesh-ui";
         }
         let mut world_center_scale = world_center_scale;
+        #[cfg(feature = "showcase")]
+        if let Some(frame) = showcase_frame {
+            world_center_scale[3] = frame.radius_m();
+        }
         let mut world_anchor_scale_parameter_source = world_anchor_scale_parameter_source;
+        #[cfg(not(feature = "showcase"))]
         if let Some(radius_m) = crate::experiment_session_runtime::active_radius_m_for_progress(
             runtime_settings.driver0_value01,
         ) {
             world_center_scale[3] = radius_m;
             world_anchor_scale_parameter_source = "experiment-session-driver-slot-0";
         }
-        let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
+        let driver_bank_rows = private_particle_driver_bank_rows(
+            runtime_settings,
+            #[cfg(feature = "showcase")]
+            showcase_frame.map(|frame| frame.frame_extension()),
+        );
         if driver_bank_rows != self.driver_bank_uploaded_rows {
             match self.driver_bank_buffer.write_data(
                 device,
@@ -2948,6 +3124,9 @@ impl GpuPrivateParticleRenderer {
                             crate::sanitize(&error)
                         ),
                     );
+                    // Never draw new CPU settings against an old uploaded bank.
+                    #[cfg(feature = "showcase")]
+                    return GpuPrivateParticleFrameStats::unavailable();
                 }
             }
         }
@@ -3298,6 +3477,7 @@ impl GpuPrivateParticleRenderer {
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
             diagnostic_snapshot: self.last_diagnostic_snapshot,
         };
+        #[cfg(not(feature = "showcase"))]
         if let Some(observed_at_ns) =
             crate::experiment_session_runtime::current_elapsed_realtime_ns()
         {
@@ -3377,13 +3557,23 @@ impl GpuPrivateParticleRenderer {
         frame_count: u64,
         revision: i64,
     ) -> GpuPrivateParticlePanelEffectiveSettings {
-        let settings = settings.clamped();
+        let mut settings = settings.clamped();
+        settings.orbit_distance.normalize_legacy_source(
+            &mut settings.update_mask.orbit_distance,
+            settings
+                .update_mask
+                .polar_rr_orbit_boost
+                .then_some(settings.polar_rr_orbit_boost_enabled),
+            self.runtime_settings.orbit_distance.enabled || settings.orbit_distance.enabled,
+        );
         if revision > 0 {
             self.settings_revision = revision as u64;
         }
-        if settings.update_mask.polar_rr_orbit_boost {
+        if settings.update_mask.polar_rr_orbit_boost || settings.update_mask.orbit_distance[0] {
             self.heartbeat_orbit_request_state
                 .clear_request_for_panel_authority();
+        }
+        if settings.update_mask.polar_rr_orbit_boost && !settings.update_mask.orbit_distance[0] {
             let heartbeat_settings =
                 PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(
                     settings.polar_rr_orbit_boost_enabled,
@@ -3414,6 +3604,7 @@ impl GpuPrivateParticleRenderer {
             particle_size_min,
             particle_size_max,
             particle_size_parameter_source: runtime_settings.particle_size_parameter_source,
+            orbit_distance: runtime_settings.orbit_distance,
             driver_values01: runtime_settings.driver_values01,
             driver_control_modes: runtime_settings.driver_control_modes,
             driver_control_source_slots: runtime_settings.driver_control_source_slots,
@@ -3659,8 +3850,11 @@ impl GpuPrivateParticleRenderer {
                 driver_parameter_source = "breath-composition-closed-world";
                 self.emit_breath_composition_driver_connected_marker(frame_count);
             }
+            #[cfg(not(feature = "showcase"))]
             let lsl_inlet_active_count =
                 crate::lsl_panel_runtime::apply_inlet_driver_values(&mut next.driver_values01);
+            #[cfg(feature = "showcase")]
+            let lsl_inlet_active_count = 0;
             if lsl_inlet_active_count > 0 {
                 driver_parameter_source = "lsl-float32-inlet";
             }
@@ -3678,6 +3872,7 @@ impl GpuPrivateParticleRenderer {
                 next.apply_panel_override(panel_override, self.driver_source_values01);
             }
             next.apply_heartbeat_orbit_control(self.heartbeat_orbit_control());
+            self.configure_orbit_adapter(&mut next);
             if let Some(scale) = self.visual_scale_request_state.active_scale() {
                 next.visual_scale = scale;
                 next.visual_parameter_source = "runtime-fenced-visual-scale-request-v1";
@@ -3687,6 +3882,8 @@ impl GpuPrivateParticleRenderer {
             }
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_material_override(panel_override, material_defaults);
+                #[cfg(feature = "showcase")]
+                next.apply_showcase_explicit_material(panel_override);
             }
             if let Some(preset) = self.render_experiment_request_state.active_preset() {
                 next.apply_render_experiment_preset(preset);
@@ -3748,6 +3945,7 @@ impl GpuPrivateParticleRenderer {
                 driver_parameter_source = "breath-composition-closed-world";
                 self.emit_breath_composition_driver_connected_marker(frame_count);
             }
+            #[cfg(not(feature = "showcase"))]
             if crate::lsl_panel_runtime::apply_inlet_driver_values(&mut self.driver_source_values01)
                 > 0
             {
@@ -3764,14 +3962,21 @@ impl GpuPrivateParticleRenderer {
             next.apply_driver_source_values(self.driver_source_values01, driver_parameter_source);
             if let Some(panel_override) = self.panel_settings_override {
                 next.apply_panel_override(panel_override, self.driver_source_values01);
+                #[cfg(feature = "showcase")]
+                next.apply_showcase_explicit_material(panel_override);
             }
             next.apply_heartbeat_orbit_control(self.heartbeat_orbit_control());
+            self.configure_orbit_adapter(&mut next);
             self.runtime_settings = next;
         }
         self.runtime_settings
     }
 
     fn heartbeat_orbit_enabled(&self) -> bool {
+        if self.runtime_settings.orbit_distance.enabled {
+            return self.runtime_settings.orbit_distance.source
+                == OrbitDistanceSource::PolarHeartbeat;
+        }
         self.heartbeat_orbit_request_state
             .active_override()
             .unwrap_or_else(|| {
@@ -3785,9 +3990,47 @@ impl GpuPrivateParticleRenderer {
     }
 
     fn heartbeat_orbit_control(&self) -> Option<bool> {
+        if self.runtime_settings.orbit_distance.enabled {
+            return self.heartbeat_orbit_request_state.active_override();
+        }
         self.heartbeat_orbit_request_state
             .active_override()
             .or_else(|| self.heartbeat_orbit_enabled().then_some(true))
+    }
+
+    fn configure_orbit_adapter(&mut self, next: &mut PrivateParticleRuntimeSettings) {
+        let orbit = next.orbit_distance;
+        if !orbit.enabled {
+            return;
+        }
+        let settings = match orbit.source {
+            OrbitDistanceSource::PolarHeartbeat => {
+                PrivateParticleHeartbeatPulseAdapterSettings::panel_polar_rr_orbit_boost(true)
+            }
+            OrbitDistanceSource::SyntheticHeartbeat => {
+                PrivateParticleHeartbeatPulseAdapterSettings::panel_synthetic_orbit_boost(
+                    orbit.synthetic_bpm,
+                )
+            }
+            _ => PrivateParticleHeartbeatPulseAdapterSettings::disabled(),
+        };
+        if self.heartbeat_pulse_adapter.settings() != settings {
+            self.heartbeat_pulse_adapter.reconfigure(settings);
+            self.heartbeat_pulse_adapter_connected_marker_emitted = false;
+            // The new source starts with no event from the retired producer.
+            next.driver_values01[5] = 0.0;
+            next.driver_bank_values01[5] = 0.0;
+            self.driver_source_values01[5] = 0.0;
+        }
+        orbit.protect_event_bank(&self.heartbeat_pulse_adapter, &mut next.driver_values01);
+        orbit.protect_event_bank(
+            &self.heartbeat_pulse_adapter,
+            &mut next.driver_bank_values01,
+        );
+        orbit.protect_event_bank(
+            &self.heartbeat_pulse_adapter,
+            &mut self.driver_source_values01,
+        );
     }
 
     unsafe fn record_sort_frame(
@@ -3820,6 +4063,17 @@ impl GpuPrivateParticleRenderer {
             ],
             params2: [eye_forward[0], eye_forward[1], eye_forward[2], 0.0],
         };
+        // The previous eye's vertex shader may still read the shared sort remap.
+        // Order those reads before init overwrites it; this WAR needs execution only.
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[],
+        );
         self.dispatch_sort_pass(device, cmd, &init_push, group_count);
         self.record_sort_barrier(device, cmd);
 
@@ -6739,6 +6993,7 @@ mod material_request_tests {
             material_preset,
             material_override_enabled,
             polar_rr_orbit_boost_enabled,
+            orbit_distance: OrbitDistanceSettings::defaults(false),
         }
     }
 
@@ -6780,7 +7035,11 @@ mod material_request_tests {
         settings.apply_panel_override(panel, [0.0; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT]);
 
         assert_eq!(private_particle_size_limits(settings), (3.0, 12.0));
-        let rows = private_particle_driver_bank_rows(settings);
+        let rows = private_particle_driver_bank_rows(
+            settings,
+            #[cfg(feature = "showcase")]
+            None,
+        );
         let size_aux_row = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
             + 2 * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
             + 2;
@@ -6862,7 +7121,11 @@ mod material_request_tests {
     #[test]
     fn absent_particle_size_override_keeps_reserved_aux_row_neutral() {
         let settings = PrivateParticleRuntimeSettings::from_generated_defaults();
-        let rows = private_particle_driver_bank_rows(settings);
+        let rows = private_particle_driver_bank_rows(
+            settings,
+            #[cfg(feature = "showcase")]
+            None,
+        );
         let size_aux_row = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
             + 2 * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT
             + 2;

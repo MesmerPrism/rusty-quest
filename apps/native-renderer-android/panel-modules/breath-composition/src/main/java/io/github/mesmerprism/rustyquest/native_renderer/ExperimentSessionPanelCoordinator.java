@@ -8,6 +8,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * object never starts a session or writes settings.
  */
 final class ExperimentSessionPanelCoordinator {
+    interface StatusLifetime { void refresh(); void close(); }
+
     static final String SCHEMA = "rusty.quest.experiment_session.command.v1";
     static final String CONDITION_ONE = "condition-a";
     static final String CONDITION_TWO = "condition-b";
@@ -37,10 +39,29 @@ final class ExperimentSessionPanelCoordinator {
         }
     }
 
+    // Raw fields retain JSON type information: strings/floats are not generation evidence.
+    // Focus and presentation do not determine whether the writer already saved a recording.
+    static boolean restartFinalizationMatches(Object phase, Object routeAction,
+            Object preparationMode, Object operationId, Object finalizedOperationId,
+            Object generation, Object finalizedGeneration) {
+        if (!"idle".equals(phase)
+                || !("show-experimenter".equals(routeAction)
+                    || ("none".equals(routeAction) && "remote-vr".equals(preparationMode)))
+                || !(operationId instanceof String) || ((String) operationId).isEmpty()
+                || !operationId.equals(finalizedOperationId)
+                || (!(generation instanceof Integer) && !(generation instanceof Long))
+                || (!(finalizedGeneration instanceof Integer) && !(finalizedGeneration instanceof Long))) {
+            return false;
+        }
+        long current = ((Number) generation).longValue();
+        return current > 0L && current == ((Number) finalizedGeneration).longValue();
+    }
+
     static final class NativeReceipt {
         final String operationId;
         final boolean accepted;
         final boolean durable;
+        final boolean remotePreparationFinalization;
         final long generation;
         final long revision;
         final String phase;
@@ -168,9 +189,49 @@ final class ExperimentSessionPanelCoordinator {
             long routeActionRevision,
             String detail
         ) {
+            this(
+                operationId, accepted, durable, generation, revision, phase,
+                controlState, activeCondition, recording, completion, activeTimeMs, recovery,
+                storageStatus, kioskRequested, completedOne, completedTwo, stoppedEarlyOne,
+                stoppedEarlyTwo, perConditionCountsAvailable, countsAvailable, countsInvalid,
+                completedTotal, stoppedEarlyTotal, errors, routeAction, routeActionRevision, detail, false
+            );
+        }
+
+        NativeReceipt(
+            String operationId,
+            boolean accepted,
+            boolean durable,
+            long generation,
+            long revision,
+            String phase,
+            String controlState,
+            String activeCondition,
+            boolean recording,
+            String completion,
+            long activeTimeMs,
+            boolean recovery,
+            String storageStatus,
+            boolean kioskRequested,
+            long completedOne,
+            long completedTwo,
+            long stoppedEarlyOne,
+            long stoppedEarlyTwo,
+            boolean perConditionCountsAvailable,
+            boolean countsAvailable,
+            boolean countsInvalid,
+            long completedTotal,
+            long stoppedEarlyTotal,
+            long errors,
+            String routeAction,
+            long routeActionRevision,
+            String detail,
+            boolean remotePreparationFinalization
+        ) {
             this.operationId = safe(operationId);
             this.accepted = accepted;
             this.durable = durable;
+            this.remotePreparationFinalization = remotePreparationFinalization;
             this.generation = Math.max(0L, generation);
             this.revision = Math.max(0L, revision);
             this.phase = safe(phase);
@@ -205,6 +266,140 @@ final class ExperimentSessionPanelCoordinator {
     private long trustedLaunchEpoch;
     private long runtimeEpoch;
     private boolean freshRuntimeExpected;
+    private ExperimentSessionPanelState nativeObservedState;
+    private long nativeReadCompletedNanos;
+    private long nativeObservationClock;
+    // Closed diagnostic codes only; these fields never participate in admission.
+    private boolean nativeStateAccepted;
+    private String nativeStateAcceptanceReason = "not_read";
+    private String nativeObservationReason = "not_read";
+
+    synchronized String nativeStatusReadbackDiagnostic() {
+        return "state_accepted=" + nativeStateAccepted
+            + " state_reason=" + nativeStateAcceptanceReason
+            + " witness_reason=" + nativeObservationReason
+            + " fresh_runtime_expected=" + freshRuntimeExpected
+            + " coordinator_epoch=" + runtimeEpoch
+            + " coordinator_generation=" + state.generation
+            + " coordinator_revision=" + state.revision;
+    }
+
+    static final class NativeReadbackObservation {
+        final boolean available;
+        final long runtimeEpoch, generation, revision, ageNanos;
+        NativeReadbackObservation(boolean available, long runtimeEpoch,
+                long generation, long revision, long ageNanos) {
+            this.available = available;
+            this.runtimeEpoch = runtimeEpoch;
+            this.generation = generation;
+            this.revision = revision;
+            this.ageNanos = ageNanos;
+        }
+    }
+
+    static final class NativeStatusSnapshot {
+        final ExperimentSessionPanelState state;
+        final String observationJson;
+        final boolean observed;
+        final long runtimeEpoch, readId, ageMs;
+        NativeStatusSnapshot(ExperimentSessionPanelState state, String observationJson,
+                boolean observed, long runtimeEpoch, long readId, long ageMs) {
+            this.state = state;
+            this.observationJson = observationJson;
+            this.observed = observed;
+            this.runtimeEpoch = runtimeEpoch;
+            this.readId = readId;
+            this.ageMs = ageMs;
+        }
+    }
+
+    // One lock binds the read-only extension to the exact outer state projection.
+    synchronized NativeStatusSnapshot nativeStatusSnapshot(long nowNanos) {
+        NativeReadbackObservation observation = nativeReadbackObservation(nowNanos);
+        String json = "{\"v\":1,\"s\":\"unknown\"}";
+        final long maxSafeInteger = 9007199254740991L;
+        if (observation.available && state.generation <= maxSafeInteger
+                && state.revision <= maxSafeInteger) {
+            // Positive Java longs are canonical int64 strings. Floor is a lower bound.
+            json = "{\"v\":1,\"s\":\"observed\",\"e\":\"" + runtimeEpoch
+                + "\",\"i\":\"" + nativeReadCompletedNanos + "\",\"g\":" + state.generation
+                + ",\"r\":" + state.revision + ",\"a\":" + (observation.ageNanos / 1000000L) + "}";
+        }
+        boolean available = observation.available && state.generation <= maxSafeInteger
+            && state.revision <= maxSafeInteger;
+        return new NativeStatusSnapshot(state, json, available,
+            available ? runtimeEpoch : 0L, available ? nativeReadCompletedNanos : 0L,
+            available ? observation.ageNanos / 1000000L : -1L);
+    }
+    // Same command/state behavior as the existing two calls, with the witness join atomic.
+    synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
+            long completedNanos, long nowNanos) {
+        return acceptNativeReadback(epoch, receipt, completedNanos, nowNanos,
+            receipt != null && receipt.accepted);
+    }
+    // A successful status read is independent of the last product command's result.
+    // Preserve that result for pending-command reduction; it is never upgraded here.
+    synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
+            long completedNanos, long nowNanos, boolean statusResponseAccepted) {
+        return acceptNativeReadback(epoch,receipt,completedNanos,nowNanos,statusResponseAccepted,null);
+    }
+    synchronized boolean acceptNativeReadback(long epoch,NativeReceipt receipt,
+            long completedNanos,long nowNanos,boolean statusResponseAccepted,ArmAcceptance arm) {
+        acceptRuntimeEpoch(epoch);
+        boolean acceptedState = accept(receipt,
+            statusResponseAccepted && epoch==runtimeEpoch && !freshRuntimeExpected ? arm : null,epoch);
+        nativeStateAccepted = acceptedState;
+        observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos,
+            statusResponseAccepted);
+        return acceptedState;
+    }
+    // Observation only: never command completion, authority or physical freshness.
+    synchronized void observeNativeStatusReadback(long epoch, NativeReceipt receipt,
+            boolean acceptedState, long completedNanos, long nowNanos) {
+        observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos,
+            receipt != null && receipt.accepted);
+    }
+    private void observeNativeStatusReadback(long epoch, NativeReceipt receipt,
+            boolean acceptedState, long completedNanos, long nowNanos,
+            boolean statusResponseAccepted) {
+        nativeObservationReason = "observed";
+        if (!observeClock(nowNanos)) { nativeObservationReason = "clock_invalid"; return; }
+        if (!acceptedState) { nativeObservationReason = "state_rejected"; return; }
+        if (receipt == null) { nativeObservationReason = "receipt_null"; return; }
+        if (!statusResponseAccepted) { nativeObservationReason = "status_response_rejected"; return; }
+        if (parsePhase(receipt.phase, receipt.controlState, null) == null) {
+            nativeObservationReason = "phase_unknown"; return;
+        }
+        if (freshRuntimeExpected) { nativeObservationReason = "fresh_runtime_expected"; return; }
+        if (epoch <= 0L) { nativeObservationReason = "epoch_invalid"; return; }
+        if (epoch != runtimeEpoch) { nativeObservationReason = "epoch_mismatch"; return; }
+        if (receipt.generation != state.generation) { nativeObservationReason = "generation_mismatch"; return; }
+        if (receipt.revision != state.revision) { nativeObservationReason = "revision_mismatch"; return; }
+        if (completedNanos <= 0L) { nativeObservationReason = "completion_invalid"; return; }
+        if (completedNanos > nowNanos) { nativeObservationReason = "completion_future"; return; }
+        if (completedNanos <= nativeReadCompletedNanos) { nativeObservationReason = "completion_not_advancing"; return; }
+        nativeReadCompletedNanos = completedNanos;
+        nativeObservedState = state;
+    }
+
+    synchronized NativeReadbackObservation nativeReadbackObservation(long nowNanos) {
+        if (!observeClock(nowNanos) || nativeObservedState == null
+                || nativeObservedState != state || freshRuntimeExpected || runtimeEpoch <= 0L
+                || nativeReadCompletedNanos <= 0L || nativeReadCompletedNanos > nowNanos) {
+            return new NativeReadbackObservation(false, 0L, 0L, 0L, -1L);
+        }
+        return new NativeReadbackObservation(true, runtimeEpoch, state.generation,
+            state.revision, nowNanos - nativeReadCompletedNanos);
+    }
+
+    private boolean observeClock(long nowNanos) {
+        if (nowNanos <= 0L || nowNanos < nativeObservationClock) {
+            nativeObservedState = null;
+            return false;
+        }
+        nativeObservationClock = nowNanos;
+        return true;
+    }
     private String lastRejectedOperationId = "";
     private String panelRestartOperationId = "";
     private long panelRestartGeneration;
@@ -216,6 +411,8 @@ final class ExperimentSessionPanelCoordinator {
         if (epoch <= 0L || epoch == runtimeEpoch) return false;
         if (runtimeEpoch != 0L && (!freshRuntimeExpected || epoch < runtimeEpoch)) return false;
         runtimeEpoch = epoch;
+        nativeObservedState = null;
+        nativeReadCompletedNanos = 0L;
         freshRuntimeExpected = false;
         state = ExperimentSessionPanelState.initial();
         lastRejectedOperationId = "";
@@ -465,12 +662,43 @@ final class ExperimentSessionPanelCoordinator {
         return true;
     }
 
-    synchronized boolean accept(NativeReceipt receipt) {
-        if (receipt == null || receipt.revision < state.revision || receipt.generation < state.generation) {
-            return false;
+    /** Successful original Arm writer checkpoint, independent of subsequent audio operations. */
+    static class ArmAcceptance {
+        final String operationId,condition;
+        final long generation,runtimeEpoch;
+        final boolean durableCheckpoint;
+        ArmAcceptance(String id,long generation,long epoch,String condition,boolean durable) {
+            this.operationId=id==null?"":id;this.generation=generation;this.runtimeEpoch=epoch;
+            this.condition=condition==null?"":condition;this.durableCheckpoint=durable;
         }
+        boolean matches(String id,long expectedGeneration,String expectedCondition,
+                NativeReceipt receipt,long epoch) {
+            return durableCheckpoint && !operationId.isEmpty() && operationId.equals(id)
+                && generation>0L && generation==expectedGeneration && runtimeEpoch>0L
+                && runtimeEpoch==epoch && receipt!=null && generation==receipt.generation
+                && condition.equals(expectedCondition) && condition.equals(receipt.activeCondition) && receipt.recording;
+        }
+    }
+
+    synchronized boolean accept(NativeReceipt receipt) { return accept(receipt,null,0L); }
+
+    private boolean accept(NativeReceipt receipt,ArmAcceptance arm,long epoch) {
+        nativeStateAcceptanceReason = "accepted";
+        if (receipt == null) { nativeStateAcceptanceReason = "receipt_null"; return false; }
+        if (receipt.revision < state.revision) { nativeStateAcceptanceReason = "revision_regression"; return false; }
+        if (receipt.generation < state.generation) { nativeStateAcceptanceReason = "generation_regression"; return false; }
+        boolean provenArm = arm!=null && state.phase==ExperimentSessionPanelState.Phase.ARMING
+            && !state.pendingOperationId.isEmpty() && receipt.accepted
+            && "active".equals(receipt.phase)
+            // The durable Arm checkpoint admits its recording before audio is
+            // prepared. A later renderer receipt can replace last_operation_id
+            // during that interval. Adopt ARMING so the original audio handler
+            // can prepare; only the native audio acknowledgement admits ARMED.
+            && ("arming".equals(receipt.controlState) || "armed".equals(receipt.controlState) || "running".equals(receipt.controlState)
+                || "paused".equals(receipt.controlState))
+            && arm.matches(state.pendingOperationId,state.generation+1L,state.activeCondition,receipt,epoch);
         boolean pendingMatch = !state.pendingOperationId.isEmpty()
-            && state.pendingOperationId.equals(receipt.operationId);
+            && (state.pendingOperationId.equals(receipt.operationId) || provenArm);
         boolean repeatedRejectedOperation = state.phase == ExperimentSessionPanelState.Phase.ERROR
             && state.pendingOperationId.isEmpty()
             && !lastRejectedOperationId.isEmpty()
@@ -500,9 +728,11 @@ final class ExperimentSessionPanelCoordinator {
         if (state.phase == ExperimentSessionPanelState.Phase.SAVING
                 && !state.pendingOperationId.isEmpty()
                 && receipt.generation != state.generation) {
+            nativeStateAcceptanceReason = "saving_generation_mismatch";
             return false;
         }
         if (!state.pendingOperationId.isEmpty() && !pendingMatch) {
+            nativeStateAcceptanceReason = "pending_operation_mismatch";
             return false;
         }
         if (pendingMatch && !receipt.accepted) {
@@ -530,10 +760,16 @@ final class ExperimentSessionPanelCoordinator {
             return true;
         }
         if (state.phase == ExperimentSessionPanelState.Phase.SAVING) {
+            // The codec grants durability only for an exact finalized saved operation.
+            // Remote VR preparation deliberately publishes no panel route.
             boolean exactRoute = receipt.durable
-                && "show-experimenter".equals(receipt.routeAction)
+                && ("show-experimenter".equals(receipt.routeAction)
+                    || (receipt.remotePreparationFinalization
+                        && "none".equals(receipt.routeAction) && "idle".equals(receipt.phase)
+                        && !receipt.recording))
                 && receipt.routeActionRevision > state.routeActionRevision;
             if (!exactRoute || (!state.pendingOperationId.isEmpty() && !pendingMatch)) {
+                nativeStateAcceptanceReason = "saving_route_not_durable";
                 return false;
             }
         }
@@ -542,6 +778,7 @@ final class ExperimentSessionPanelCoordinator {
             boolean exactActive = receipt.accepted
                 && ("active".equals(receipt.phase) || "recording".equals(receipt.phase));
             if (!exactActive) {
+                nativeStateAcceptanceReason = "starting_not_active";
                 return false;
             }
         }

@@ -69,6 +69,14 @@ and a scalar-only state object of at most 4096 UTF-8 bytes and 16 keys. It has
 no component, action, URI, flags, raw path, URL, shell command, arbitrary
 Intent extras, uploaded UI, or high-rate payload.
 
+`commands: []` declares a read-only surface. Its canonical contract hash is
+still checked and its real package/signer provider must consume the same
+signature-scoped admission/registration route. Manifold requires the exact
+packaged grant's command list to be empty too. No command id is permitted;
+there is no synthetic status command or implied mutation capability. Missing or
+null command lists remain invalid. Existing nonempty command surfaces retain
+their command, controller-capability, parameter and effect receipt checks.
+
 The protocol `surface_id` is a stable app-facing name so the same control
 surface can disappear and reappear across app launches. The native adapter
 maps it to a distinct Manifold surface subject that is bound to the fresh

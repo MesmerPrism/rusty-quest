@@ -20,6 +20,7 @@ final class NativeRendererExperimentLaunchAuthority {
     private static long lastIssuedEpoch;
     private static long pendingEpoch;
     private static boolean nativeActivityCreateSeen;
+    private static java.lang.ref.WeakReference<Activity> launchActivity = new java.lang.ref.WeakReference<>(null);
 
     private NativeRendererExperimentLaunchAuthority() {
     }
@@ -31,7 +32,7 @@ final class NativeRendererExperimentLaunchAuthority {
         int categoryCount = incoming == null || incoming.getCategories() == null
             ? 0
             : incoming.getCategories().size();
-        if (incoming == null || !NativeRendererExperimentLauncherPolicy.admits(
+        if (!NativeRendererActivityComponents.isNative(activity) || incoming == null || !NativeRendererExperimentLauncherPolicy.admits(
                 recreation,
                 incoming.getAction(),
                 incoming.getCategories() != null
@@ -41,12 +42,16 @@ final class NativeRendererExperimentLaunchAuthority {
                 component == null ? null : component.getPackageName(),
                 component == null ? null : component.getClassName(),
                 activity.getPackageName(),
-                "android.app.NativeActivity")
+                NativeRendererActivityComponents.nativeClass(activity))
                 || nativeActivityCreateSeen) {
             return 0L;
         }
         nativeActivityCreateSeen = true;
-        return issueAdmitted(SystemClock.elapsedRealtimeNanos());
+        launchActivity = new java.lang.ref.WeakReference<>(activity);
+        long epoch = issueAdmitted(SystemClock.elapsedRealtimeNanos());
+        NativeRendererBootObservation.trustedLaunch(activity);
+        NativeRendererAppStatusBridge.trustedColdLaunch(activity, epoch);
+        return epoch;
     }
 
     private static long issueAdmitted(long monotonicCandidate) {
@@ -74,13 +79,38 @@ final class NativeRendererExperimentLaunchAuthority {
         return true;
     }
 
+    /** Exact live owner, called only after the current immersive session submitted a frame. */
+    static boolean consumeRemotePreparation(Activity activity, long epoch, long xrGeneration) {
+        synchronized (NativeRendererExperimentLaunchAuthority.class) {
+            if (activity == null || activity != launchActivity.get() || activity.isFinishing()
+                    || !NativeRendererActivityComponents.isNative(activity)
+                    || xrGeneration <= 0L || epoch <= 0L || epoch != pendingEpoch
+                    || !(activity.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return false;
+            if (!consume(PROVENANCE_EXPLICIT_USER_LAUNCH, epoch)) return false;
+            if (!NativeRendererSoftKioskCoordinator.process().armFromExplicitColdLaunch(epoch,
+                    NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+                    NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER)) return false;
+        }
+        // Context service startup is thread-safe. Keep the current native submitted-frame
+        // callback synchronous, with no launch/coordinator lock across platform callbacks.
+        NativeRendererSelfKioskApplication.armed(activity);
+        return true;
+    }
+
     /** Read-only bridge from the live immersive process to the exact pending panel handoff. */
     static synchronized long pendingEpochForImmersiveStartup() {
         return pendingEpoch;
+    }
+    /** Startup permission UI may observe the already admitted physical launch.
+     * This creates/consumes no epoch and does not authorize session preparation. */
+    static synchronized long trustedColdEpochForOwner(Activity actual) {
+        return actual!=null&&actual==launchActivity.get()&&NativeRendererActivityComponents.isNative(actual)
+            &&!actual.isFinishing()&&!actual.isDestroyed()&&nativeActivityCreateSeen?lastIssuedEpoch:0L;
     }
 
     static synchronized void invalidatePending() {
         pendingEpoch = 0L;
         nativeActivityCreateSeen = false;
+        launchActivity.clear();
     }
 }

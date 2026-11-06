@@ -58,7 +58,7 @@ Assert-Contains $bridgePath 'OPEN_DEVELOPER_PANEL'
 Assert-Contains $bridgePath 'native_renderer_panel_route'
 Assert-Contains $vulkanPath 'open_experimenter_panel'
 Assert-Contains $vulkanPath 'open_developer_panel'
-Assert-Contains $panelPath 'ControlPanelActivity.closePanelAndReturnToImmersive(this)'
+Assert-Contains $panelPath 'ControlPanelActivity.closePanelAndReturnToImmersive(hostActivity())'
 Assert-NotContains $panelPath 'rendererReturnPending'
 Assert-NotContains $panelPath 'pollRendererReturnReadiness'
 Assert-Contains $handoffPath 'STABLE_MS = 750L'
@@ -85,7 +85,7 @@ Assert-Contains $buildPath 'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIM
 Assert-Contains $buildPath 'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROVIDER_MANIFEST_SHA256'
 Assert-Contains $buildPath 'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_INVENTORY_SHA256'
 Assert-NotContains $buildPath 'entries.length() != 2'
-Assert-Contains $buildPath 'ConditionAudioAndroidMediaBackendFactory(assets)'
+Assert-Contains $buildPath 'ConditionAudioAndroidMediaBackendFactory(assets,'
 Assert-Contains $buildPath 'ConditionAudioContract.Command.prepare('
 Assert-Contains $buildPath 'pendingAudioCondition'
 Assert-Contains $buildPath 'sessionGeneration == pendingAudioGeneration'
@@ -167,6 +167,7 @@ if (-not $resolvedOutput.StartsWith($tempBase, [StringComparison]::OrdinalIgnore
 try {
     $sources = @(
         (Join-Path $javaRoot 'NativeRendererForegroundGuardPolicy.java'),
+        (Join-Path $javaRoot 'NativeRendererActivityComponents.java'),
         (Join-Path $javaRoot 'NativeRendererWriterAcknowledgedExitPolicy.java'),
         $sessionShellPath,
         $packagedClosurePath,
@@ -195,6 +196,12 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Experiment session packaged-closure tests failed with exit code $LASTEXITCODE"
     }
+    $rustc = (Get-Command rustc -ErrorAction Stop).Source
+    $readerTests = Join-Path $resolvedOutput 'materialization-reader-tests.exe'
+    & $rustc '--edition' '2021' '--test' (Join-Path $repo 'apps/native-renderer-android/native/src/experiment_session_materialization.rs') '-o' $readerTests
+    if ($LASTEXITCODE -ne 0) { throw "Materialization reader compile failed: $LASTEXITCODE" }
+    & $readerTests
+    if ($LASTEXITCODE -ne 0) { throw "Materialization reader controls failed: $LASTEXITCODE" }
     $realInputs = @($RealFeatureLockPath, $RealProfilePath, $RealProviderManifestPath)
     $realInputCount = @($realInputs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
     if ($realInputCount -ne 0) {

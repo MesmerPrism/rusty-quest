@@ -106,6 +106,8 @@ tracked right grip pose supplies its local negative-Z ray; the marker identifies
 `right-aim` or `right-grip`. Mesh UI selection binds grip even without a breath
 or pose-publisher feature. Missing controller tracking releases UI ownership.
 The right hand takes priority over a valid left-hand fallback. When available,
+`XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace and
+explicitly selected original mesh UI request OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
 `XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace alone
 requests OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
 an unsupported API fails explicitly without a silent downgrade. Computed + valid
@@ -115,6 +117,23 @@ index proximal, with thumb/index tip separation providing 25mm press and 40mm
 release thresholds. A newly tracked hand must first open its pinch. Ownership
 changes, focus loss, missing tracking and non-rendering frames cancel drag capture
 and remove its visual.
+
+The explicitly selected original-product panel uses interaction edges instead
+of tracked-controller hover priority. An idle tracked controller cannot block
+an open hand's next pinch. A fresh trigger or pinch takes an idle pointer;
+simultaneous fresh edges choose the controller once. The pressed owner retains
+capture through release, and competing edges during that press are discarded.
+Tracking loss, a different hand, an aim/joint source change or focus reset
+requires an open input before another press. The existing cancel-before-owner
+handoff path still supplies one Android pointer. Neutral worldspace retains
+its tracked-controller priority. This changes UI arbitration only, not original
+hand visuals, scene input or simultaneous tracking selection.
+
+Original-product UI also requests optional available `XR_FB_hand_tracking_aim`
+through the existing same-session trackers. When absent, the existing tracked
+joint ray remains; a tool's FB aim target does not establish where that different
+joint ray hits. Current markers distinguish tracked controller rays from trigger
+state, selected arbitration, actual hand source and optional aim enablement.
 
 The app draws a solid depth-tested Vulkan ray and a hit reticle independently of
 the Android UI texture. White indicates aiming, green a panel hit, and amber a
@@ -134,6 +153,16 @@ native frame submission, not acoustic output, XR focus or visible compositor pro
 
 Joints use the existing `XR_EXT_hand_tracking` trackers, projection reference
 space and current predicted display timestamp. No extra frame loop is created.
+In the neutral worldspace composition, when controller input owns the frame, live hand visuals, diagnostic
+hand overlays and graft copies are suppressed. Ordinary controller actions remain
+available; events captured by the panel are consumed before world controls.
+
+The neutral combined hand-geometry feature closure should retain
+`input.controllers_and_hands_optional` and its selected live-hand/visual
+features, but omit
+`input.simultaneous_hands_and_controllers`. Remove its enabled property and
+resolver-derived activation binding from the private runtime closure. Worldspace
+policy rejects an accidentally selected simultaneous adapter. The manifest resolver
 When controller input owns the worldspace frame, live hand visuals, diagnostic
 hand overlays and graft copies are suppressed. Ordinary controller actions remain
 available; events captured by the panel are consumed before world controls.
@@ -147,6 +176,19 @@ emits `com.oculus.handtracking.support=HANDS_AND_CONTROLLERS` and hand version
 `V2.0` only when both the optional hand feature and hand permission are selected.
 This permits either input mode at launch without claiming simultaneous tracking.
 
+The explicit original-composable product descriptor selects the separate
+`original-product` input policy through its authenticated
+`RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS=false` compile input. It retains the
+original simultaneous-tracking feature and exact activation/hand-adapter binding,
+extension availability, function resolution and session resume/pause guards.
+Controller readiness does not suppress original hand visuals, grafts, compact
+hand input or source-specific recorded visual fallback. A captured panel event
+may consume discrete world actions, but cannot discard the original controller
+breath assessment sample. The panel still arbitrates one pointer at a time;
+this is independent of underlying hand/controller tracking. Markers separate
+`exclusivePanelPointer` from `exclusiveHandsOrControllers`, identify the selected
+`inputPolicy`, and report actual selected simultaneous tracking requirements.
+
 The public foundation additionally selects `input.tracked_hand_pointer`. Its
 explicit packaged flag enables runtime aim (or its four-joint fallback) even
 while compact mesh input is disabled. It needs neither a hand-adapter lock nor a private or recorded
@@ -156,6 +198,14 @@ and position-tracked flags on all four joints (`0x2 | 0x8` in OpenXR). A private
 live-skinning composition can select this feature as well; it reuses its existing
 current compact sample when available and polls raw joints only as a fallback.
 Live GPU rig mapping still requires that composition's independently applied
+hand-adapter lock. The pointer feature never substitutes for that lock. Neutral worldspace
+never uses recorded poses as a fallback: missing live compact input hides the
+corresponding hand, while the static topology/bind rig remains available. Live
+poses are selected by each resident rig's handedness: right-only tracking stays
+on the right rig and never promotes right poses into the left bind mesh. Other
+render modes keep their existing replay policies. The short `worldspace-hand-input`
+marker reports per-hand active/ready/source/locate state, shape counts and reason
+every 120 frames and on state changes; raw pointer input remains rig-independent.
 hand-adapter lock. The pointer feature never substitutes for that lock.
 
 Pure host tests cover bounded ray construction, pinch hysteresis, controller
@@ -168,6 +218,9 @@ GPU particles, live GPU hand meshes, hand graft copies and a world-positioned UI
 mesh in one native OpenXR/Vulkan session. The mode is opt-in. Existing closed
 particle and camera-layer modes keep their own composition rules.
 
+The public `native-worldspace-panel-test.app.json` selects the scene, UI and
+neutral visible pointer foundation, with compact rig input disabled and no
+private payload. A downstream composition can select
 The public `native-worldspace-panel-test.app.json` selects only the scene and UI
 foundation. A downstream composition can select
 `renderer.private_particles.composable` and `render.private_layer.composable`
@@ -254,3 +307,173 @@ headset rendering or performance. The live probe should progress through:
 Keep source, feature lock, APK hash and exact headset tied to each capture. Report
 UI command application, visible behavior and timing evidence separately. A built
 APK is a candidate until its live checks pass.
+
+## Particles-only scene and full local controls
+
+`renderer.native_scene.particles_only` selects the existing native scene while
+excluding hand geometry resources. Its exact resolved lock supplies
+`RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED=false`; the APK builder
+rejects an unselected or ambient exclusion, contradictory geometry features,
+and prepared/captured rig inputs. The selected binary has no materialized replay
+source, hand skinning, mesh, graft, hand-anchor or capture-recorder resources.
+Generic shared shader code and renderer types remain in the source graph.
+Runtime visibility controls cannot re-enable the absent resources.
+
+Optional `input.tracked_hand_pointer` and
+`input.controllers_and_hands_optional` still use the current OpenXR tracker,
+reference space and predicted display time. Pointer input requires no mesh rig.
+Controller breath assessment, particle/tracer buffers and retained particle
+anchors keep their existing owners. The particles-only route omits the probe's
+diagnostic animation/scale tuple from particle compute; canonical accepted
+settings remain the controls.
+
+NativeActivity cold startup synchronously prepares the selected canonical Java
+packaged closure before Rust inventory initialization and immersive-owner
+capture. Verification failure stops startup. Repeated panel preparation
+re-verifies the same application/files scope and preserves the condition and
+phase audio owners; failed verification installs neither owner. Compact live
+hand input requires compiled hand geometry, while raw UI pointer tracking
+remains independent. Explicit visual, mesh, graft and anchor effects still
+require the applied hand lock.
+
+The selected `ui.experiment_session_owner` presents local Home, Particles,
+Breath, Status and experiment workflow pages through its closed Java inventory.
+The real standalone Activity and native Presentation share the local panel;
+the legacy composite panel also uses the extracted sparse particle-patch
+builder. Particle changes submit edited named fields through the existing JNI
+queue and require a matching renderer-effective revision before reporting
+application. Hydration, retired pages and detached producers issue no edits.
+The session readback header is separate from local command outcomes. It reports
+current only after an accepted, initialized read matches the coordinator's
+runtime epoch and completion witness. After three missed 500 ms polls its label
+becomes stale; this display threshold grants no command authority. Pause resets
+the observation, and read failures remain unavailable until a newer accepted
+read arrives. The header does not attest physical input, audio or saved output.
+In-view choices stay within the panel's routed touch surface. Sensor, network,
+kiosk and camera capabilities require their separate explicit selections.
+
+The combined original product panel and native mesh selection uses the real
+`NativeProductPanelActivity`, an Android `NativeActivity` subclass with the same
+native library and main loop. `BreathCompositionPanelModule` is the shared
+original controller. The ordinary 2D entry is a thin Activity adapter for that
+same controller; its builders, listeners, Polar, network, LSL, session and audio
+owners are not copied. The native host buffers the original content until its
+Presentation carrier exists and never replaces the native window's content.
+There is no Shell-managed 2D bootstrap or Activity launched onto a private
+virtual display. Native callbacks retain their actual controller; UI route
+Intents do not replace the physical MAIN/LAUNCHER Intent.
+
+The selected native host and its Presentation share the actual Activity density
+and the original inherited Material theme. Neutral mesh and standalone density
+remain unchanged. Callback retirement prevents delayed permission/results or
+old host lifecycle callbacks from entering a replacement controller. A duplicate
+2D entry relays into the current native controller without creating another
+shell or audio owner. Return-to-VR and terminal actions retain their original
+coordinator/handler routes; native presentation requests still need effective
+submitted-frame acknowledgement.
+
+Pending visibility intent stays with the exact real owner and producer
+generation. Retirement or owner replacement cannot carry that intent forward.
+A selected product whose owner has not attached cannot confirm hidden-panel
+visibility; the separate ordinary 2D-only route retains its original foreground
+proof. Product operator observation can be unavailable while the real Activity
+is paused and has no active mesh attachment; that availability guard is not an
+observation exception. Native lifecycle resume alone does not make a hidden
+mesh UI visible. Source fixtures check actual adapter callback routing, stale
+owners, the native surface boundary, original method preservation and selected
+manifest closure. Actual lifecycle, input, dialogs and pixels still need device
+verification.
+
+The focused admission check is
+`pwsh -NoProfile -File tools/checks/Test-NativeRendererHandGeometrySelection.ps1`.
+Java/controller fixtures, both Rust geometry selections and the exact generated
+Android source closure must pass before packaging. On a headset, verify the
+stereo panel, targeting/scroll/drag, hand/controller ownership changes, effective
+settings, calibration, audio/recording and saving separately. Syntax and host
+admission checks do not establish those live effects.
+
+Local Save and exit uses the same session worker, durable writer and audio
+shutdown barrier as the existing terminal command. Its captured native owner,
+runtime epoch, actual generation, session identity and binding are rechecked on
+that worker before cutoff. A preparation state after Save-next retains its real
+generation; it does not invent a new recording or reuse an old active identity.
+Paused hosts replay only the exact cached terminal result on their current
+attachment. Temporary busy readback keeps observing the accepted command.
+
+Renderer retirement requires the exact finalized operation/generation/shutdown
+acknowledgement, a joined worker and a closed writer. The captured projection
+loop requests OpenXR exit, completes its ordinary GPU/UI/XR cleanup, then
+finishes its NativeActivity. Cleanup failure retains the resource error and
+cannot report retired. The Java continuation validates every retirement scope
+field; an uncertain request is never replayed, while an explicit request-side
+not-ready response allows a bounded retry. A read response cannot reopen that
+request. The selected facade has production host fixtures and typed JNI exports;
+actual Android linking, lifecycle and headset shutdown require their own checks.
+
+## Optional passthrough and environment sampler
+
+The existing `environment_depth.projection_sampler` feature can also be selected
+with `native-worldspace-integration`. It declares scene permission and the
+passthrough manifest feature, requests the runtime provider, and requires native
+passthrough. Its resolved permission/app-op pregrant remains mandatory before
+first launch; the app also requests scene permission when this provider is
+selected. Worldspace composition then uses source alpha and a transparent clear,
+including when the Android mesh panel is present. A panel-only build without this
+selection retains its opaque neutral background. Other render-mode alpha
+policies remain unchanged.
+
+The explicit `renderer.background.solid_black.composable` descriptor selects
+`RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE=solid-black` in the authenticated
+build environment. Only the native worldspace mode adopts this compile-time
+selection; ordinary scenes keep their existing backgrounds. It outranks the
+mesh panel's neutral clear, and reports `solidBlackBackground=true`. Explicit
+native passthrough overrides the selection, uses the transparent clear, and
+reports `solidBlackBackground=false`.
+
+The original product composition selects
+`renderer.private_particles.original_composable`, whose exact build input is
+`RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS=false`. The builder requires its
+native scene, mesh panel and explicit black-background feature closure. It
+rejects either composition input without its descriptor, including ambient
+values on unlocked development builds. This disables the neutral mesh demo's
+camera, diagnostics, graft, hand, replay, effect, animation and particle-scale
+overrides. Existing app settings owners continue to supply those parameters.
+Pointer dispatch, panel pose and submitted-frame visibility continue to use the
+raw mesh frame. Ordinary neutral mesh fixtures retain their controls.
+
+Visibility readback includes `neutral_controls_enabled` and
+`settings_authority`; submitted mesh markers include `neutralControlsApplied`.
+These distinguish input/visibility observation from demo-setting adoption.
+They do not establish original owner setting effects or headset appearance.
+Run `tools/checks/Test-NativeRendererPanelComposition.ps1` for admission checks
+and actual owner-module host tests in ordinary and original compile modes.
+
+The sampler feeds the camera/compositor path. The hands, particles, and panel
+still use virtual-scene D32 depth; selecting the sampler does not provide those
+draws with real-environment occlusion. Passthrough composition, virtual-scene
+depth, and environment-depth sampling need separate effective markers and live
+validation. Downstream camera selection must choose its intended normal
+composition rather than a diagnostic shader output; passthrough cannot change
+the meaning of that selection.
+
+## Camera result metadata
+
+The retained-Activity compatibility bootstrap keeps one return-to-immersive obligation even when
+Android reports both the original panel Activity and NativeActivity resumed.
+Resumed lifecycle alone does not establish immersive focus. Real owner readiness
+uses the original full handoff once, including during reentrant attachment. A
+current-producer, exact-owner, thread-scoped one-shot bypass makes that handoff's
+automatic mesh-hide shortcut fall through without clearing earlier explicit
+visibility intent. Later requests use the ordinary owner/generation route. A
+dispatched or unknown handoff is not replayed because another resume arrives.
+The production state fixture covers always-resumed startup and reentrant attach;
+host passes do not establish Android focus, mesh pixels or headset acceptance.
+The combined original/native controller route above does not use this 2D
+bootstrap.
+
+Optional Camera2 capture metadata is read only when its tag is present in that
+result's `ACameraMetadata_getAllTags` inventory. The list is borrowed within the
+capture callback; snapshots retain only parsed values. Missing optional fields
+remain unavailable, without repeatedly asking Android to log a failed lookup.
+Discovery or entry errors do not fabricate values, and no metadata pointers are
+cached across frames.

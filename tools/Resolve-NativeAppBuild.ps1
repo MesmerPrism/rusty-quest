@@ -5,6 +5,7 @@ param(
     [string]$OutputRoot = "local-artifacts\native-app-builds",
     [string]$ResultJsonPath,
     [string]$PrivateAssetProviderManifest,
+    [switch]$EnableExperimentSessionDebugOperator,
     [switch]$DryRun
 )
 
@@ -21,9 +22,13 @@ $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-r
 $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
 $BreathCompositionFeatureId = "breath.composition.closed_world"
+$ControllerOnlyBreathCompositionFeatureId = "breath.composition.controller_only"
+$VisualShowcaseFeatureId = 'ui.visual_showcase'
 $BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256"
 $BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
 $BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver"
+$ComposableBreathCompositionDriverFeatureId = "particles.private.breath_composition_driver.composable"
+$ClosedWorldComposableBreathCompositionDriverFeatureId = "particles.private.breath_composition_driver.closed_world_composable"
 $BreathCompositionDriverActivationBindingProperty = "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256"
 $BreathCompositionDriverExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
 $PrivateParticleRendererFeatureId = "renderer.private_particles"
@@ -50,12 +55,13 @@ $RuntimeDangerousPermissionNames = @(
     "android.permission.ACCESS_FINE_LOCATION",
     "android.permission.BLUETOOTH_CONNECT",
     "android.permission.BLUETOOTH_SCAN",
+    "android.permission.NEARBY_WIFI_DEVICES",
     "android.permission.CAMERA",
     "com.oculus.permission.HAND_TRACKING",
     "horizonos.permission.HEADSET_CAMERA",
-    "horizonos.permission.SPATIAL_CAMERA",
     "horizonos.permission.USE_SCENE"
 )
+$RoleManagedPermissionNames = @("horizonos.permission.SPATIAL_CAMERA")
 $MediaProjectionForegroundServicePermission = "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
 
 if (-not $DryRun) {
@@ -182,6 +188,23 @@ function Assert-SetEquals {
     $actualText = $actualSorted -join "`n"
     if ($expectedText -ne $actualText) {
         throw "$Label mismatch. Expected [$($expectedSorted -join ', ')] but resolved [$($actualSorted -join ', ')]."
+    }
+}
+
+function Get-SelectedNativeHostActivities {
+    param([string[]]$Activities, [string[]]$SelectedFeatureIds)
+    $originalNativeHost = ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.original_product') -and
+        $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
+    foreach ($activity in $Activities) {
+        if ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase' -and $activity -ceq 'ControlPanelActivity') {
+            continue # Reflection facade is deliberately not a manifest Activity.
+        } elseif ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase' -and $activity -ceq 'android.app.NativeActivity') {
+            'io.github.mesmerprism.rustyquest.native_renderer.ShowcaseNativeActivity'
+        } elseif ($originalNativeHost -and $activity -ceq 'android.app.NativeActivity') {
+            'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity'
+        } else {
+            $activity
+        }
     }
 }
 
@@ -667,8 +690,20 @@ function New-GeneratedAndroidManifestText {
         [string[]]$Activities,
         [string[]]$Receivers,
         [string[]]$Services,
-        [string[]]$Queries
+        [string[]]$Queries,
+        [string[]]$SelectedFeatureIds,
+        [switch]$ExperimentSessionDebugOperator
     )
+    $originalNativeHost = ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.original_product') -and $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
+    $showcaseNativeHost = $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase'
+    if (-not $showcaseNativeHost -and $Activities -ccontains 'io.github.mesmerprism.rustyquest.native_renderer.ShowcaseNativeActivity') { throw 'Showcase NativeActivity requires explicit selected showcase presentation.' }
+    if ($showcaseNativeHost -and ($originalNativeHost -or $SelectedFeatureIds -cnotcontains 'ui.visual_showcase')) { throw 'Showcase native host requires its sole closed showcase composition.' }
+    $nativeActivityClass = if ($showcaseNativeHost) { 'io.github.mesmerprism.rustyquest.native_renderer.ShowcaseNativeActivity' } elseif ($originalNativeHost) { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
+    if ($showcaseNativeHost -and ($Activities -cnotcontains $nativeActivityClass -or $Activities -ccontains 'ControlPanelActivity')) { throw 'Showcase native host excludes the standalone panel Activity.' }
+    if (($originalNativeHost -and $Activities -cnotcontains $nativeActivityClass) -or
+        (-not $originalNativeHost -and $Activities -ccontains 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity')) {
+        throw 'Native product Activity requires exactly the original panel and native mesh feature selection.'
+    }
     $lines = New-Object System.Collections.ArrayList
     [void]$lines.Add('<manifest xmlns:android="http://schemas.android.com/apk/res/android"')
     [void]$lines.Add("    package=""$([System.Security.SecurityElement]::Escape($PackageName))"">")
@@ -686,7 +721,16 @@ function New-GeneratedAndroidManifestText {
         }
     }
     foreach ($permission in $Permissions) {
-        [void]$lines.Add("    <uses-permission android:name=""$([System.Security.SecurityElement]::Escape($permission))"" />")
+        $attributes = ''
+        if ($SelectedFeatureIds -ccontains 'ui.experiment_session_direct_network') {
+            if ($permission -ceq 'android.permission.NEARBY_WIFI_DEVICES') { $attributes = ' android:usesPermissionFlags="neverForLocation"' }
+            # Polar's existing scan adapter requires location on modern Android.
+            # A new optional Wi-Fi route must preserve that selected permission.
+            if ($permission -ceq 'android.permission.ACCESS_FINE_LOCATION' -and
+                $SelectedFeatureIds -cnotcontains 'sensor.polar_h10_ble' -and
+                $SelectedFeatureIds -cnotcontains 'ui.visual_showcase') { $attributes = ' android:maxSdkVersion="32"' }
+        }
+        [void]$lines.Add("    <uses-permission android:name=""$([System.Security.SecurityElement]::Escape($permission))""$attributes />")
     }
     [void]$lines.Add("")
     [void]$lines.Add('    <application')
@@ -700,13 +744,38 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add(('        android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
     [void]$lines.Add('        android:theme="@android:style/Theme.Material.NoActionBar">')
     [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
+    if ($Receivers -contains "NativeRendererBootReceiver") {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.boot_autostart" android:value="true" />')
+    }
+    # Closed, source-selected public connection policy. Credentials and active
+    # controller/relay enrollment remain private headset state.
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_command_gateway') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.enabled" android:value="true" />')
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.origins" android:value="https://mesmerprism.com" />')
+    }
+    if ($SelectedFeatureIds -ccontains 'ui.recording_export') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.recording_export" android:value="true" />')
+    }
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_direct_network') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.experiment_direct_network" android:value="true" />')
+    }
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_relay') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.experiment_control_relay" android:value="true" />')
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.relay_origin" android:value="https://control-relay.mesmerprism.com" />')
+    }
     if ($UsesFeatures -contains "oculus.software.handtracking" -and $Permissions -contains "com.oculus.permission.HAND_TRACKING") {
         [void]$lines.Add('        <meta-data android:name="com.oculus.handtracking.support" android:value="HANDS_AND_CONTROLLERS" />')
         [void]$lines.Add('        <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />')
     }
-    if ($Activities -contains "android.app.NativeActivity") {
+    if ($originalNativeHost) {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.native_renderer.original_panel_native_host" android:value="true" />')
+    }
+    if ($showcaseNativeHost) {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.native_renderer.showcase_panel_native_host" android:value="true" />')
+    }
+    if ($Activities -contains $nativeActivityClass) {
         [void]$lines.Add('        <activity')
-        [void]$lines.Add('            android:name="android.app.NativeActivity"')
+        [void]$lines.Add(('            android:name="{0}"' -f $nativeActivityClass))
         [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
         [void]$lines.Add('            android:excludeFromRecents="true"')
         [void]$lines.Add('            android:exported="true"')
@@ -771,6 +840,13 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }
+    if ($Receivers -contains "NativeRendererBootReceiver") {
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererBootReceiver" android:exported="false">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="android.intent.action.BOOT_COMPLETED" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
+    }
     if ($Receivers -contains "PolarSensorCommandReceiver") {
         # `android.permission.DUMP` is the platform's shell-operator boundary
         # for this explicit receiver. The minSdk bootclasspath does not expose
@@ -795,6 +871,9 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </receiver>')
     }
+    if ($ExperimentSessionDebugOperator) {
+        [void]$lines.Add(('        <provider android:name="io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionDebugControlProvider" android:authorities="{0}.debug-experiment-control" android:exported="true" android:permission="android.permission.DUMP" />' -f [System.Security.SecurityElement]::Escape($PackageName)))
+    }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
     }
@@ -817,6 +896,10 @@ function New-GeneratedAndroidManifestText {
             [void]$lines.Add('        <provider android:name="x" android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />')
         }
         foreach ($query in $Queries) {
+            if ($query -ceq "io.github.mesmerprism.rustymanifold.broker") {
+                [void]$lines.Add('        <package android:name="io.github.mesmerprism.rustymanifold.broker" />')
+                continue
+            }
             if ($query -in @("org.khronos.openxr.runtime_broker", "org.khronos.openxr.system_runtime_broker")) {
                 continue
             }
@@ -856,7 +939,7 @@ function Resolve-NativePanelComposition {
         }
     }
 
-    $controlPanelSelected = $Activities -contains "ControlPanelActivity"
+    $controlPanelSelected = $Activities -contains "ControlPanelActivity" -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase'
     if (-not $controlPanelSelected) {
         if ($compositionOwners.Count -ne 0) {
             throw "A native panel module was selected without ControlPanelActivity."
@@ -918,6 +1001,36 @@ function Resolve-NativePanelComposition {
             source_files = $sourceFiles
         }
     }
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_hub_status_provider') {
+        if ($selectedModuleId -cne 'breath-composition-controls') { throw 'Hub provider requires breath composition controls.' }
+        $hubModule = $Features['ui.experiment_session_hub_status_provider'].descriptor.panel_source_module
+        if ($hubModule.module_id -cne 'experiment-session-hub-status-provider' -or
+            [string]$hubModule.entry_class -cne '' -or @($hubModule.dependencies).Count -ne 0 -or
+            $modulesById.ContainsKey('experiment-session-hub-status-provider')) { throw 'Exact optional Hub module required.' }
+        $hubPanelRoot = 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/'
+        $exactHubSources = @(
+            ($hubPanelRoot + 'ExperimentSessionHubLifetime.java'),
+            ($hubPanelRoot + 'ExperimentSessionAppStatusOwner.java'),
+            ($hubPanelRoot + 'ExperimentSessionHubProvider.java'),
+            ($hubPanelRoot + 'ExperimentSessionHubSurfaceClient.java'),
+            'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java'
+        )
+        if (@($hubModule.source_files).Count -ne 5 -or
+            [string]::Join([Environment]::NewLine, @($hubModule.source_files | Sort-Object)) -cne [string]::Join([Environment]::NewLine, @($exactHubSources | Sort-Object))) {
+            throw 'Exact Hub driver and public reducer source closure required.'
+        }
+        $modulesById['experiment-session-hub-status-provider'] = $hubModule
+        $modulesById[$selectedModuleId].dependencies = @($modulesById[$selectedModuleId].dependencies) + 'experiment-session-hub-status-provider'
+    }
+    if ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase') {
+        if ($selectedModuleId -cne 'visual-showcase-controls') { throw 'Showcase presentation requires its own controls.' }
+        $presentation = $Features['ui.native_mesh_panel.showcase'].descriptor.panel_source_module
+        $base = 'apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/'
+        $exact = @('NativeMeshUiProducer.java','NativeInputWidgetGeometry.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' | ForEach-Object { $base + $_ }) + @('apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseNativeActivity.java')
+        if ($presentation.module_id -cne 'showcase-native-presentation' -or [string]$presentation.entry_class -cne '' -or @($presentation.dependencies).Count -ne 0 -or @($presentation.source_files).Count -ne 7 -or [string]::Join('|',@($presentation.source_files | Sort-Object)) -cne [string]::Join('|',@($exact | Sort-Object))) { throw 'Exact neutral showcase presentation source closure required.' }
+        $modulesById['showcase-native-presentation'] = $presentation
+        $modulesById[$selectedModuleId].dependencies = @($modulesById[$selectedModuleId].dependencies) + 'showcase-native-presentation'
+    }
     if (-not $modulesById.ContainsKey($selectedModuleId)) {
         throw "Unknown selected panel module: $selectedModuleId"
     }
@@ -969,7 +1082,9 @@ function Resolve-NativePanelComposition {
         $moduleSourceRecords = @()
         foreach ($relativePath in @($module.source_files)) {
             $normalizedPath = ([string]$relativePath).Replace("\", "/")
-            if (-not $normalizedPath.StartsWith("apps/native-renderer-android/panel-modules/", [System.StringComparison]::Ordinal)) {
+            if (-not $normalizedPath.StartsWith("apps/native-renderer-android/panel-modules/", [System.StringComparison]::Ordinal) -and
+                -not ($moduleId -ceq 'showcase-native-presentation' -and $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.showcase' -and $normalizedPath -cin $exact) -and
+                -not ($moduleId -ceq 'experiment-session-hub-status-provider' -and $normalizedPath -ceq 'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java')) {
                 throw "Panel source must live in the declared panel-modules owner root: $normalizedPath"
             }
             if ($sourcePathSet.ContainsKey($normalizedPath)) {
@@ -1314,7 +1429,12 @@ foreach ($marker in @($requiredMarkerSet.Keys)) {
 
 $permissions = @(Get-SortedSet -Set $permissionsSet)
 $usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererInputSelection.psm1') -Force
+$inputSelection = Get-NativeRendererInputSelection -FeatureIds $selectedFeatureIds -BuildEnvByName $envByName -Permissions $permissions -UsesFeatures $usesFeatures
+$permissions = @($inputSelection.permissions)
+$usesFeatures = @($inputSelection.uses_features)
 $activities = @(Get-SortedSet -Set $activitiesSet)
+$activities = @(Get-SelectedNativeHostActivities -Activities $activities -SelectedFeatureIds $selectedFeatureIds)
 $receivers = @(Get-SortedSet -Set $receiversSet)
 $services = @(Get-SortedSet -Set $servicesSet)
 $queries = @(Get-SortedSet -Set $queriesSet)
@@ -1340,9 +1460,12 @@ if ($hasPrivateAssetRequest) {
     $privateAssetClosure = $privateAssetValidation.closure
 }
 foreach ($receiver in $receivers) {
-    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver", "BreathCompositionCommandReceiver")) {
+    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver", "BreathCompositionCommandReceiver", "NativeRendererBootReceiver")) {
         throw "Android receiver surface contains an unsupported closed-world receiver: $receiver"
     }
+}
+if (($receivers -ccontains 'NativeRendererBootReceiver') -ne ($selectedFeatureIds -ccontains 'ui.experiment_boot_autostart')) {
+    throw 'Own-app boot receiver requires its exact selected feature.'
 }
 $claimsSimultaneousHandsControllers = @($requiredMarkers | Where-Object {
     [string]$_ -match 'simultaneousHandsControllers(Selected|Ready)=true'
@@ -1354,7 +1477,8 @@ if ($claimsSimultaneousHandsControllers -and
 
 Assert-SetEquals -Label "Android permission surface" -Expected (Get-StringArray $app.declared_manifest.permissions) -Actual $permissions
 Assert-SetEquals -Label "Android uses-feature surface" -Expected (Get-StringArray $app.declared_manifest.uses_features) -Actual $usesFeatures
-Assert-SetEquals -Label "Android activity surface" -Expected (Get-StringArray $app.declared_manifest.activities) -Actual $activities
+$declaredActivities = @(Get-SelectedNativeHostActivities -Activities (Get-StringArray $app.declared_manifest.activities) -SelectedFeatureIds $selectedFeatureIds)
+Assert-SetEquals -Label "Android activity surface" -Expected $declaredActivities -Actual $activities
 Assert-SetEquals -Label "Android receiver surface" -Expected (Get-StringArray $app.declared_manifest.receivers) -Actual $receivers
 Assert-SetEquals -Label "Android service surface" -Expected (Get-StringArray $app.declared_manifest.services) -Actual $services
 
@@ -1363,6 +1487,21 @@ $panelSourceClosure = Resolve-NativePanelComposition `
     -SelectedFeatureIds $selectedFeatureIds `
     -Features $features `
     -Activities $activities
+
+$debugOperatorSources = @()
+$debugOperatorProviders = @()
+if ($EnableExperimentSessionDebugOperator) {
+    if ($selectedFeatureIds -cnotcontains 'operator.breath_composition_cli' -or $activities -cnotcontains 'ControlPanelActivity') {
+        throw 'Experiment debug operator requires the explicitly selected breath CLI and panel features.'
+    }
+    $debugOperatorProviders = @('ExperimentSessionDebugControlProvider')
+    foreach ($name in @('ExperimentSessionDebugControlProvider', 'ExperimentSessionDebugOperator')) {
+        $relative = "apps/native-renderer-android/src/debug/java/io/github/mesmerprism/rustyquest/native_renderer/$name.java"
+        $debugOperatorSources += [ordered]@{path=$relative;sha256=Get-FileSha256 -Path (Join-Path $repoRootText $relative)}
+    }
+}
+$declaredDebugProviders = if ($null -ne $app.declared_manifest.PSObject.Properties['providers']) { Get-StringArray $app.declared_manifest.providers } else { @() }
+Assert-SetEquals -Label 'Explicit debug provider surface' -Expected $declaredDebugProviders -Actual $debugOperatorProviders
 
 $environmentDepthMode = if ($runtimeSet.Contains($EnvironmentDepthModeProperty)) { [string]$runtimeSet[$EnvironmentDepthModeProperty] } else { "" }
 $environmentDepthSource = if ($runtimeSet.Contains($EnvironmentDepthSourceProperty)) { [string]$runtimeSet[$EnvironmentDepthSourceProperty] } else { "" }
@@ -1464,7 +1603,7 @@ if ($simultaneousHandsControllersSelected) {
     }
 }
 $breathCompositionActivationBinding = $null
-if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
+if ($selectedFeatureIds -contains $BreathCompositionFeatureId -or $selectedFeatureIds -contains $ControllerOnlyBreathCompositionFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) {
     $bindingInputs = [ordered]@{
         schema = "rusty.quest.breath_composition.activation_binding_inputs.v1"
         app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
@@ -1481,7 +1620,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
         throw "Breath composition activation binding is resolver-derived and must not be supplied by a feature or app spec"
     }
     $runtimeSet[$BreathCompositionActivationBindingProperty] = $breathCompositionActivationBinding
-    $runtimeSources[$BreathCompositionActivationBindingProperty] = "resolver:$BreathCompositionFeatureId"
+    $runtimeSources[$BreathCompositionActivationBindingProperty] = if ($selectedFeatureIds -contains $VisualShowcaseFeatureId) { "resolver:$VisualShowcaseFeatureId" } else { "resolver:$BreathCompositionFeatureId" }
     if ($envByName.Contains($BreathCompositionExpectedBindingBuildEnv)) {
         throw "Breath composition packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
     }
@@ -1489,7 +1628,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
         name = $BreathCompositionExpectedBindingBuildEnv
         value = $breathCompositionActivationBinding
     }
-    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) {
+    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) {
         Assert-NativeRendererPropertyValue `
             -Name $BreathCompositionDriverActivationBindingProperty `
             -Value $breathCompositionActivationBinding `
@@ -1498,7 +1637,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId) {
             throw "Breath composition driver activation binding is resolver-derived and must not be supplied by a feature or app spec"
         }
         $runtimeSet[$BreathCompositionDriverActivationBindingProperty] = $breathCompositionActivationBinding
-        $runtimeSources[$BreathCompositionDriverActivationBindingProperty] = "resolver:$BreathCompositionDriverFeatureId"
+        $runtimeSources[$BreathCompositionDriverActivationBindingProperty] = if ($selectedFeatureIds -contains $VisualShowcaseFeatureId) { "resolver:$VisualShowcaseFeatureId" } else { "resolver:$BreathCompositionDriverFeatureId" }
         if ($envByName.Contains($BreathCompositionDriverExpectedBindingBuildEnv)) {
             throw "Breath composition driver packaged binding build env is resolver-derived and must not be supplied by a feature or payload"
         }
@@ -1566,6 +1705,7 @@ $resolutionInputs = [ordered]@{
     app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
     feature_descriptors = $featureDescriptorRecords
     panel_source_closure = $panelSourceClosure
+    debug_experiment_operator_sources = $debugOperatorSources
     private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     private_asset_closure = $privateAssetClosure
     build_env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
@@ -1691,6 +1831,7 @@ $settingsHotload = [ordered]@{
 }
 
 $runtimeDangerousPermissions = @($permissions | Where-Object { $RuntimeDangerousPermissionNames -contains $_ })
+$roleManagedPermissions = @($permissions | Where-Object { $RoleManagedPermissionNames -contains $_ })
 $mediaProjectionAppOps = @()
 if ($permissions -contains $MediaProjectionForegroundServicePermission -or $services -contains "DisplayCompositeProjectionService") {
     $mediaProjectionAppOps += "PROJECT_MEDIA"
@@ -1715,6 +1856,7 @@ $permissionPregrant = [ordered]@{
     package_name = [string]$app.package_name
     declared_permissions = $permissions
     runtime_dangerous_permissions = $runtimeDangerousPermissions
+    role_managed_permissions = $roleManagedPermissions
     app_ops = $appOps
     required_before_first_launch = $permissionPregrantRequired
     tool = "tools/Grant-NativeRendererPermissions.ps1"
@@ -1723,6 +1865,7 @@ $permissionPregrant = [ordered]@{
     notes = @(
         "Only permissions declared by the resolved app manifest should be requested for this app.",
         "pm grant can fail for normal or signature permissions; dangerous permission and app-op evidence is acceptance-critical.",
+        "Role-managed permissions retain their manifest declarations and require their owning role route; pm grant does not establish that authority. Native Camera2 camera.hwb requires CAMERA and HEADSET_CAMERA, not SPATIAL_CAMERA.",
         "USE_SCENE_DATA app-op is prepared when the manifest declares horizonos.permission.USE_SCENE for Meta environment-depth routes.",
         "PROJECT_MEDIA app-op reduces lab prompt friction but does not replace fresh MediaProjection resultData from createScreenCaptureIntent."
     )
@@ -1793,6 +1936,7 @@ $featureLock = [ordered]@{
     feature_descriptors = $featureDescriptorRecords
     dependency_reasons = $dependencyReasons
     panel_source_closure = $panelSourceClosure
+    debug_experiment_operator_sources = $debugOperatorSources
     breath_composition_activation = if ($null -ne $breathCompositionActivationBinding) {
         [ordered]@{
             schema = "rusty.quest.breath_composition.activation_binding.v1"
@@ -1800,7 +1944,7 @@ $featureLock = [ordered]@{
             sha256 = $breathCompositionActivationBinding
         }
     } else { $null }
-    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) {
+    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) {
         [ordered]@{
             schema = "rusty.quest.breath_composition_driver.activation_binding.v1"
             property = $BreathCompositionDriverActivationBindingProperty
@@ -1856,6 +2000,7 @@ $featureLock = [ordered]@{
     validation_commands = $validationCommands
     generated_outputs = $generatedOutputs
 }
+if ($EnableExperimentSessionDebugOperator) { $featureLock.android_manifest['providers'] = @('ExperimentSessionDebugControlProvider') }
 Write-JsonArtifact -Value $featureLock -Path $featureLockPath
 
 $runtimeProfile = [ordered]@{
@@ -1884,7 +2029,7 @@ $applicationLabel = if ($null -ne $app.PSObject.Properties["application_label"])
 if ([string]::IsNullOrWhiteSpace($applicationLabel) -or $applicationLabel.Length -gt 64 -or $applicationLabel -match '[\r\n\t]') {
     throw "App build spec application_label must be 1..64 visible characters without control whitespace"
 }
-$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries
+$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries -SelectedFeatureIds $selectedFeatureIds -ExperimentSessionDebugOperator:$EnableExperimentSessionDebugOperator
 New-Item -ItemType Directory -Path (Split-Path -Parent $androidManifestPath) -Force | Out-Null
 Set-Content -LiteralPath $androidManifestPath -Value $manifestText -Encoding UTF8
 
@@ -1961,7 +2106,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
         breath_composition_activation_sha256 = $breathCompositionActivationBinding
-        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId) { $breathCompositionActivationBinding } else { $null }
+        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $VisualShowcaseFeatureId) { $breathCompositionActivationBinding } else { $null }
         simultaneous_hands_controllers_activation_sha256 = $simultaneousHandsControllersActivationBinding
         audit_path = [System.IO.Path]::GetFullPath($auditPath)
         audit_sha256 = Get-FileSha256 -Path $auditPath

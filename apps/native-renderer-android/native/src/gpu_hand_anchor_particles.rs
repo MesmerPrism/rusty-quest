@@ -743,6 +743,17 @@ impl ParticleSortResources {
             ],
             params2: [eye_forward[0], eye_forward[1], eye_forward[2], 0.0],
         };
+        // The previous eye's vertex shader may still read the shared sort remap.
+        // Order those reads before init overwrites it; this WAR needs execution only.
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[],
+        );
         self.dispatch_sort_pass(device, cmd, &init_push, group_count);
         self.record_sort_barrier(device, cmd);
 

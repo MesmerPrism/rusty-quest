@@ -195,7 +195,12 @@ impl NativeControllerBreathStateEstimator {
         sample: Option<NativeControllerBreathPoseSample>,
     ) -> NativeControllerBreathSample {
         let phase = match sample {
-            Some(sample) if sample.ready() => self.classifier.push_sample(self.settings, sample),
+            Some(sample) if sample.ready() => self.classifier.push_sample(
+                self.settings,
+                sample.sample_time_s,
+                to_f64_3(sample.position_m),
+                to_f64_4(sample.orientation_xyzw),
+            ),
             _ => {
                 self.classifier.reset();
                 self.tracking_loss_samples = self.tracking_loss_samples.saturating_add(1);
@@ -216,6 +221,12 @@ impl NativeControllerBreathStateEstimator {
         self.last_phase = CommonBreathPhase::Unknown;
     }
 
+    #[cfg(feature = "showcase")]
+    pub(crate) fn use_dynamic_axis(&mut self, enabled: bool) {
+        self.classifier.dynamic_axis = enabled.then(DynamicControllerAxis::default);
+        self.reset_history();
+    }
+
     pub(crate) fn marker_fields(&self) -> String {
         format!(
             "nativeControllerBreathSamples={} nativeControllerBreathTrackingLossSamples={} nativeControllerBreathLastSequenceId={} nativeControllerBreathPhase={}",
@@ -227,25 +238,338 @@ impl NativeControllerBreathStateEstimator {
     }
 }
 
+#[cfg(feature = "showcase")]
+pub(crate) const DEFAULT_POLAR_HOLD_MG: [f64; 2] = [8.0, 11.2];
+
+// Paired controller recordings establish positive X and Z as inhale for the
+// standard strap orientation. This vector sets polarity, not the learned axis.
+const POLAR_INHALE_REFERENCE: [f64; 3] = [
+    std::f64::consts::FRAC_1_SQRT_2,
+    0.0,
+    std::f64::consts::FRAC_1_SQRT_2,
+];
+
+// Store both values together. The render path never locks the settings owner.
+#[cfg(feature = "showcase")]
+static POLAR_HOLD_BITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(feature = "showcase")]
+pub(crate) fn set_polar_hold_mg(values: [f64; 2]) {
+    let [entry, exit] = values.map(|mg| ((mg / 1_000.0) as f32).to_bits());
+    POLAR_HOLD_BITS.store(
+        (u64::from(entry) << 32) | u64::from(exit),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+#[cfg(feature = "showcase")]
+fn polar_hold_g() -> [f64; 2] {
+    let bits = POLAR_HOLD_BITS.load(std::sync::atomic::Ordering::Relaxed);
+    if bits == 0 {
+        return DEFAULT_POLAR_HOLD_MG.map(|mg| mg / 1_000.0);
+    }
+    [(bits >> 32) as u32, bits as u32].map(|word| f64::from(f32::from_bits(word)))
+}
+
+#[cfg(feature = "showcase")]
+#[derive(Debug)]
+pub(crate) struct PolarRollingBreathState {
+    classifier: FixedControllerStateClassifier,
+    settings: NativeControllerBreathSettings,
+    baseline: Option<[f64; 3]>,
+    smoothed: Option<[f64; 3]>,
+    last_at: Option<f64>,
+    phase: CommonBreathPhase,
+    candidate: CommonBreathPhase,
+    candidate_since: f64,
+}
+
+#[cfg(feature = "showcase")]
+impl PolarRollingBreathState {
+    pub(crate) fn new() -> Self {
+        let settings = NativeControllerBreathSettings {
+            long_window_seconds: 1.3,
+            ..NativeControllerBreathSettings::default()
+        };
+        let mut classifier = FixedControllerStateClassifier::new(settings);
+        classifier.dynamic_axis = Some(DynamicControllerAxis::default());
+        classifier.sensor_axis_polarity = true;
+        Self {
+            classifier,
+            settings,
+            baseline: None,
+            smoothed: None,
+            last_at: None,
+            phase: CommonBreathPhase::Hold,
+            candidate: CommonBreathPhase::Hold,
+            candidate_since: 0.0,
+        }
+    }
+
+    pub(crate) fn reset_history(&mut self) {
+        *self = Self::new();
+    }
+
+    pub(crate) fn lose_signal(&mut self) {
+        self.reset_history();
+        self.phase = CommonBreathPhase::BadTracking;
+        self.candidate = CommonBreathPhase::BadTracking;
+    }
+
+    pub(crate) fn push_acceleration(
+        &mut self,
+        at: f64,
+        raw_g: [f64; 3],
+    ) -> (CommonBreathPhase, bool) {
+        if self.last_at.is_some_and(|last| at - last > 0.125) {
+            self.lose_signal();
+        }
+        let dt = self
+            .last_at
+            .map_or(0.0, |last| (at - last).clamp(0.0, 0.25));
+        self.last_at = Some(at);
+        let baseline = follow_acceleration(self.baseline, raw_g, 0.035, dt);
+        self.baseline = Some(baseline);
+        let filtered = follow_acceleration(self.smoothed, sub3(raw_g, baseline), 0.35, dt);
+        self.smoothed = Some(filtered);
+        let observed =
+            self.classifier
+                .push_sample(self.settings, at, filtered, [0.0, 0.0, 0.0, 1.0]);
+        if observed == CommonBreathPhase::BadTracking {
+            // Relearn the direction, retaining the filter's history across a motion rejection.
+            self.classifier.reset();
+            self.phase = observed;
+            self.candidate = observed;
+            self.candidate_since = at;
+            return (observed, true);
+        }
+        let next = self
+            .classifier
+            .dynamic_axis
+            .as_ref()
+            .and_then(|learner| learner.axis)
+            .map_or(CommonBreathPhase::Hold, |_| {
+                let signal = self.classifier.last_signal;
+                // Leave Hold only on stronger evidence than is needed to enter it.
+                let [entry, exit] = polar_hold_g();
+                let threshold = if self.phase == CommonBreathPhase::Hold {
+                    exit
+                } else {
+                    entry
+                };
+                if signal > threshold {
+                    CommonBreathPhase::Inhale
+                } else if signal < -threshold {
+                    CommonBreathPhase::Exhale
+                } else {
+                    CommonBreathPhase::Hold
+                }
+            });
+        if self.candidate != next || dt > 0.05 {
+            self.candidate = next;
+            self.candidate_since = at;
+        }
+        let confirm_seconds = if next == CommonBreathPhase::Hold {
+            0.06
+        } else {
+            0.12
+        };
+        if self.phase != next && at - self.candidate_since >= confirm_seconds {
+            self.phase = next;
+        }
+        (self.phase, false)
+    }
+}
+
+#[cfg(feature = "showcase")]
+#[test]
+fn polar_rolling_polarity_survives_relearning_across_zero_x() {
+    let mut polar = PolarRollingBreathState::new();
+    let mut run = |x: f64| -> Vec<CommonBreathPhase> {
+        polar.lose_signal();
+        (0..600)
+            .map(|i| {
+                let t = f64::from(i) * 0.02;
+                let breath = 0.033 * (std::f64::consts::TAU * t / 4.0).sin();
+                polar.push_acceleration(t, [x * breath, 1.0, breath]).0
+            })
+            .collect()
+    };
+    let positive_x = run(0.05);
+    let negative_x = run(-0.05);
+    for phase in [CommonBreathPhase::Inhale, CommonBreathPhase::Exhale] {
+        assert!(positive_x.contains(&phase));
+    }
+    assert!(
+        positive_x == negative_x,
+        "relearning reversed the published phases"
+    );
+}
+
+#[cfg(feature = "showcase")]
+fn follow_acceleration(previous: Option<[f64; 3]>, input: [f64; 3], hz: f64, dt: f64) -> [f64; 3] {
+    let alpha = -(-2.0 * std::f64::consts::PI * hz * dt).exp_m1();
+    previous.map_or(input, |value| {
+        std::array::from_fn(|i| value[i] + alpha * (input[i] - value[i]))
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 struct FixedControllerDeltaPoint {
     sample_time_s: f64,
     accumulator: f64,
 }
 
+/// Estimate direction from a bounded window of positions. Its sign comes
+/// from the controller orientation and the last reliable axis survives holds.
+#[derive(Debug, Default)]
+pub(crate) struct DynamicControllerAxis {
+    positions: std::collections::VecDeque<(f64, [f64; 3])>,
+    axis: Option<[f64; 3]>,
+}
+
+impl DynamicControllerAxis {
+    pub(crate) fn observe(
+        &mut self,
+        time: f64,
+        position: [f64; 3],
+        reference: Option<[f64; 3]>,
+    ) -> Option<[f64; 3]> {
+        const WINDOW_SECONDS: f64 = 3.0;
+        const SAMPLE_INTERVAL_SECONDS: f64 = 0.05;
+        while self
+            .positions
+            .front()
+            .is_some_and(|&(at, _)| time - at > WINDOW_SECONDS)
+        {
+            self.positions.pop_front();
+        }
+        if self
+            .positions
+            .back()
+            .is_some_and(|&(at, _)| time - at < SAMPLE_INTERVAL_SECONDS)
+        {
+            return self.axis;
+        }
+        self.positions.push_back((time, position));
+        let count = self.positions.len();
+        if count < 5 {
+            return self.axis;
+        }
+        let mut center = [0.0; 3];
+        for &(_, sample) in &self.positions {
+            for i in 0..3 {
+                center[i] += sample[i] / count as f64;
+            }
+        }
+        let mut covariance = [[0.0; 3]; 3];
+        for &(_, sample) in &self.positions {
+            let offset = sub3(sample, center);
+            for i in 0..3 {
+                for j in 0..3 {
+                    covariance[i][j] += offset[i] * offset[j] / count as f64;
+                }
+            }
+        }
+        let variance = covariance[0][0] + covariance[1][1] + covariance[2][2];
+        if variance < 1.0e-6 {
+            return self.axis;
+        }
+        let multiply = |axis| covariance.map(|row| dot3(row, axis));
+        let largest = (0..3)
+            .max_by(|&i, &j| covariance[i][i].total_cmp(&covariance[j][j]))
+            .unwrap_or(0);
+        let mut direction = [0.0; 3];
+        direction[largest] = 1.0;
+        for _ in 0..8 {
+            let Some(next) = normalized_axis(multiply(direction)) else {
+                return self.axis;
+            };
+            direction = next;
+        }
+        if dot3(direction, multiply(direction)) < 0.7 * variance {
+            return self.axis;
+        }
+        let alignment = match reference {
+            Some(reference) => {
+                let alignment = dot3(direction, reference);
+                if alignment.abs() < 0.1 {
+                    return self.axis;
+                }
+                alignment
+            }
+            None => self
+                .axis
+                .map_or(direction[largest], |previous| dot3(direction, previous)),
+        };
+        if alignment < 0.0 {
+            direction = direction.map(|component| -component);
+        }
+        if let Some(previous) = self.axis {
+            // Avoid a sign reversal if the orientation reference drifts.
+            if dot3(previous, direction) < 0.0 {
+                return self.axis;
+            }
+            direction = normalized_axis(std::array::from_fn(|i| {
+                previous[i] * 0.9 + direction[i] * 0.1
+            }))
+            .unwrap_or(previous);
+        }
+        self.axis = Some(direction);
+        self.axis
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn rolling_axis_uses_orientation_for_sign_and_adapts_after_a_hold() {
+    let mut learner = DynamicControllerAxis::default();
+    let reference = [0.0, 0.0, -1.0];
+    let original = normalized_axis([-1.0, 0.0, -0.5]).unwrap();
+    let shifted = normalized_axis([0.0, -1.0, -0.5]).unwrap();
+    assert!(learner.observe(0.0, [0.0; 3], Some(reference)).is_none());
+    for i in 1..30 {
+        learner.observe(
+            i as f64 * 0.06,
+            original.map(|x| x * i as f64 * 0.001),
+            Some(reference),
+        );
+    }
+    assert!(dot3(learner.axis.unwrap(), original) > 0.99);
+    for i in 30..100 {
+        learner.observe(
+            i as f64 * 0.06,
+            original.map(|x| x * 0.029),
+            Some(reference),
+        );
+    }
+    assert!(dot3(learner.axis.unwrap(), original) > 0.99);
+    for i in 100..200 {
+        let distance = ((i - 100) as f64 * 0.25).sin() * 0.01;
+        let position = std::array::from_fn(|j| original[j] * 0.029 + shifted[j] * distance);
+        learner.observe(i as f64 * 0.06, position, Some(reference));
+    }
+    assert!(dot3(learner.axis.unwrap(), shifted) > 0.99);
+}
+
 #[derive(Debug)]
 struct FixedControllerStateClassifier {
+    dynamic_axis: Option<DynamicControllerAxis>,
+    sensor_axis_polarity: bool,
     orientation_axis: [f64; 3],
     last_position: Option<[f64; 3]>,
     last_orientation: [f64; 4],
     last_sample_time_s: Option<f64>,
     delta_accumulator: f64,
     delta_history: Vec<FixedControllerDeltaPoint>,
+    last_signal: f64,
 }
 
 impl FixedControllerStateClassifier {
     fn new(settings: NativeControllerBreathSettings) -> Self {
         Self {
+            dynamic_axis: None,
+            sensor_axis_polarity: false,
             orientation_axis: normalized_axis(to_f64_3(settings.orientation_axis))
                 .unwrap_or([0.0, 0.0, -1.0]),
             last_position: None,
@@ -253,42 +577,65 @@ impl FixedControllerStateClassifier {
             last_sample_time_s: None,
             delta_accumulator: 0.0,
             delta_history: Vec::new(),
+            last_signal: 0.0,
         }
     }
 
     fn reset(&mut self) {
+        if let Some(axis) = self.dynamic_axis.as_mut() {
+            *axis = DynamicControllerAxis::default();
+        }
         self.last_position = None;
         self.last_orientation = [0.0, 0.0, 0.0, 1.0];
         self.last_sample_time_s = None;
         self.delta_accumulator = 0.0;
         self.delta_history.clear();
+        self.last_signal = 0.0;
     }
 
     fn push_sample(
         &mut self,
         settings: NativeControllerBreathSettings,
-        sample: NativeControllerBreathPoseSample,
+        time_s: f64,
+        position: [f64; 3],
+        orientation: [f64; 4],
     ) -> CommonBreathPhase {
-        let position = to_f64_3(sample.position_m);
-        let orientation = to_f64_4(sample.orientation_xyzw);
         let Some(last_position) = self.last_position else {
             self.last_position = Some(position);
             self.last_orientation = orientation;
-            self.last_sample_time_s = Some(sample.sample_time_s);
+            self.last_sample_time_s = Some(time_s);
             return CommonBreathPhase::Hold;
         };
 
         let sample_time_s = fixed_controller_sample_time_s(
-            sample.sample_time_s,
+            time_s,
             self.last_sample_time_s,
             fixed_controller_fallback_sample_seconds(settings),
         );
         let rotation_delta = quat_angle_degrees(self.last_orientation, orientation);
-        let axis_world = rotate_vec3_by_quat(
+        let reference_axis = rotate_vec3_by_quat(
             self.orientation_axis,
             normalize_quat_or_identity(orientation),
         );
-        let delta = dot3(sub3(position, last_position), axis_world);
+        let displacement = sub3(position, last_position);
+        let axis = if let Some(learner) = self.dynamic_axis.as_mut() {
+            if rotation_delta > f64::from(settings.rotation_guard_degrees)
+                || dot3(displacement, displacement)
+                    > f64::from(settings.moving_average_guard).powi(2)
+            {
+                self.reset();
+                return CommonBreathPhase::BadTracking;
+            }
+            let polarity_reference = if self.sensor_axis_polarity {
+                POLAR_INHALE_REFERENCE
+            } else {
+                reference_axis
+            };
+            learner.observe(sample_time_s, position, Some(polarity_reference))
+        } else {
+            Some(reference_axis)
+        };
+        let delta = axis.map_or(0.0, |axis| dot3(displacement, axis));
         self.delta_accumulator += delta;
         push_timed_delta_point(
             &mut self.delta_history,
@@ -309,12 +656,19 @@ impl FixedControllerStateClassifier {
             f64::from(settings.long_window_seconds),
         );
         let ma_diff = short_mean - long_mean;
+        self.last_signal = ma_diff;
         self.last_position = Some(position);
         self.last_orientation = orientation;
         self.last_sample_time_s = Some(sample_time_s);
 
+        // Polar acceleration has a larger breathing envelope than controller displacement.
+        let envelope_guard = if self.sensor_axis_polarity {
+            f64::from(0.06_f32)
+        } else {
+            f64::from(settings.moving_average_guard)
+        };
         if rotation_delta > f64::from(settings.rotation_guard_degrees)
-            || ma_diff.abs() > f64::from(settings.moving_average_guard)
+            || ma_diff.abs() > envelope_guard
         {
             return CommonBreathPhase::BadTracking;
         }
@@ -481,7 +835,7 @@ fn scale3(value: [f64; 3], scale: f64) -> [f64; 3] {
     [value[0] * scale, value[1] * scale, value[2] * scale]
 }
 
-fn cross3(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+pub(crate) fn cross3(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
     [
         left[1] * right[2] - left[2] * right[1],
         left[2] * right[0] - left[0] * right[2],

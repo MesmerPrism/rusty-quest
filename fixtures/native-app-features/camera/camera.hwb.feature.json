@@ -26,8 +26,7 @@
   "android_manifest": {
     "permissions": [
       "android.permission.CAMERA",
-      "horizonos.permission.HEADSET_CAMERA",
-      "horizonos.permission.SPATIAL_CAMERA"
+      "horizonos.permission.HEADSET_CAMERA"
     ],
     "uses_features": [
       "android.hardware.camera",

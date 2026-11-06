@@ -5,6 +5,7 @@ $script:RequestSchema = 'rusty.quest.native_app_private_asset_provider_request.v
 $script:ClosureSchema = 'rusty.quest.native_app_private_asset_closure.v1'
 $script:ReservedAssetRecords = @(
     [pscustomobject]@{ path = 'feature-lock.json'; kind = 'file' },
+    [pscustomobject]@{ path = 'android-build-identity.json'; kind = 'file' },
     [pscustomobject]@{ path = 'native-app-settings.json'; kind = 'file' },
     [pscustomobject]@{ path = 'panel-source-closure.json'; kind = 'file' },
     [pscustomobject]@{ path = 'native-hwb-blur-sdf-public.plan.json'; kind = 'file' },
@@ -229,6 +230,25 @@ function Assert-NativeAppPrivateAssetDestinationAvailable {
     }
 }
 
+# Generated identity is always builder-owned, including retained/direct closures.
+function Assert-NativeAppGeneratedAssetDestination {
+    param([Parameter(Mandatory=$true)][string]$Destination)
+    Assert-NativeAppPortableRelativePath -Path $Destination -Label 'Declared asset destination' -LogicalDestination
+    Assert-NativeAppPrivateAssetDestinationAvailable -Destination $Destination `
+        -BlockedRecords @([pscustomobject]@{path='android-build-identity.json';kind='file'}) -AcceptedDestinations @()
+}
+
+function Assert-NativeAppPrivateAssetClosureDestinations {
+    param([Parameter(Mandatory=$true)]$Closure)
+    $accepted=[Collections.Generic.List[string]]::new()
+    foreach($asset in @($Closure.assets)) {
+        $destination=[string]$asset.logical_destination
+        Assert-NativeAppPortableRelativePath -Path $destination -Label 'closure logical_destination' -LogicalDestination
+        Assert-NativeAppPrivateAssetDestinationAvailable -Destination $destination -BlockedRecords $script:ReservedAssetRecords -AcceptedDestinations @($accepted)
+        $accepted.Add($destination)
+    }
+}
+
 function Resolve-NativeAppPublicAssetInput {
     param(
         [Parameter(Mandatory = $true)][string]$AssetInput,
@@ -261,6 +281,7 @@ function Get-NativeAppPublicAssetDestinationRecords {
         $source = Resolve-NativeAppPublicAssetInput -AssetInput ([string]$assetInput) -RepoRoot $RepoRoot
         $item = Get-Item -LiteralPath $source -Force
         $leaf = $item.Name.Replace('\', '/')
+        Assert-NativeAppGeneratedAssetDestination -Destination $leaf
         if ($item.PSIsContainer) {
             $records.Add([pscustomobject]@{ path = $leaf; kind = 'directory' })
         } else {
@@ -474,6 +495,7 @@ function Copy-NativeAppPrivateAssetsFromClosure {
     if ([string]$Closure.provider_id -cnotmatch '\A[a-z0-9]+(?:[._-][a-z0-9]+)*\z') {
         throw 'Private asset closure provider_id is not canonical.'
     }
+    Assert-NativeAppPrivateAssetClosureDestinations -Closure $Closure
     $lockRoot = Split-Path -Parent ([IO.Path]::GetFullPath($FeatureLockPath))
     Assert-NativeAppNoReparsePath -Path $lockRoot -Root ([IO.Path]::GetPathRoot($lockRoot)) -Label 'Private asset feature-lock absolute chain'
     $lockRootItem = Get-NativeAppInspectedItem -Path $lockRoot -Label 'Private asset feature-lock root'
@@ -495,7 +517,7 @@ function Copy-NativeAppPrivateAssetsFromClosure {
         $previousId = $assetId
         $destination = [string]$asset.logical_destination
         Assert-NativeAppPortableRelativePath -Path $destination -Label 'closure logical_destination' -LogicalDestination
-        Assert-NativeAppPrivateAssetDestinationAvailable -Destination $destination -BlockedRecords @() -AcceptedDestinations @($accepted)
+        Assert-NativeAppPrivateAssetDestinationAvailable -Destination $destination -BlockedRecords $script:ReservedAssetRecords -AcceptedDestinations @($accepted)
         Assert-NativeAppPrivateAssetSha256 -Value ([string]$asset.source_sha256) -Label "$assetId source_sha256"
         if ([int64]$asset.source_bytes -lt 1) { throw "$assetId source_bytes must be positive." }
         if ([string]$asset.media_type -cnotmatch '\A[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*\z') {
@@ -760,6 +782,8 @@ function Assert-NativeAppApkAssetArchive {
 }
 
 Export-ModuleMember -Function @(
+    'Assert-NativeAppGeneratedAssetDestination',
+    'Assert-NativeAppPrivateAssetClosureDestinations',
     'Get-NativeAppPrivateAssetFileSha256',
     'Get-NativeAppPrivateAssetTextSha256',
     'Resolve-NativeAppPublicAssetInput',

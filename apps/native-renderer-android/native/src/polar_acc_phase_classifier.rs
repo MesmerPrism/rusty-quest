@@ -644,6 +644,7 @@ mod tests {
         let mut honest = PolarAccPhaseClassifier::new(tuned());
         let mut guided = PolarAccPhaseClassifier::new(tuned());
         let target = BreathGuidanceTarget {
+            bias_revision: 0,
             expected_phase: CommonBreathPhase::Inhale,
             expected_phase_token: "inhale",
             bias_percent: 0,
@@ -668,12 +669,14 @@ mod tests {
     fn guidance_shifts_directional_evidence_and_hold_attenuates_it() {
         let parameters = tuned().parameters();
         let inhale = BreathGuidanceTarget {
+            bias_revision: 0,
             expected_phase: CommonBreathPhase::Inhale,
             expected_phase_token: "inhale",
             bias_percent: 80,
             official_active_time_ms: 1_000,
         };
         let hold = BreathGuidanceTarget {
+            bias_revision: 0,
             expected_phase: CommonBreathPhase::Hold,
             expected_phase_token: "hold",
             bias_percent: 80,
@@ -686,6 +689,7 @@ mod tests {
                 -0.10,
                 parameters,
                 BreathGuidanceTarget {
+                    bias_revision: 0,
                     bias_percent: 100,
                     ..inhale
                 }

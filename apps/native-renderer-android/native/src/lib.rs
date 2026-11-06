@@ -10,8 +10,13 @@ use rusty_quest_native_renderer_contracts::{validate_native_renderer_plan, Nativ
 
 const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
+#[cfg(not(feature = "showcase"))]
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
+#[cfg(feature = "showcase")]
+const MARKER_PREFIX: &str = "RUSTY_QUEST_VISUAL_SHOWCASE";
 
+#[cfg(feature = "showcase")]
+mod automatic_breath;
 #[path = "../../../../crates/rusty-quest-development-feedback-native/src/lib.rs"]
 mod development_feedback_core;
 pub(crate) use development_feedback_core::{abi, digest, loader, runtime};
@@ -25,11 +30,19 @@ mod native_input_geometry;
 
 mod bounded_breath_phase_integrator;
 mod breath_calibration_controller_action;
+#[cfg(not(feature = "showcase"))]
 mod breath_capture;
 mod breath_composition_driver;
 mod breath_composition_runtime;
 mod breath_guidance;
 mod breath_input_selection;
+#[cfg(not(feature = "showcase"))]
+mod breath_monitor;
+#[cfg(all(feature = "showcase", target_os = "android"))]
+mod showcase_jni;
+#[cfg(feature = "showcase")]
+mod showcase_runtime;
+mod source_clock;
 
 #[cfg(target_os = "android")]
 mod acamera_sys;
@@ -43,6 +56,10 @@ mod android_hardware_buffer;
 mod camera_projection;
 mod camera_projection_metadata;
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
+mod display_composite_capture_export;
+#[cfg(all(feature = "showcase", target_os = "android"))]
+#[path = "showcase_no_capture_export.rs"]
 mod display_composite_capture_export;
 #[cfg(target_os = "android")]
 mod display_composite_feedback;
@@ -58,7 +75,10 @@ mod environment_depth_projection_alignment;
 mod environment_depth_scene_map;
 #[cfg(any(test, not(target_os = "android")))]
 mod environment_depth_surface_support;
+mod experiment_control_mode;
+#[cfg(not(feature = "showcase"))]
 mod experiment_session;
+#[cfg(not(feature = "showcase"))]
 mod experiment_session_runtime;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;
@@ -66,12 +86,26 @@ mod gpu_environment_depth_particle_stats;
 mod gpu_environment_depth_particles;
 #[cfg(target_os = "android")]
 mod gpu_hand_anchor_particles;
+// Host fixtures exercise the real buffer validation and push ABI without a Vulkan device.
+#[cfg(all(test, not(target_os = "android")))]
+mod gpu_hand_mesh_visual {
+    #[derive(Clone, Copy)]
+    pub(crate) struct HandMeshVisualEyeProjection {
+        pub(crate) position: [f32; 4],
+        pub(crate) orientation_xyzw: [f32; 4],
+        pub(crate) fov_tangents: [f32; 4],
+    }
+}
 #[cfg(target_os = "android")]
 mod gpu_hand_mesh_visual;
 #[cfg(target_os = "android")]
 mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
 mod gpu_mesh_ui_panel;
+#[cfg(any(test, target_os = "android"))]
+mod gpu_native_panel_text;
+#[cfg(any(test, target_os = "android"))]
+mod gpu_native_panel_ui;
 #[cfg(target_os = "android")]
 mod gpu_private_particles;
 #[cfg(target_os = "android")]
@@ -85,12 +119,18 @@ mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 mod live_hand_joint_capture;
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 mod live_hand_mesh_capture;
+#[cfg(not(feature = "showcase"))]
 mod lsl_android;
+#[cfg(not(feature = "showcase"))]
 mod lsl_panel_runtime;
+#[cfg(not(feature = "showcase"))]
 mod lsl_rusty_outlet;
+#[cfg(not(feature = "showcase"))]
 mod lsl_transport_bridge;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;
@@ -106,8 +146,19 @@ mod native_camera_profiles;
 #[cfg(target_os = "android")]
 mod native_camera_reader_selection;
 mod native_controller_breath_state;
+mod native_geometry_selection;
+mod native_hybrid_panel;
 #[cfg(any(test, target_os = "android"))]
 mod native_mesh_ui;
+mod native_page;
+mod native_panel_info;
+mod native_panel_interaction;
+mod native_panel_model;
+mod native_panel_resolution;
+mod native_panel_text;
+mod native_panel_text_layout;
+mod native_panel_toolbar;
+mod native_panel_ui_geometry;
 #[cfg(any(test, target_os = "android"))]
 mod native_pointer_visual;
 mod native_renderer_camera_options;
@@ -121,6 +172,10 @@ mod native_renderer_options;
 #[cfg(test)]
 mod native_renderer_options_tests;
 #[cfg(any(test, target_os = "android"))]
+#[cfg(not(feature = "showcase"))]
+mod native_renderer_panel_bridge;
+#[cfg(all(feature = "showcase", any(test, target_os = "android")))]
+#[path = "showcase_panel_bridge.rs"]
 mod native_renderer_panel_bridge;
 mod native_renderer_passthrough_style_options;
 mod native_renderer_private_particle_heartbeat_orbit_request;
@@ -138,7 +193,12 @@ mod native_renderer_timing;
 mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
 #[cfg(any(test, target_os = "android"))]
+mod native_scene_composition;
+#[cfg(any(test, target_os = "android"))]
 mod native_scene_depth;
+#[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
+mod native_standalone_terminal_jni;
 mod openxr_controller_breath_adapter;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
@@ -152,12 +212,17 @@ mod particle_adapter_consumer;
 mod polar_acc_breath_adapter;
 mod polar_acc_phase_classifier;
 mod polar_composition_adapters;
+mod polar_input_health;
+#[cfg(feature = "showcase")]
+mod polar_tilt_breath_state;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
 mod private_particle_heartbeat_pulse_adapter;
+mod private_particle_orbit_settings;
 #[cfg(any(target_os = "android", test))]
 mod private_particle_push_abi;
+mod private_particle_tracer_budget;
 mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
@@ -165,9 +230,17 @@ mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;
 mod same_apk_panel_action;
+#[cfg(not(feature = "showcase"))]
 mod session_recording_clock;
+#[cfg(not(feature = "showcase"))]
 mod session_recording_contract;
+#[cfg(not(feature = "showcase"))]
+mod session_recording_export;
+#[cfg(not(feature = "showcase"))]
+mod session_recording_inventory;
+#[cfg(not(feature = "showcase"))]
 mod session_recording_recovery;
+#[cfg(not(feature = "showcase"))]
 mod session_recording_writer;
 mod simultaneous_hands_controllers;
 #[cfg(target_os = "android")]
@@ -203,6 +276,8 @@ fn android_on_create(state: &android_activity::OnCreateState) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_on_create_state(state);
     marker("native-app-settings", native_app_settings.marker_fields());
+    native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
+    #[cfg(not(feature = "showcase"))]
     if native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping(
         &native_app_settings,
     ) {
@@ -210,7 +285,7 @@ fn android_on_create(state: &android_activity::OnCreateState) {
             Ok(Some(epoch)) => marker(
                 "experiment-session-panel",
                 format!(
-                    "event=native-activity-cold-launch status=accepted launchEpoch={} launcher=android.app.NativeActivity panelDeferredUntilSubmittedFrame=true",
+                    "event=native-activity-cold-launch status=accepted launchEpoch={} panelDeferredUntilSubmittedFrame=true",
                     epoch
                 ),
             ),
@@ -321,12 +396,19 @@ fn runtime_permissions_for_route(
         permissions.push("android.permission.CAMERA");
         permissions.push("horizonos.permission.HEADSET_CAMERA");
     }
-    if hand_adapter_effect_request(runtime_options).any()
-        || native_alternate_input::tracked_pointer_enabled_for_mode(
-            runtime_options.render_mode.marker_value(),
-        )
+    if !native_alternate_input::controller_only_selected()
+        && (hand_adapter_effect_request(runtime_options).any()
+            || native_alternate_input::tracked_pointer_enabled_for_mode(
+                runtime_options.render_mode.marker_value(),
+            ))
     {
         permissions.push("com.oculus.permission.HAND_TRACKING");
+    }
+    if runtime_options
+        .environment_depth_settings
+        .runtime_provider_requested()
+    {
+        permissions.push("horizonos.permission.USE_SCENE");
     }
     permissions.sort_unstable();
     permissions.dedup();
@@ -353,19 +435,20 @@ fn particle_adapter_effect_request(
 fn hand_adapter_effect_request(
     runtime_options: &native_renderer_options::NativeRendererRuntimeOptions,
 ) -> hand_adapter_consumer::HandAdapterEffectRequest {
-    hand_adapter_consumer::HandAdapterEffectRequest {
-        live_hand_input: runtime_options
+    hand_adapter_consumer::HandAdapterEffectRequest::from_selection(
+        native_geometry_selection::hand_geometry_enabled(),
+        runtime_options
             .compact_hand_input_source_mode
             .selects_live_frame(),
-        default_hand_visual: runtime_options
+        runtime_options
             .render_mode
             .requests_openxr_default_hand_visual(),
-        graft_copies: runtime_options.render_mode.forces_graft_copies()
+        runtime_options.render_mode.forces_graft_copies()
             || runtime_options.hand_mesh_graft_copies_enabled,
-        real_hand_meshes: runtime_options.render_mode.forces_real_hand_meshes()
+        runtime_options.render_mode.forces_real_hand_meshes()
             || runtime_options.hand_mesh_real_hands_visible,
-        hand_anchor_particles: runtime_options.hand_anchor_particle_settings.enabled,
-    }
+        runtime_options.hand_anchor_particle_settings.enabled,
+    )
 }
 
 #[cfg(target_os = "android")]
@@ -419,13 +502,39 @@ fn request_runtime_permissions(
 }
 
 #[cfg(target_os = "android")]
-struct ExperimentSessionImmersiveOwner;
+#[cfg(not(feature = "showcase"))]
+struct ExperimentSessionImmersiveOwner<'a> {
+    app: &'a android_activity::AndroidApp,
+    identity: u64,
+    epoch: u64,
+    runtime: Option<std::sync::Arc<experiment_session_runtime::ExperimentSessionRuntime>>,
+}
+#[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
+static NEXT_IMMERSIVE_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[cfg(target_os = "android")]
-impl Drop for ExperimentSessionImmersiveOwner {
+#[cfg(not(feature = "showcase"))]
+impl Drop for ExperimentSessionImmersiveOwner<'_> {
     fn drop(&mut self) {
-        match experiment_session_runtime::shutdown_for_immersive_owner_destroyed() {
-            Ok(()) => marker(
+        if self.identity == 0 {
+            return;
+        }
+        android_events::status_owner_ended(self.identity, self.epoch);
+        if self.identity > 0 {
+            let _ = native_renderer_panel_bridge::notify_app_status_owner(
+                self.app,
+                self.identity,
+                self.epoch,
+                false,
+            );
+        }
+        // Provider retirement precedes shutdown, including failed shutdown ACK.
+
+        match self.runtime.as_ref().expect("positive native identity owns a captured runtime")
+                .shutdown_captured_immersive_owner(self.identity) {
+            Ok(false) => marker("experiment-session-runtime", "status=former-immersive-owner-dropped shutdownDispatched=false"),
+            Ok(true) => marker(
                 "experiment-session-runtime",
                 "status=immersive-owner-destroyed recordingFinalized=true nextLaunchFresh=true",
             ),
@@ -443,21 +552,73 @@ impl Drop for ExperimentSessionImmersiveOwner {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
-    match experiment_session_runtime::initialize_from_android_app(&app) {
-        Err(error) => marker(
-            "experiment-session-runtime",
-            format!("status=error reason={}", sanitize(&error)),
-        ),
-        Ok(()) => marker(
-            "experiment-session-runtime",
-            "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
-        ),
-    }
-    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner;
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());
     native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
+    #[cfg(not(feature = "showcase"))]
+    let initialization = native_renderer_panel_bridge::prepare_before_initialize(
+        || native_renderer_panel_bridge::prepare_app_owner(&app),
+        || experiment_session_runtime::initialize_from_android_app(&app),
+    );
+    #[cfg(not(feature = "showcase"))]
+    match initialization {
+        Err(error) => {
+            marker(
+                "experiment-session-runtime",
+                format!("status=error reason={}", sanitize(&error)),
+            );
+            keep_activity_alive_after_error(&app);
+            return;
+        }
+        Ok(()) => marker(
+            "experiment-session-runtime",
+            "status=ready initializationCompleted=true",
+        ),
+    }
+    #[cfg(not(feature = "showcase"))]
+    let proposed_identity = NEXT_IMMERSIVE_OWNER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    #[cfg(not(feature = "showcase"))]
+    let claimed = experiment_session_runtime::capture_immersive_owner_runtime(proposed_identity);
+    #[cfg(not(feature = "showcase"))]
+    let (identity, epoch, runtime) = match claimed {
+        Ok((epoch, runtime)) if epoch > 0 && epoch <= i64::MAX as u64 => {
+            marker("experiment-session-runtime", format!(
+                "status=owner-captured immersiveOwnerIdentity={proposed_identity} runtimeEpoch={epoch}"));
+            (proposed_identity, epoch, Some(runtime))
+        }
+        _ => {
+            marker("hub-status", "app_owner_start_ineligible");
+            keep_activity_alive_after_error(&app);
+            return;
+        }
+    };
+    #[cfg(not(feature = "showcase"))]
+    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner {
+        app: &app,
+        identity,
+        epoch,
+        runtime,
+    };
+    #[cfg(not(feature = "showcase"))]
+    android_events::status_owner_started(identity, epoch);
+    #[cfg(not(feature = "showcase"))]
+    if identity > 0 {
+        if let Err(reason) =
+            native_renderer_panel_bridge::notify_app_status_owner(&app, identity, epoch, true)
+        {
+            marker(
+                "hub-status",
+                format!("app_owner_start_failed reason={reason}"),
+            );
+        }
+    }
+    #[cfg(feature = "showcase")]
+    if let Err(error) = native_renderer_panel_bridge::prepare_app_owner(&app) {
+        marker("showcase", sanitize(&error));
+        keep_activity_alive_after_error(&app);
+        return;
+    }
     let particle_adapter_input =
         particle_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let particle_adapter_decision =
@@ -472,7 +633,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let plan = match load_public_plan() {
@@ -482,7 +643,7 @@ fn android_main(app: android_activity::AndroidApp) {
                 "plan-load",
                 format!("status=error reason={}", sanitize(&error)),
             );
-            keep_activity_alive_after_error(app);
+            keep_activity_alive_after_error(&app);
             return;
         }
     };
@@ -504,10 +665,13 @@ fn android_main(app: android_activity::AndroidApp) {
     breath_composition_runtime::install_from_android_properties_with_defaults(|name| {
         native_app_settings.lookup(name)
     });
+    #[cfg(feature = "showcase")]
+    showcase_runtime::restore_breath_selection_after_runtime_install();
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
             |name| native_app_settings.lookup(name),
         );
+    #[cfg(not(feature = "showcase"))]
     let runtime_options =
         native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
     marker(
@@ -533,7 +697,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=simultaneous-hands-controllers-activation-rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let particle_effect_request = particle_adapter_effect_request(&runtime_options);
@@ -546,7 +710,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=particle-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     if !hand_adapter_consumer::effects_authorized(&hand_adapter_decision, hand_effect_request) {
@@ -554,7 +718,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=hand-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let xr_vulkan_readiness = xr_vulkan::probe(
@@ -569,7 +733,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "simultaneous-hands-controllers",
             "status=rejected reason=probe-preconditions-failed effectsStarted=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let embedded_manifold_broker_settings =
@@ -577,11 +741,14 @@ fn android_main(app: android_activity::AndroidApp) {
             &native_app_settings,
         );
     embedded_manifold_broker_bridge::start_if_enabled(&app, &embedded_manifold_broker_settings);
+    #[cfg(not(feature = "showcase"))]
     let lsl_transport_settings =
         lsl_transport_bridge::LslTransportSettings::load_from_android_properties_with_defaults(
             &native_app_settings,
         );
+    #[cfg(not(feature = "showcase"))]
     if lsl_transport_settings.panel_controlled {
+        #[cfg(not(feature = "showcase"))]
         lsl_panel_runtime::initialize(&app, true);
     } else {
         lsl_transport_bridge::start_if_enabled(
@@ -603,7 +770,7 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
             native_passthrough_requested,
-            runtime_options.render_mode.uses_solid_black_background(),
+            runtime_options.render_mode.uses_solid_black_background(native_passthrough_requested),
             runtime_options
                 .render_mode
                 .requests_openxr_default_hand_visual(),
@@ -627,7 +794,7 @@ fn android_main(app: android_activity::AndroidApp) {
                 "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} stimulusVolumeRoute={} {}",
                 runtime_options.render_mode.marker_value(),
                 native_passthrough_requested,
-                runtime_options.render_mode.uses_solid_black_background(),
+                runtime_options.render_mode.uses_solid_black_background(native_passthrough_requested),
                 runtime_options.render_mode.uses_stimulus_volume(),
                 runtime_options.stimulus_volume_settings.marker_fields()
             ),
@@ -734,6 +901,13 @@ fn android_main(app: android_activity::AndroidApp) {
 
     match xr_vulkan::run_projection_loop(
         &app,
+        #[cfg(not(feature = "showcase"))]
+        _experiment_session_immersive_owner
+            .runtime
+            .as_deref()
+            .map(|runtime| (runtime, _experiment_session_immersive_owner.identity)),
+        #[cfg(feature = "showcase")]
+        None,
         camera_runtime.as_ref(),
         runtime_options,
         simultaneous_hands_controllers_decision,
@@ -756,7 +930,9 @@ fn android_main(app: android_activity::AndroidApp) {
 
     drop(camera_runtime);
     drop(video_projection_playback);
+    #[cfg(not(feature = "showcase"))]
     lsl_panel_runtime::shutdown();
+    #[cfg(not(feature = "showcase"))]
     if lsl_transport_settings.panel_controlled {
         lsl_transport_bridge::release_multicast_lock(&app);
     }
@@ -814,12 +990,12 @@ fn run_counter_fallback_loop(
 }
 
 #[cfg(target_os = "android")]
-fn keep_activity_alive_after_error(app: android_activity::AndroidApp) {
+fn keep_activity_alive_after_error(app: &android_activity::AndroidApp) {
     use std::time::Duration;
 
     let mut running = true;
     while running {
-        android_events::pump_activity_events(&app, Duration::from_millis(250), &mut running);
+        android_events::pump_activity_events(app, Duration::from_millis(250), &mut running);
     }
 }
 

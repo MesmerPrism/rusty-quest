@@ -10,6 +10,9 @@ use openxr as xr;
 
 use crate::recorded_hand_replay::{RecordedHandGpuPose, RecordedHandSkinningFrame};
 
+#[path = "live_hand_rig_selection.rs"]
+mod rig_selection;
+
 const RUNTIME_JOINTS: [xr::HandJoint; 21] = [
     xr::HandJoint::PALM,
     xr::HandJoint::WRIST,
@@ -128,30 +131,8 @@ pub(crate) struct LiveHandCompactFrameSet {
 }
 
 impl LiveHandCompactFrameSet {
-    pub(crate) fn primary_frame(&self) -> Option<&RecordedHandSkinningFrame> {
-        self.left.as_ref().or(self.right.as_ref())
-    }
-
-    pub(crate) fn primary_handedness(&self) -> Option<&'static str> {
-        if self.left.is_some() {
-            Some("left")
-        } else if self.right.is_some() {
-            Some("right")
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn secondary_frame(&self) -> Option<&RecordedHandSkinningFrame> {
-        if self.left.is_some() {
-            self.right.as_ref()
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn secondary_handedness(&self) -> Option<&'static str> {
-        (self.left.is_some() && self.right.is_some()).then_some("right")
+    pub(crate) fn frame_for_rig(&self, rig_handedness: &str) -> Option<&RecordedHandSkinningFrame> {
+        rig_selection::frame_for_rig(self.left.as_ref(), self.right.as_ref(), rig_handedness)
     }
 }
 
@@ -296,6 +277,14 @@ impl LiveHandCompactInput {
         stats.left_active = left.is_some();
         stats.right_active = right.is_some();
         stats.active_hand_count = stats.left_active as u32 + stats.right_active as u32;
+        // UI aim depends on active wrist/aim validity, not every visual rig joint.
+        let ui_pointer = right
+            .as_ref()
+            .and_then(|joints| hand_ui_pointer(joints, right_result.aim.as_ref(), true))
+            .or_else(|| {
+                left.as_ref()
+                    .and_then(|joints| hand_ui_pointer(joints, left_result.aim.as_ref(), false))
+            });
 
         if left.is_none() && right.is_none() {
             stats.reason = "no-active-hand";
@@ -326,7 +315,13 @@ impl LiveHandCompactInput {
             stats.reason = "invalid-live-hand-frame";
             stats.frame_index = frame_index;
             stats.timestamp_ns = timestamp_ns;
-            return (LiveHandCompactFrameSet::default(), stats);
+            return (
+                LiveHandCompactFrameSet {
+                    ui_pointer,
+                    ..Default::default()
+                },
+                stats,
+            );
         }
 
         stats.frame_ready = true;
@@ -351,14 +346,7 @@ impl LiveHandCompactInput {
             LiveHandCompactFrameSet {
                 left: left_frame,
                 right: right_frame,
-                ui_pointer: right
-                    .as_ref()
-                    .and_then(|joints| hand_ui_pointer(joints, right_result.aim.as_ref(), true))
-                    .or_else(|| {
-                        left.as_ref().and_then(|joints| {
-                            hand_ui_pointer(joints, left_result.aim.as_ref(), false)
-                        })
-                    }),
+                ui_pointer,
             },
             stats,
         )
@@ -382,6 +370,32 @@ impl LiveHandCompactInput {
                     .as_ref()
                     .and_then(|joints| hand_ui_pointer(joints, left.aim.as_ref(), false))
             })
+    }
+
+    /// Current left wrist in the exact session reference space/time; no inferred pose.
+    pub(crate) fn locate_panel_wrist(
+        &self,
+        reference_space: &xr::Space,
+        time: xr::Time,
+        sequence: u64,
+    ) -> Option<crate::native_panel_model::TrackedPose> {
+        let result = locate_hand_result(reference_space, self.left_tracker.as_ref(), time);
+        let wrist = &result.locations.as_ref()?[xr::HandJoint::WRIST];
+        let required = xr::SpaceLocationFlags::POSITION_VALID
+            | xr::SpaceLocationFlags::ORIENTATION_VALID
+            | xr::SpaceLocationFlags::POSITION_TRACKED
+            | xr::SpaceLocationFlags::ORIENTATION_TRACKED;
+        if !wrist.location_flags.contains(required) {
+            return None;
+        }
+        let p = wrist.pose.position;
+        let q = wrist.pose.orientation;
+        Some(crate::native_panel_model::TrackedPose {
+            position: [p.x, p.y, p.z],
+            orientation_xyzw: [q.x, q.y, q.z, q.w],
+            valid: true,
+            sequence,
+        })
     }
 
     fn tracker_ready(&self) -> bool {

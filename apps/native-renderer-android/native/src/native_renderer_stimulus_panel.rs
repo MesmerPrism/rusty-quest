@@ -3,6 +3,7 @@
 //! The panel is a low-rate requester. Rust remains the validator and the
 //! effective runtime authority.
 
+use crate::private_particle_orbit_settings::OrbitDistanceSettings;
 use std::collections::BTreeMap;
 #[cfg(target_os = "android")]
 use std::{
@@ -86,6 +87,7 @@ pub(crate) struct PrivateParticlePanelUpdateMask {
     pub(crate) color_facing_attenuation_strength: bool,
     pub(crate) material: bool,
     pub(crate) polar_rr_orbit_boost: bool,
+    pub(crate) orbit_distance: [bool; 4],
 }
 
 impl PrivateParticlePanelUpdateMask {
@@ -111,6 +113,7 @@ impl PrivateParticlePanelUpdateMask {
             color_facing_attenuation_strength: false,
             material: false,
             polar_rr_orbit_boost: false,
+            orbit_distance: [false; 4],
         }
     }
 
@@ -136,6 +139,7 @@ impl PrivateParticlePanelUpdateMask {
             color_facing_attenuation_strength: true,
             material: true,
             polar_rr_orbit_boost: true,
+            orbit_distance: [false; 4],
         }
     }
 
@@ -159,6 +163,7 @@ impl PrivateParticlePanelUpdateMask {
             || self.color_facing_attenuation_strength
             || self.material
             || self.polar_rr_orbit_boost
+            || self.orbit_distance.iter().any(|field| *field)
     }
 
     pub(crate) fn merge(&mut self, newer: Self) {
@@ -185,6 +190,9 @@ impl PrivateParticlePanelUpdateMask {
         self.color_facing_attenuation_strength |= newer.color_facing_attenuation_strength;
         self.material |= newer.material;
         self.polar_rr_orbit_boost |= newer.polar_rr_orbit_boost;
+        for index in 0..4 {
+            self.orbit_distance[index] |= newer.orbit_distance[index];
+        }
     }
 }
 const PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR: u32 = 0;
@@ -251,6 +259,7 @@ pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) material_preset: Option<PrivateParticleMaterialPreset>,
     pub(crate) material_override_enabled: bool,
     pub(crate) polar_rr_orbit_boost_enabled: bool,
+    pub(crate) orbit_distance: OrbitDistanceSettings,
 }
 
 #[cfg(target_os = "android")]
@@ -294,6 +303,7 @@ impl PrivateParticleDynamicsPanelCandidate {
             material_preset: self.material_preset,
             material_override_enabled: self.material_override_enabled,
             polar_rr_orbit_boost_enabled: self.polar_rr_orbit_boost_enabled,
+            orbit_distance: self.orbit_distance,
         }
     }
 }
@@ -547,6 +557,7 @@ fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, 
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn append_questionnaire_result(
     session_dir_path: &str,
     result_json: &str,
@@ -600,6 +611,7 @@ fn append_questionnaire_result(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn validate_questionnaire_session_dir(
     session_dir_path: &str,
     session_id: &str,
@@ -640,6 +652,7 @@ fn validate_questionnaire_session_dir(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn assert_safe_session_id(value: &str) -> Result<(), String> {
     let mut chars = value.chars();
     let first = chars.next().ok_or_else(|| "empty_session_id".to_string())?;
@@ -656,6 +669,7 @@ fn assert_safe_session_id(value: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn ensure_questionnaire_bundle_skeleton(
     session_dir: &Path,
     session_id: &str,
@@ -798,6 +812,7 @@ fn ensure_questionnaire_bundle_skeleton(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn questionnaire_session_schema_json() -> Value {
     json!({
         "schema_id": "rusty.telemetry.session_schema.v1",
@@ -820,6 +835,7 @@ fn questionnaire_session_schema_json() -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn json_file_schema(file_name: &str, schema_id: &str) -> Value {
     json!({
         "file_name": file_name,
@@ -831,6 +847,7 @@ fn json_file_schema(file_name: &str, schema_id: &str) -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn jsonl_file_schema(file_name: &str, schema_id: &str) -> Value {
     json!({
         "file_name": file_name,
@@ -842,6 +859,7 @@ fn jsonl_file_schema(file_name: &str, schema_id: &str) -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn csv_file_schema(file_name: &str, schema_id: &str) -> Value {
     json!({
         "file_name": file_name,
@@ -853,6 +871,7 @@ fn csv_file_schema(file_name: &str, schema_id: &str) -> Value {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn refresh_questionnaire_artifact_manifest(
     session_dir: &Path,
     session_id: &str,
@@ -947,6 +966,7 @@ fn refresh_questionnaire_artifact_manifest(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_json_if_missing(path: &Path, value: &Value) -> Result<(), String> {
     if path.exists() {
         return Ok(());
@@ -955,6 +975,7 @@ fn write_json_if_missing(path: &Path, value: &Value) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|_| "create_json_parent_failed".to_string())?;
@@ -972,6 +993,7 @@ fn write_json(path: &Path, value: &Value) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_text_if_missing(path: &Path, text: String) -> Result<(), String> {
     if path.exists() {
         return Ok(());
@@ -990,11 +1012,13 @@ fn write_text_if_missing(path: &Path, text: String) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn csv_header(fields: &[&str]) -> String {
     format!("{}\n", fields.join(","))
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn wall_time_unix_ns_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1145,6 +1169,7 @@ pub(crate) fn poll_spatial_camera_panel_open(frame_count: u64) -> Option<Spatial
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveStimulusCandidate(
     mut env: jni::EnvUnowned,
@@ -1211,6 +1236,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_QuestionnairePanelActivity_nativeSubmitQuestionnaireResult(
     mut env: jni::EnvUnowned,
@@ -1278,6 +1304,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Qu
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateLayerSelection(
     mut env: jni::EnvUnowned,
@@ -1344,6 +1371,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveDepthAlignment(
     mut env: jni::EnvUnowned,
@@ -1410,6 +1438,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateParticleDynamics(
     mut env: jni::EnvUnowned,
@@ -1476,6 +1505,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeStartDriverProfileSessionBlock(
     mut env: jni::EnvUnowned,
@@ -1598,9 +1628,11 @@ pub(crate) fn parse_private_particle_dynamics_json(
         ];
         const HEARTBEAT: &str = "heartbeat_pulse";
         if let Some(key) = private_particles.as_object().and_then(|object| {
-            object
-                .keys()
-                .find(|key| !ALLOWED.contains(&key.as_str()) && key.as_str() != HEARTBEAT)
+            object.keys().find(|key| {
+                !ALLOWED.contains(&key.as_str())
+                    && key.as_str() != HEARTBEAT
+                    && key.as_str() != "orbit_distance"
+            })
         }) {
             return Err(format!("unsupported_private_particle_patch_field:{key}"));
         }
@@ -1615,6 +1647,13 @@ pub(crate) fn parse_private_particle_dynamics_json(
     if field_patch && private_particles.get("visual_scale").is_some() {
         update_mask.visual_scale = true;
     }
+    let orbit_distance = if let Some(orbit) = private_particles.get("orbit_distance") {
+        let (settings, mask) = OrbitDistanceSettings::parse_patch(orbit)?;
+        update_mask.orbit_distance = mask;
+        settings
+    } else {
+        OrbitDistanceSettings::defaults(false)
+    };
     let particle_size = private_particle_size_config(private_particles)?;
     if field_patch {
         if let Some(size) = private_particles.get("size").and_then(Value::as_object) {
@@ -1778,6 +1817,7 @@ pub(crate) fn parse_private_particle_dynamics_json(
         particle_size_oscillation_percent: particle_size.4,
         world_anchor_scale_m,
         driver_values01,
+        orbit_distance,
         driver_control_modes: driver_controls.0,
         driver_control_source_slots: driver_controls.1,
         driver_control_curve_codes: driver_controls.2,
@@ -2131,7 +2171,7 @@ fn private_particle_curve_code(control: &Value) -> Result<u32, String> {
     }
 }
 
-fn private_particle_canonical_driver_range(index: usize) -> (f32, f32) {
+pub(crate) fn private_particle_canonical_driver_range(index: usize) -> (f32, f32) {
     match index {
         2 => (0.04, 0.115),
         3 => (0.0, 0.1),
@@ -2406,6 +2446,7 @@ pub(crate) fn parse_candidate_json(text: &str) -> Result<StimulusPanelCandidate,
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn apply_app_private_candidate(
     app: &android_activity::AndroidApp,
     options: NativeRendererRuntimeOptions,
@@ -2574,6 +2615,7 @@ fn private_layer_label(index: u32) -> &'static str {
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_live_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2594,6 +2636,7 @@ pub(crate) fn write_live_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_private_layer_selection_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2625,6 +2668,7 @@ pub(crate) fn write_private_layer_selection_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_environment_depth_alignment_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2683,6 +2727,7 @@ pub(crate) fn write_environment_depth_alignment_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 pub(crate) fn write_private_particle_dynamics_status(
     app: &android_activity::AndroidApp,
     status: &str,
@@ -2743,6 +2788,7 @@ pub(crate) fn write_private_particle_dynamics_status(
                         .unwrap_or("packaged-default"),
                     "parameter_source": effective.settings.material_parameter_source
                 },
+                "orbit_distance": effective.settings.orbit_distance.status(),
                 "heartbeat_pulse": {
                     "mode": if effective.settings.polar_rr_orbit_boost_enabled {
                         "polar-rr-orbit-boost"
@@ -2803,6 +2849,7 @@ pub(crate) fn write_private_particle_dynamics_status(
                         .unwrap_or("packaged-default"),
                     "parameter_source": "requested"
                 },
+                "orbit_distance": candidate.orbit_distance.status(),
                 "heartbeat_pulse": {
                     "mode": if candidate.polar_rr_orbit_boost_enabled {
                         "polar-rr-orbit-boost"
@@ -2833,6 +2880,7 @@ pub(crate) fn write_private_particle_dynamics_status(
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 fn write_status(
     data_path: &Path,
     status: &str,
@@ -3315,6 +3363,47 @@ mod tests {
             .driver_values01
             .iter()
             .all(|selected| *selected));
+    }
+
+    #[test]
+    fn orbit_distance_source_patch_accepts_all_closed_sources() {
+        for source in [
+            "static-minimum",
+            "oscillator",
+            "polar-heartbeat",
+            "synthetic-heartbeat",
+        ] {
+            let request = json!({
+                "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+                "revision": 41,
+                "update_mode": "field-patch",
+                "private_particles": {"orbit_distance": {"source": source}},
+                "apply": {"mode": "apply-on-next-safe-frame"}
+            });
+            assert!(
+                parse_private_particle_dynamics_json(&request.to_string()).is_ok(),
+                "source {source} must be admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn orbit_distance_partial_patch_does_not_select_other_fields() {
+        let request = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA, "revision": 42,
+            "update_mode": "field-patch",
+            "private_particles": {"orbit_distance": {"synthetic_bpm": 90.0}},
+            "apply": {"mode": "apply-on-next-safe-frame"}
+        });
+        let candidate = parse_private_particle_dynamics_json(&request.to_string()).unwrap();
+        assert_eq!(
+            candidate.update_mask.orbit_distance,
+            [false, false, false, true]
+        );
+        assert!(!candidate.update_mask.polar_rr_orbit_boost);
+        assert!(!candidate.update_mask.tracer_draw_slots_per_oscillator);
+        assert!(!candidate.update_mask.particle_size_oscillation_percent);
+        assert_eq!(candidate.orbit_distance.synthetic_bpm, 90.0);
     }
 
     #[test]

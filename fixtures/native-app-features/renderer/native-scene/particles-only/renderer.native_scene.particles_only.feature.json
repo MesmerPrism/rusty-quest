@@ -1,0 +1,64 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.native_scene.particles_only",
+  "module_path": "renderer/native-scene/particles-only",
+  "module_kind": "scene-geometry-selection",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit native particle and mesh-panel scene without hand skinning, hand mesh, graft or replay geometry resources. Optional tracked hand UI input remains independently selected.",
+  "provides": [
+    "render.native_scene.particles_only"
+  ],
+  "depends_on": [
+    "renderer.native_scene"
+  ],
+  "incompatible_with": [
+    "hand_mesh_visual",
+    "hand_mesh_live_input",
+    "hand_anchor_particles",
+    "sdf_visual"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "native-worldspace-integration"
+    ]
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED",
+        "value": "false"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "nativeHandGeometryEnabled=false"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "pwsh -NoProfile -File tools/checks/Test-NativeRendererHandGeometrySelection.ps1"
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Only reusable platform resources, interfaces and markers are public; downstream algorithms and payloads remain app-owned."
+}

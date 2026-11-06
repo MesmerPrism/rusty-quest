@@ -210,7 +210,19 @@ impl BreathGuidanceTimeline {
         official_active_time_ms: u64,
         bias_percent: u8,
     ) -> Option<BreathGuidanceTarget> {
-        if bias_percent == 0 || bias_percent > 100 {
+        if bias_percent == 0 {
+            return None;
+        }
+        self.intended_target_at(official_active_time_ms, bias_percent)
+    }
+
+    // The same intended schedule exists when visual bias weight is zero.
+    pub(crate) fn intended_target_at(
+        &self,
+        official_active_time_ms: u64,
+        bias_percent: u8,
+    ) -> Option<BreathGuidanceTarget> {
+        if bias_percent > 100 {
             return None;
         }
         let index = self
@@ -218,6 +230,7 @@ impl BreathGuidanceTimeline {
             .partition_point(|segment| segment.end_ms <= official_active_time_ms);
         let segment = self.segments.get(index)?;
         (official_active_time_ms >= segment.start_ms).then_some(BreathGuidanceTarget {
+            bias_revision: 0,
             expected_phase: segment.phase.common(),
             expected_phase_token: segment.phase.as_str(),
             bias_percent,
@@ -225,13 +238,49 @@ impl BreathGuidanceTimeline {
         })
     }
 
+    pub(crate) fn phase_segment_at(&self, active_ms: u64) -> Option<(usize, u64, u64)> {
+        let index = self
+            .segments
+            .partition_point(|segment| segment.end_ms <= active_ms);
+        let segment = self.segments.get(index)?;
+        (active_ms >= segment.start_ms).then_some((index, segment.start_ms, segment.end_ms))
+    }
+
     pub(crate) fn audio_source_sha256(&self) -> &str {
         &self.audio_source_sha256
+    }
+
+    /// A schematic normalized envelope for operator comparison, not lung volume.
+    /// Hold retains the preceding endpoint. Gaps remain absent from the projection.
+    pub(crate) fn monitor_segments(&self, start_ms: u64, end_ms: u64) -> Vec<Value> {
+        let mut level = 0.0_f32;
+        let mut result = Vec::new();
+        for segment in &self.segments {
+            let (from, to) = match segment.phase {
+                BreathGuidancePhase::Inhale => (0.0, 1.0),
+                BreathGuidancePhase::Exhale => (1.0, 0.0),
+                BreathGuidancePhase::Hold => (level, level),
+            };
+            level = to;
+            // The extra entry lets the caller reject an unsupported dense
+            // window explicitly instead of silently omitting the current target.
+            if segment.end_ms > start_ms && segment.start_ms <= end_ms && result.len() < 257 {
+                result.push(serde_json::json!([
+                    segment.start_ms,
+                    segment.end_ms,
+                    segment.phase.as_str(),
+                    from,
+                    to
+                ]));
+            }
+        }
+        result
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BreathGuidanceTarget {
+    pub(crate) bias_revision: u64,
     pub(crate) expected_phase: CommonBreathPhase,
     pub(crate) expected_phase_token: &'static str,
     pub(crate) bias_percent: u8,
@@ -296,6 +345,54 @@ mod tests {
     }
 
     #[test]
+    fn box_phase_segments_keep_both_retention_edges_and_official_clock() {
+        let (bytes, mut identity) = fixture();
+        let mut value: Value = serde_json::from_slice(&bytes).unwrap();
+        value["segments"] = serde_json::json!([
+            {"start_ms":0,"end_ms":4000,"phase":"inhale"},
+            {"start_ms":4000,"end_ms":8000,"phase":"hold"},
+            {"start_ms":8000,"end_ms":12000,"phase":"exhale"},
+            {"start_ms":12000,"end_ms":16000,"phase":"hold"},
+            {"start_ms":16000,"end_ms":20000,"phase":"hold"}
+        ]);
+        let bytes = value.to_string().into_bytes();
+        identity.source_bytes = bytes.len() as u64;
+        identity.source_sha256 = rusty_quest_broker_authority::packaged_json_sha256(
+            std::str::from_utf8(&bytes).unwrap(),
+        );
+        let timeline =
+            BreathGuidanceTimeline::parse_exact(&bytes, identity, &"a".repeat(64)).unwrap();
+        for (time, index, phase) in [
+            (0, 0, "inhale"),
+            (4000, 1, "hold"),
+            (8000, 2, "exhale"),
+            (12000, 3, "hold"),
+            (16000, 4, "hold"),
+        ] {
+            let target = timeline.intended_target_at(time, 0).unwrap();
+            assert_eq!(target.expected_phase_token, phase);
+            assert_eq!(target.official_active_time_ms, time);
+            assert_eq!(timeline.phase_segment_at(time).unwrap().0, index);
+        }
+        assert!(timeline.target_at(0, 0).is_none()); // existing zero-bias contract unchanged
+        assert!(timeline.phase_segment_at(20000).is_none());
+        assert_eq!(timeline.phase_segment_at(15500), Some((3, 12000, 16000))); // seek/current only
+        let monitor = timeline.monitor_segments(4000, 16000);
+        assert_eq!(
+            monitor[0],
+            serde_json::json!([4000, 8000, "hold", 1.0, 1.0])
+        );
+        assert_eq!(
+            monitor[1],
+            serde_json::json!([8000, 12000, "exhale", 1.0, 0.0])
+        );
+        assert_eq!(
+            monitor[2],
+            serde_json::json!([12000, 16000, "hold", 0.0, 0.0])
+        );
+    }
+
+    #[test]
     fn timeline_is_half_open_and_gaps_are_unbiased() {
         let (bytes, identity) = fixture();
         let timeline = BreathGuidanceTimeline::parse_exact(&bytes, identity, &"a".repeat(64))
@@ -341,5 +438,21 @@ mod tests {
         )
         .unwrap_err()
         .contains("overlap"));
+    }
+
+    #[test]
+    fn dense_monitor_window_is_detectable_instead_of_silently_losing_the_target() {
+        let (bytes, identity) = fixture();
+        let mut timeline =
+            BreathGuidanceTimeline::parse_exact(&bytes, identity, &"a".repeat(64)).unwrap();
+        timeline.segments = (0..300)
+            .map(|t| BreathGuidanceSegment {
+                start_ms: t,
+                end_ms: t + 1,
+                phase: BreathGuidancePhase::Inhale,
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        assert_eq!(timeline.monitor_segments(0, 300).len(), 257);
     }
 }

@@ -24,6 +24,7 @@ public final class NativeRendererSoftKioskPolicyTest {
         terminalIntentAdmissionIsExact();
         launchAuthorityIsOneShotAndRejectsSpoofReplayAndRecreation();
         launcherAdmissionRejectsRecreationAndIntentAnomalies();
+        selfServiceTimeoutSurvivesPresentationGenerationChanges();
         selfWatchdogDoesNotNeedHomeResolutionOrAccessibility();
         selfWatchdogAllowsBothOwnedSurfacesAndRecoversAppSelectedTarget();
         selfDepartureNeedsRecoveryAndIgnoresFocusNoiseAndPrompts();
@@ -561,15 +562,42 @@ public final class NativeRendererSoftKioskPolicyTest {
         }
     }
 
+    private static void selfServiceTimeoutSurvivesPresentationGenerationChanges() {
+        NativeRendererSoftKioskCoordinator c = new NativeRendererSoftKioskCoordinator();c.useSelfWatchdog();
+        equal(0L,c.beginSelfServiceStart());
+        require(c.armFromExplicitColdLaunch(10L,NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,"experimenter"));
+        long attempt=c.beginSelfServiceStart();require(attempt>0L);equal(0L,c.beginSelfServiceStart());
+        require(c.beginTransition(11L,NativeRendererForegroundGuardPolicy.Presentation.PANEL,"experimenter",100L,1000L));
+        c.failSelfServiceStart(attempt);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_FAILED,c.snapshot().effectiveness);
+        long replacement=c.beginSelfServiceStart();require(replacement>attempt);c.failSelfServiceStart(attempt);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_STARTING,c.snapshot().effectiveness);
+        c.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.CONNECTED);c.failSelfServiceStart(replacement);
+        equal(NativeRendererSoftKioskCoordinator.ServiceState.CONNECTED,c.snapshot().serviceState);
+        c.observeOwnSurface(NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY,11L,1200L);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.READY_ARMED,c.snapshot().effectiveness);
+        c.observeSelfPresentationAbsent(10L);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.READY_ARMED,c.snapshot().effectiveness);
+        c.observeSelfPresentationAbsent(11L);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_AWAITING_PRESENTATION,c.snapshot().effectiveness);
+        equal(0,c.snapshot().recoveryAttempts);
+    }
+
     private static void selfWatchdogDoesNotNeedHomeResolutionOrAccessibility() {
         NativeRendererSoftKioskCoordinator c = new NativeRendererSoftKioskCoordinator();
         c.useSelfWatchdog();
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.READY_DISARMED, c.snapshot().effectiveness);
         require(c.armFromExplicitColdLaunch(100L,
             NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE, "experimenter"));
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_MISSING, c.snapshot().effectiveness);
+        c.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.START_PENDING);
         equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_STARTING, c.snapshot().effectiveness);
+        c.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.START_FAILED);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_FAILED, c.snapshot().effectiveness);
         c.updateServiceState(NativeRendererSoftKioskCoordinator.ServiceState.CONNECTED);
-        equal(NativeRendererSoftKioskCoordinator.Effectiveness.READY_ARMED, c.snapshot().effectiveness);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.WATCHDOG_AWAITING_PRESENTATION, c.snapshot().effectiveness);
         c.observeOwnSurface(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY, 100L, 10L);
+        equal(NativeRendererSoftKioskCoordinator.Effectiveness.READY_ARMED, c.snapshot().effectiveness);
         for (int i = 1; i <= 3; i++) {
             NativeRendererSoftKioskCoordinator.Action a = c.observeSelfDeparture(100L, i, i * 1_000L);
             equal(i == 3 ? NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT

@@ -1,0 +1,1 @@
+package android.content.res; public class AssetManager {public static final int ACCESS_STREAMING=2;public byte[] bytes=new byte[]{1,2,3};public java.io.InputStream open(String p){return new java.io.ByteArrayInputStream(bytes);}public java.io.InputStream open(String p,int m){return open(p);}public AssetFileDescriptor openFd(String p){return new AssetFileDescriptor();}}

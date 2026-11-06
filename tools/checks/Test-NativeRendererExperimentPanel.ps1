@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$HubFeatureLock
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +12,7 @@ $panelRoot = Join-Path $repo 'apps/native-renderer-android/panel-modules/breath-
 $polarRoot = Join-Path $repo 'apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer'
 $testRoot = Join-Path $repo 'apps/native-renderer-android/tests/java/io/github/mesmerprism/rustyquest/native_renderer'
 $module = Join-Path $panelRoot 'BreathCompositionPanelModule.java'
+$codec = Join-Path $panelRoot 'ExperimentSessionJsonCodec.java'
 $viewPolicy = Join-Path $panelRoot 'ExperimentSessionPanelViewPolicy.java'
 $coordinator = Join-Path $panelRoot 'ExperimentSessionPanelCoordinator.java'
 $polar = Join-Path $polarRoot 'PolarSensorPanel.java'
@@ -54,13 +56,13 @@ Assert-Contains $module 'PROVENANCE_EXPLICIT_USER_LAUNCH'
 Assert-Contains $module 'EXTRA_LAUNCH_EPOCH'
 Assert-Contains $coordinator 'admitTrustedColdLaunch'
 Assert-Contains $coordinator 'awaitNativeRestartRoute'
-Assert-Contains $module 'by_condition'
+Assert-Contains $codec 'by_condition'
 Assert-Contains $module 'condition-a'
 Assert-Contains $module 'condition-b'
 Assert-Contains $module 'storage_status'
 Assert-Contains $module 'recovery_status'
-Assert-Contains $module 'kiosk_enforcement'
-Assert-Contains $module 'validNonNegativeLong'
+Assert-Contains $codec 'kiosk_enforcement'
+Assert-Contains $codec 'validNonNegativeLong'
 Assert-Contains $viewPolicy 'Saving…'
 Assert-Contains $viewPolicy 'Unclassified/recovered:'
 Assert-Contains $viewPolicy 'invalid native readback'
@@ -166,6 +168,21 @@ try {
     & $javaCommand.Source '-cp' $output 'io.github.mesmerprism.rustyquest.native_renderer.ExperimenterPanelShortcutPolicyTest'
     if ($LASTEXITCODE -ne 0) { throw "Panel controller shortcut policy Java test failed: $LASTEXITCODE" }
 
+    $jsonJar = Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
+    if ($null -eq $jsonJar) { throw 'Host org.json test dependency unavailable' }
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $panelRoot 'ExperimentSessionBleProtocol.java') (Join-Path $panelRoot 'ExperimentSessionControlCapability.java') (Join-Path $testRoot 'ExperimentSessionControlCapabilityTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "Capability compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionControlCapabilityTest'
+    if ($LASTEXITCODE -ne 0) { throw "Capability controls failed: $LASTEXITCODE" }
+    & (Join-Path $PSScriptRoot 'Test-PolarStopBleReceipt.ps1') -RepoRoot $repo
+    & python (Join-Path $PSScriptRoot 'test_remote_durable_pending.py') --repo $repo
+    if ($LASTEXITCODE -ne 0) { throw 'Durable remote confirmation controls failed' }
+
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) '-d' $output (Join-Path $panelRoot 'ExperimentSessionUiControlHandoff.java') (Join-Path $testRoot 'ExperimentSessionUiControlHandoffTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "UI handoff control compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionUiControlHandoffTest'
+    if ($LASTEXITCODE -ne 0) { throw "UI handoff controls failed: $LASTEXITCODE" }
+
     $androidSdk = @(
         [Environment]::GetEnvironmentVariable('ANDROID_HOME'),
         [Environment]::GetEnvironmentVariable('ANDROID_SDK_ROOT')
@@ -194,6 +211,11 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static boolean admitTerminalSaveAndExit(android.app.Activity activity, android.content.Intent intent) { return false; }
     static void finishTerminalSaveAndExit(android.app.Activity activity, boolean saved, long generation, String operationId, long revision) {}
     static String conditionAudioReadiness(String condition) { return "audio-track-not-ready"; }
+    static org.json.JSONObject polarStopProjection() throws Exception { return null; }
+    static org.json.JSONObject dispatchPolarStop(org.json.JSONObject request,String token) throws Exception {
+        throw new SecurityException("polar-feature-unselected");
+    }
+    static boolean experimentSessionOpenControlDefault() { return false; }
     static String conditionBreathGuidanceReadiness(String condition) { return "no-pattern"; }
     static int conditionBreathGuidanceDefaultBias(String condition) { return 0; }
     static boolean startConditionAudio(long generation, String operationId, String condition) { return false; }
@@ -210,7 +232,18 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static String nativeSubmitLivePrivateParticleDynamics(String value) { return "{}"; }
 }
 '@, (New-Object Text.UTF8Encoding($false)))
+    $bridge = Join-Path $stubDir 'NativeRendererAppStatusBridge.java'
+    $builderText = [IO.File]::ReadAllText((Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1'))
+    Import-Module (Join-Path $repo 'tools/lib/NativeRendererAppStatusBridge.psm1') -Force
+    $offBridge = New-NativeRendererAppStatusBridgeSource
+    if ($builderText.IndexOf('(New-NativeRendererAppStatusBridgeSource)') -gt $builderText.IndexOf('if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {', $builderText.IndexOf('$generatedEmbeddedPackageDir ='))) {
+        throw 'No-panel composition must generate the inert bridge before panel selection.'
+    }
+    Assert-Contains (Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1') 'Write-NativeRendererJavaSourceResponse -SourceFiles $sourceFiles -GeneratedAppStatusBridgePath $generatedAppStatusBridgePath -Path $sourceList'
+    [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
     $androidSources = @(
+        (Join-Path $mainRoot 'NativeRendererActivityComponents.java'),
+        (Join-Path $mainRoot 'NativeRendererBootObservation.java'),
         (Join-Path $mainRoot 'PanelModule.java'),
         (Join-Path $mainRoot 'DisplayCompositeProjectionService.java'),
         (Join-Path $mainRoot 'NativeAppSettingsReader.java'),
@@ -227,6 +260,24 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'PanelImmersiveHandoffProofPolicy.java'),
         (Join-Path $panelRoot 'BreathCompositionCommandReceiver.java'),
         (Join-Path $panelRoot 'BreathCompositionPanelModule.java'),
+        (Join-Path $panelRoot 'ExperimentControlMode.java'),
+        (Join-Path $panelRoot 'ExperimentSessionJsonCodec.java'),
+        (Join-Path $panelRoot 'ExperimentSessionBleNamePolicy.java'),
+        (Join-Path $panelRoot 'ExperimentSessionBleProtocol.java'),
+        (Join-Path $panelRoot 'ExperimentSessionControlCapability.java'),
+        (Join-Path $panelRoot 'ExperimentSessionUiControlHandoff.java'),
+        (Join-Path $panelRoot 'ExperimentSessionBleServer.java'),
+        (Join-Path $panelRoot 'ExperimentSessionGatewayProtocol.java'),
+        (Join-Path $panelRoot 'ExperimentSessionCommandJournal.java'),
+        (Join-Path $panelRoot 'ExperimentSessionCommandGateway.java'),
+        (Join-Path $panelRoot 'ExperimentSessionWifiSnapshot.java'),
+        (Join-Path $panelRoot 'ExperimentSessionDiscoveryServer.java'),
+        (Join-Path $panelRoot 'ExperimentSessionGuestRegistry.java'),
+        (Join-Path $panelRoot 'ExperimentSessionHeadsetIdentity.java'),
+        (Join-Path $panelRoot 'ExperimentSessionGatewayHttpServer.java'),
+        (Join-Path $panelRoot 'ExperimentSessionDirectNetwork.java'),
+        (Join-Path $panelRoot 'ExperimentSessionRelayClient.java'),
+        (Join-Path $panelRoot 'ExperimentSessionPanelRenderReceipt.java'),
         (Join-Path $panelRoot 'ExperimentSessionAndroidShell.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelState.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelCoordinator.java'),
@@ -241,23 +292,45 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $lslRoot 'LslPanelConfigStore.java'),
         (Join-Path $privateRoot 'PrivateParticlePanelController.java'),
         (Join-Path $testRoot 'PolarAutoConnectionPolicyTest.java'),
+        (Join-Path $testRoot 'PolarRecoveryIntentTest.java'),
         $stub
     )
-    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output @androidSources
+    $javaResponse = Join-Path $output 'androidSources.rsp'
+    $null = Write-NativeRendererJavaSourceResponse -SourceFiles $androidSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Android panel javac failed: $LASTEXITCODE" }
+    $debugRoot = Join-Path $repo 'apps/native-renderer-android/src/debug/java/io/github/mesmerprism/rustyquest/native_renderer'
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-cp' $output '-d' $output (Join-Path $debugRoot 'ExperimentSessionDebugOperator.java') (Join-Path $debugRoot 'ExperimentSessionDebugControlProvider.java')
+    if ($LASTEXITCODE -ne 0) { throw "Opt-in debug operator API compile failed: $LASTEXITCODE" }
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) '-d' $output (Join-Path $testRoot 'ExperimentSessionDebugOperatorTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "Debug operator control compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionDebugOperatorTest'
+    if ($LASTEXITCODE -ne 0) { throw "Debug operator shape controls failed: $LASTEXITCODE" }
+
+
     & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarAutoConnectionPolicyTest'
     if ($LASTEXITCODE -ne 0) { throw "Polar auto-connection policy test failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarRecoveryIntentTest'
+    if ($LASTEXITCODE -ne 0) { throw "Polar recovery intent test failed: $LASTEXITCODE" }
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) '-d' $output (Join-Path $testRoot 'PolarProjectedStopActionsTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "Polar projected stop control compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) 'io.github.mesmerprism.rustyquest.native_renderer.PolarProjectedStopActionsTest'
+    if ($LASTEXITCODE -ne 0) { throw "Polar projected stop action controls failed: $LASTEXITCODE" }
+    & (Join-Path $PSScriptRoot 'Test-PolarProjectedStopCli.ps1') -RepoRoot $repo
     # Compile the real generated shell as well as the module stub; no APK/build invocation.
     $buildText = [IO.File]::ReadAllText((Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1'))
     $shellMatch = [regex]::Match($buildText, '(?s)\$generatedControlPanelActivitySource = @"\r?\n(.*?)\r?\n"@')
     $nativeMatch = [regex]::Match($buildText, '(?s)elseif \(\$selectedPanelModuleId -ceq "breath-composition-controls"\) \{\s*@"\r?\n(.*?)\r?\n"@')
     if (-not $shellMatch.Success -or -not $nativeMatch.Success) { throw 'Generated shell source missing' }
-    $generatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $nativeMatch.Groups[1].Value)
+    $generatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $nativeMatch.Groups[1].Value).Replace('$experimentSessionHubHook', '')
     $generatedShell = $generatedShell.Replace('$selectedPanelEntrySimpleName', 'BreathCompositionPanelModule')
     $generatedShell = $generatedShell.Replace('$selectedPanelModuleId', 'breath-composition-controls')
     $generatedShell = $generatedShell.Replace('$experimentSessionTerminalAudioStop', '        stopCurrentConditionAudioForTerminal(true);')
     $generatedShell = $generatedShell.Replace('$experimentSessionOnCreate', '        ownerApplicationContext = getApplicationContext();')
     $generatedShell = $generatedShell.Replace('$polarRuntimeReopenFromExplicitLaunch', '            PolarSensorRuntime.reopenClosedFromExplicitLaunch();')
+    $polarHookMatch = [regex]::Match($buildText, "(?s)\`$polarBleStopHooks = if .*?@'\r?\n(.*?)\r?\n'@")
+    if (-not $polarHookMatch.Success) { throw 'Actual generated Polar stop bridge missing' }
+    $generatedShell = $generatedShell.Replace('$polarBleStopHooks', $polarHookMatch.Groups[1].Value)
     $generatedShell = $generatedShell.Replace('    // EXPERIMENT_SESSION_SHELL_BEGIN' + [Environment]::NewLine, '')
     $generatedShell = $generatedShell.Replace('    // EXPERIMENT_SESSION_SHELL_END' + [Environment]::NewLine, '')
     foreach ($anchor in @('experimentSessionProfileSha256', 'experimentSessionProviderManifestSha256', 'experimentSessionInventorySha256')) {
@@ -281,10 +354,63 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $panelRoot 'ExperimentSessionPackagedClosure.java'),
         (Join-Path $audioRoot 'ConditionAudioRuntime.java'),
         (Join-Path $audioRoot 'ConditionAudioContract.java'),
-        (Join-Path $audioRoot 'ConditionAudioAndroidMediaBackendFactory.java')
+        (Join-Path $audioRoot 'ConditionAudioAndroidMediaBackendFactory.java'),
+        (Join-Path $audioRoot 'BreathPhaseAudioEngine.java'),
+        (Join-Path $audioRoot 'BreathPhaseAudioAndroidOwner.java')
     )
-    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output @androidSources
+    $javaResponse = Join-Path $output 'androidSources.rsp'
+    $null = Write-NativeRendererJavaSourceResponse -SourceFiles $androidSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Generated Android shell javac failed: $LASTEXITCODE" }
+
+    # Compile the real production-generated independent BLE composition and
+    # both selected owners. Use descriptor-owned source closure, not mocked JNI
+    # lifecycle functions or a hand-written bridge.
+    $ownerHook = [regex]::Match($buildText, '(?s)\$experimentSessionHubHook = @''\r?\n(.*?)\r?\n''@')
+    if (-not $ownerHook.Success) { throw 'Actual application owner preparation hook unavailable.' }
+    $ownerShell = $generatedShell.Insert($generatedShell.LastIndexOf('}'), $ownerHook.Groups[1].Value + [Environment]::NewLine)
+    [IO.File]::WriteAllText($stub,$ownerShell,[Text.UTF8Encoding]::new($false))
+    $hubDescriptor = Get-Content (Join-Path $repo 'fixtures/native-app-features/ui/experiment-session-hub-status-provider/ui.experiment_session_hub_status_provider.feature.json') -Raw | ConvertFrom-Json
+    foreach ($selection in @(@{hub=$false;ble=$true},@{hub=$true;ble=$true},@{hub=$true;ble=$false})) {
+        $hubOn = $selection.hub
+        $bleOn = $selection.ble
+        [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource -Selected:$hubOn -BleSelected:$bleOn -PolarSelected),[Text.UTF8Encoding]::new($false))
+        $ownerSources = @($androidSources)
+        if ($hubOn) {
+            $ownerSources += @($hubDescriptor.panel_source_module.source_files | ForEach-Object {Join-Path $repo $_})
+            $ownerSources += (Join-Path $panelRoot 'ExperimentSessionStatusObservation.java')
+        }
+        $javaResponse = Join-Path $output "ble-owner-hub-$hubOn-ble-$bleOn.rsp"
+        $null = Write-NativeRendererJavaSourceResponse -SourceFiles $ownerSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
+        & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
+        if ($LASTEXITCODE -ne 0) { throw "Selected BLE native/application owner compilation failed: Hub=$hubOn" }
+        Write-Host "Production BLE owner bridge Android compilation passed: Hub=$hubOn BLE=$bleOn"
+    }
+    [IO.File]::WriteAllText($stub,$generatedShell,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
+
+    if (-not [string]::IsNullOrWhiteSpace($HubFeatureLock)) {
+        $hubLock = Get-Content -LiteralPath $HubFeatureLock -Raw | ConvertFrom-Json
+        if (@($hubLock.selected_feature_ids) -cnotcontains 'ui.experiment_session_hub_status_provider') { throw 'Actual optional feature lock required.' }
+        $hookMatch = [regex]::Match($buildText, '(?s)\$experimentSessionHubHook = @''\r?\n(.*?)\r?\n''@')
+        if (-not $hookMatch.Success) { throw 'Actual optional generated hook unavailable.' }
+        $hubShell = $generatedShell.Insert($generatedShell.LastIndexOf('}'), $hookMatch.Groups[1].Value + [Environment]::NewLine)
+        if (-not $hubShell.Contains('prepareExperimentSessionAppOwner(')) { throw 'Optional generated hook was not inserted.' }
+        $closureSources = @($hubLock.panel_source_closure.source_files | ForEach-Object {
+            $path = Join-Path $repo ([string]$_.path)
+            if ((Get-FileHash $path).Hash.ToLowerInvariant() -cne [string]$_.sha256) { throw 'Actual closure source drift.' }
+            $path
+        })
+        [IO.File]::WriteAllText($stub, $hubShell, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource -Selected),[Text.UTF8Encoding]::new($false))
+        $hubSources = @($androidSources + $closureSources | Select-Object -Unique)
+        $javaResponse = Join-Path $output 'hubSources.rsp'
+    $null = Write-NativeRendererJavaSourceResponse -SourceFiles $hubSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
+        if ($LASTEXITCODE -ne 0) { throw "Optional actual-closure Android shell javac failed: $LASTEXITCODE" }
+        Write-Host 'Optional Hub actual source closure and generated shell Android compilation passed.'
+        [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
+    }
 
     # A non-breath selected panel must compile from its own closure.  In
     # particular it must not need the breath-only experiment session, packaged
@@ -294,7 +420,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         $buildText,
         '(?s)if \(\$selectedPanelModuleId -ceq "stimulus-volume"\) \{\s*@"\r?\n(.*?)\r?\n"@')
     if (-not $stimulusNativeMatch.Success) { throw 'Stimulus generated JNI surface missing' }
-    $unrelatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $stimulusNativeMatch.Groups[1].Value)
+    $unrelatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $stimulusNativeMatch.Groups[1].Value).Replace('$experimentSessionHubHook', '')
     $unrelatedShell = $unrelatedShell.Replace('$selectedPanelEntrySimpleName', 'StimulusVolumePanelModule')
     $unrelatedShell = $unrelatedShell.Replace('$selectedPanelModuleId', 'stimulus-volume')
     $unrelatedShell = $unrelatedShell.Replace('$experimentSessionTerminalAudioStop', '')
@@ -330,6 +456,8 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     }
     [IO.File]::WriteAllText($stub, $unrelatedShell, (New-Object Text.UTF8Encoding($false)))
     $unrelatedSources = @(
+        (Join-Path $mainRoot 'NativeRendererActivityComponents.java'),
+        (Join-Path $mainRoot 'NativeRendererBootObservation.java'),
         (Join-Path $mainRoot 'PanelModule.java'),
         (Join-Path $mainRoot 'PanelModuleRegistry.java'),
         (Join-Path $mainRoot 'NativeRendererForegroundGuardPolicy.java'),
@@ -348,7 +476,9 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         $stimulusModule,
         $stub
     )
-    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output @unrelatedSources
+    $javaResponse = Join-Path $output 'unrelatedSources.rsp'
+    $null = Write-NativeRendererJavaSourceResponse -SourceFiles $unrelatedSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Generated non-breath shell javac failed: $LASTEXITCODE" }
 } finally {
     if (Test-Path -LiteralPath $output) {
@@ -356,4 +486,9 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     }
 }
 
+& (Join-Path $PSScriptRoot 'Test-ExperimentSessionDebugSelection.ps1') -RepoRoot $repo
+& python (Join-Path $PSScriptRoot 'test_polar_recovery_callbacks.py')
+if ($LASTEXITCODE -ne 0) { throw 'Production Polar callback/UI owner controls failed' }
 Write-Host 'Test-NativeRendererExperimentPanel PASS'
+
+& (Join-Path $PSScriptRoot "Test-PolarTrustedColdStart.ps1") -RepoRoot $repo

@@ -1,0 +1,7 @@
+package android.media;
+public class MediaPlayer {
+ public interface OnPreparedListener{void onPrepared(MediaPlayer p);} public interface OnCompletionListener{void onCompletion(MediaPlayer p);}public interface OnErrorListener{boolean onError(MediaPlayer p,int w,int e);}
+ public static final java.util.List<MediaPlayer> players=new java.util.concurrent.CopyOnWriteArrayList<MediaPlayer>();
+ public volatile boolean looping,playing,released,failPause;public volatile int position,starts;private OnPreparedListener prepared;
+ public MediaPlayer(){players.add(this);}public void setDataSource(java.io.FileDescriptor f,long o,long n){}public void setLooping(boolean l){looping=l;}public void prepare(){}public void prepareAsync(){prepared.onPrepared(this);}public void setOnPreparedListener(OnPreparedListener l){prepared=l;}public void setOnCompletionListener(OnCompletionListener l){}public void setOnErrorListener(OnErrorListener l){}public void start(){if(released)throw new IllegalStateException();playing=true;starts++;}public void pause(){if(failPause)throw new IllegalStateException("injected pause failure");playing=false;}public void stop(){playing=false;}public void release(){released=true;playing=false;}public boolean isPlaying(){return playing;}public int getCurrentPosition(){return position;}public void seekTo(int p){position=p;}
+}

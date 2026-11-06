@@ -104,6 +104,12 @@ pub enum PolarProjectionSelection {
     Xz,
     /// Fit the principal axis in three dimensions.
     Full3d,
+    /// Follow the dominant direction of recent acceleration for State.
+    DynamicAxis,
+    /// Classify State using recent tilt changes on all three sensor axes.
+    TiltClassifier,
+    /// Stabilize posture and learn the breathing direction for tilt State.
+    AdaptiveTiltClassifier,
 }
 
 impl PolarProjectionSelection {
@@ -113,6 +119,9 @@ impl PolarProjectionSelection {
         match self {
             Self::Xz => "xz",
             Self::Full3d => "3d",
+            Self::DynamicAxis => "dynamic-axis",
+            Self::TiltClassifier => "tilt-classifier",
+            Self::AdaptiveTiltClassifier => "adaptive-tilt",
         }
     }
 }

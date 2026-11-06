@@ -2,6 +2,12 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 
 public final class ExperimentSessionPanelCoordinatorTest {
     public static void main(String[] args) {
+        restartFinalizationShapePolicy();
+        remoteVrSaveReadbackPolicy();
+        originalArmAcknowledgementResolvesLaterAudioReadback();
+        retainedArmingCheckpointAfterSaveAdmitsAudioPreparation();
+        nativeReadbackObservationPolicy();
+        nativeStatusSnapshotPolicy();
         launchAndRoutePolicy();
         armControlStatePolicy();
         rejectedArmRemainsVisibleAndRetryable();
@@ -15,6 +21,243 @@ public final class ExperimentSessionPanelCoordinatorTest {
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
     }
 
+    private static void restartFinalizationShapePolicy() {
+        for (String route : new String[]{"show-experimenter", "none"}) {
+            Object[] fields = {"idle", route, "remote-vr", "panel-restart-2", "panel-restart-2", 1L, 1};
+            check(finalization(fields), "actual local/remote producer finalization admitted");
+            for (int field : new int[]{0, 1, 3, 4, 5, 6}) {
+                Object[] bad = fields.clone(); bad[field] = null;
+                check(!finalization(bad), "missing finalization field rejected");
+            }
+            for (Object malformed : new Object[]{"1", 1.0, true, -1, 0, 2L}) {
+                for (int field : new int[]{5, 6}) {
+                    Object[] bad = fields.clone(); bad[field] = malformed;
+                    check(!finalization(bad), "mistyped/wrong finalization generation rejected");
+                }
+            }
+            Object[] bad = fields.clone(); bad[3] = "other-operation";
+            check(!finalization(bad), "wrong finalized operation rejected");
+            bad = fields.clone(); bad[3] = ""; bad[4] = "";
+            check(!finalization(bad), "empty matching operation IDs are not proof");
+            bad = fields.clone(); bad[0] = "active";
+            check(!finalization(bad), "active phase cannot prove finalization");
+        }
+        for (Object mode : new Object[]{null, "", "local-panel", true}) {
+            check(!finalization(new Object[]{"idle", "none", mode, "save", "save", 1L, 1L}),
+                "no-route finalization requires explicit remote-vr mode");
+        }
+        check(finalization(new Object[]{"idle", "show-experimenter", null, "save", "save", 1L, 1L}),
+            "legacy local producer without preparation mode remains compatible");
+    }
+
+    private static boolean finalization(Object[] f) {
+        return ExperimentSessionPanelCoordinator.restartFinalizationMatches(f[0], f[1], f[2],
+            f[3], f[4], f[5], f[6]);
+    }
+
+    private static void remoteVrSaveReadbackPolicy() {
+        for (int mode = 0; mode < 11; mode++) {
+            ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
+            c.acceptRuntimeEpoch(7L);
+            ExperimentSessionPanelCoordinator.NativeCommand start = c.start("condition-a");
+            check(c.acceptNativeReadback(7L, receipt(start.operationId, true, false, 1L, 1L,
+                "active", true, "none", 0L, 0L, 0L, 0L, 0L), 100L, 101L), "active precondition");
+            ExperimentSessionPanelCoordinator.NativeCommand save = c.restartToExperimenter(c.allocateRouteEvent());
+            check(save != null, "same actual save command for local and remote preparation");
+            boolean accepted = c.acceptNativeReadback(7L,
+                receipt(mode == 1 ? "another-save" : save.operationId, mode != 9, mode != 4,
+                    mode == 2 ? 2L : 1L, mode == 3 ? 0L : 2L, mode == 5 ? "active" : "idle", mode == 6,
+                    mode == 7 ? "open-developer" : mode == 10 ? "show-experimenter" : "none",
+                    mode == 8 ? 0L : 1L, 1L, 0L, 0L, 0L, mode != 10), 200L, 201L);
+            if (mode == 0 || mode == 10) {
+                check(accepted && c.snapshot().phase == ExperimentSessionPanelState.Phase.IDLE
+                    && c.snapshot().pendingOperationId.isEmpty() && !c.snapshot().recording,
+                    "exact durable local/remote save clears pending and admits idle");
+                check(c.arm("condition-b") != null, "saved session admits next condition");
+            } else {
+                check(c.snapshot().phase != ExperimentSessionPanelState.Phase.IDLE
+                    && c.arm("condition-b") == null, "invalid save proof never prepares a replacement recording: " + mode);
+            }
+        }
+        System.out.println("Local/remote save finalization type/identity/revision/route guards PASS");
+    }
+
+    private static void originalArmAcknowledgementResolvesLaterAudioReadback() {
+        for(int mode=0;mode<11;mode++) {
+            ExperimentSessionPanelCoordinator c=new ExperimentSessionPanelCoordinator();
+            c.acceptRuntimeEpoch(7L);
+            ExperimentSessionPanelCoordinator.NativeCommand arm=c.arm("condition-a",100);
+            check(arm!=null && !c.snapshot().pendingOperationId.isEmpty(),"actual original pending Arm");
+            check(!ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),"pending Arm blocks Return");
+            ExperimentSessionPanelCoordinator.NativeReceipt later=new ExperimentSessionPanelCoordinator.NativeReceipt(
+                "later-audio-prepared",true,false,1L,3L,"active","armed",mode==10?"condition-b":"condition-a",true,false,
+                "ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"accepted");
+            ExperimentSessionPanelCoordinator.ArmAcceptance proof=mode==6?null:
+                new ExperimentSessionPanelCoordinator.ArmAcceptance(mode==1?"different-arm":arm.operationId,
+                    mode==2?2L:1L,(mode==3 || mode==8)?8L:mode==9?6L:7L,mode==4?"condition-b":"condition-a",mode!=5);
+            boolean accepted=c.acceptNativeReadback(mode==8?8L:mode==9?6L:7L,later,100L,110L,mode!=7,proof);
+            if(mode==0) {
+                check(accepted && c.snapshot().phase==ExperimentSessionPanelState.Phase.ARMED,
+                    "exact original durable Arm resolves later audio operation");
+                check(c.snapshot().pendingOperationId.isEmpty() && ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),
+                    "pending cleared and Return permitted");
+                check("later-audio-prepared".equals(later.operationId) && !later.durable,
+                    "native last operation and save durability never overwritten");
+            } else {
+                check(!accepted && !c.snapshot().pendingOperationId.isEmpty(),"wrong/missing proof keeps pending");
+                check(!ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),"wrong proof cannot unlock Return");
+            }
+        }
+        System.out.println("Production ARMING/pending Arm -> later audio + exact checkpoint -> ARMED/Return controls PASS");
+    }
+
+    private static void retainedArmingCheckpointAfterSaveAdmitsAudioPreparation() {
+        for (int mode=0;mode<10;mode++) {
+            ExperimentSessionPanelCoordinator c=new ExperimentSessionPanelCoordinator();
+            c.acceptRuntimeEpoch(1L);
+            ExperimentSessionPanelCoordinator.NativeCommand first=c.arm("condition-a");
+            check(c.acceptNativeReadback(1L,new ExperimentSessionPanelCoordinator.NativeReceipt(
+                first.operationId,true,false,1L,1L,"active","armed","condition-a",true,false,
+                "ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"accepted"),100L,110L),
+                "original first condition admitted");
+            ExperimentSessionPanelCoordinator.NativeCommand save=c.restartToExperimenter(c.allocateRouteEvent());
+            check(save!=null && c.acceptNativeReadback(1L,receipt(save.operationId,true,true,1L,9L,
+                "idle",false,"none",6L,1L,0L,0L,0L,true),200L,210L),
+                "exact original SaveNext admits the second condition");
+            ExperimentSessionPanelCoordinator.NativeCommand second=c.arm("condition-b");
+            check(second!=null && "panel-arm-3".equals(second.operationId),"same original operation sequence");
+            check(c.snapshot().generation==1L && !c.snapshot().recording,"pending second Arm has no recording proof yet");
+            // The queued Arm response precedes commit; its exact last-operation
+            // receipt is then replaced by a submitted renderer event. The
+            // durable Arm ledger is the retained evidence, not another Arm.
+            ExperimentSessionPanelCoordinator.NativeReceipt submitted=new ExperimentSessionPanelCoordinator.NativeReceipt(
+                "native-openxr-submitted-ready-2-13058",mode!=9,false,2L,12L,"active","arming",
+                mode==8?"condition-a":"condition-b",true,false,
+                "ready",true,1L,0L,0L,0L,true,true,false,1L,0L,0L,"none",6L,"accepted");
+            ExperimentSessionPanelCoordinator.ArmAcceptance proof=mode==6?null:
+                new ExperimentSessionPanelCoordinator.ArmAcceptance(mode==1?"different-arm":second.operationId,
+                    mode==2?3L:2L,mode==3?2L:1L,mode==4?"condition-a":"condition-b",mode!=5);
+            boolean accepted=c.acceptNativeReadback(1L,submitted,300L,310L,mode!=7,proof);
+            if (mode==0) {
+                check(accepted && c.snapshot().generation==2L && c.snapshot().recording,
+                    "retained exact Arm checkpoint adopts the actual second recording for audio preparation");
+                check(c.snapshot().phase==ExperimentSessionPanelState.Phase.ARMING
+                    && c.snapshot().pendingOperationId.isEmpty(),"accepted Arm remains ARMING until actual audio acknowledgement");
+                check(!ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot())
+                    && !ExperimentSessionPanelViewPolicy.project(c.snapshot()).startEnabled,
+                    "recording acceptance does not claim Armed or permit early Start/Return");
+                check(c.arm("condition-b")==null,"no duplicate Arm is admitted");
+                check("native-openxr-submitted-ready-2-13058".equals(submitted.operationId)
+                    && !submitted.durable,"renderer operation and save durability are not rewritten");
+                check(c.acceptNativeReadback(1L,new ExperimentSessionPanelCoordinator.NativeReceipt(
+                    "condition-audio-prepared-2",true,false,2L,13L,"active","armed","condition-b",true,false,
+                    "ready",true,1L,0L,0L,0L,true,true,false,1L,0L,0L,"none",6L,"accepted"),400L,410L,true,proof),
+                    "actual native audio-ready readback advances the same generation");
+                check(c.snapshot().phase==ExperimentSessionPanelState.Phase.ARMED
+                    && ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),"only native ready state admits Return");
+            } else {
+                check(!accepted && c.snapshot().generation==1L && !c.snapshot().recording
+                    && second.operationId.equals(c.snapshot().pendingOperationId),
+                    "missing/wrong/unaccepted retained evidence cannot trigger audio preparation: "+mode);
+            }
+        }
+        System.out.println("Original SaveNext -> queued Arm -> renderer receipt -> ARMING/audio-ready race guards PASS");
+    }
+
+    private static void nativeStatusSnapshotPolicy() {
+        ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
+        check("{\"v\":1,\"s\":\"unknown\"}".equals(c.nativeStatusSnapshot(1L).observationJson),
+            "legacy/no read witness emits closed unknown extension");
+        ExperimentSessionPanelCoordinator.NativeReceipt receipt = receipt(
+            "", true, true, 1L, 2L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        c.acceptNativeReadback(Long.MAX_VALUE, receipt, 1000000L, 1000000L);
+        ExperimentSessionPanelCoordinator.NativeStatusSnapshot snapshot = c.nativeStatusSnapshot(1999999L);
+        check(snapshot.state == c.snapshot() && snapshot.observationJson.equals(
+            "{\"v\":1,\"s\":\"observed\",\"e\":\"9223372036854775807\",\"i\":\"1000000\",\"g\":1,\"r\":2,\"a\":0}"),
+            "atomic outer state join, int64 string identity and fractional millisecond floor");
+        check(c.nativeStatusSnapshot(2999999L).observationJson.endsWith("\"a\":1}"),
+            "poll age advances without allocating a new read identifier");
+        c.openDeveloper(c.allocateRouteEvent());
+        check(c.nativeStatusSnapshot(3000000L).observationJson.equals("{\"v\":1,\"s\":\"unknown\"}"),
+            "local state replacement cannot retain metadata for a different state object");
+        ExperimentSessionPanelCoordinator.NativeReceipt unsafe = receipt(
+            "", true, true, 9007199254740992L, 9007199254740992L, "idle", false,
+            "none", 0L, 0L, 0L, 0L, 0L);
+        c.acceptNativeReadback(Long.MAX_VALUE, unsafe, 4000000L, 4000000L);
+        check(c.nativeStatusSnapshot(5000000L).observationJson.equals("{\"v\":1,\"s\":\"unknown\"}"),
+            "unsafe outer JavaScript integer joins are unavailable, not rounded");
+        System.out.println("NativeStatusSnapshotPolicy PASS closed projection / int64 / floor / atomic state");
+    }
+    private static void nativeReadbackObservationPolicy() {
+        ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
+        check(!c.nativeReadbackObservation(10L).available, "no synthetic initial observation");
+        c.admitTrustedColdLaunch(1L); c.acceptRuntimeEpoch(100L);
+        ExperimentSessionPanelCoordinator.NativeReceipt first = receipt(
+            "", true, true, 1L, 1L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        boolean accepted = c.accept(first);
+        c.observeNativeStatusReadback(100L, first, accepted, 20L, 30L);
+        check(c.nativeReadbackObservation(40L).ageNanos == 20L,
+            "age starts at actual read completion, before delayed UI delivery");
+        c.snapshot(); c.snapshot();
+        check(c.nativeReadbackObservation(50L).ageNanos == 30L,
+            "polling cached coordinator snapshots never refreshes native age");
+        c.observeNativeStatusReadback(100L, first, true, 20L, 60L);
+        check(c.nativeReadbackObservation(60L).ageNanos == 40L,
+            "repeated callback cannot refresh source time");
+        c.observeNativeStatusReadback(99L, first, true, 65L, 70L);
+        check(c.nativeReadbackObservation(70L).ageNanos == 50L,
+            "wrong runtime epoch does not refresh witness");
+        ExperimentSessionPanelCoordinator.NativeReceipt old = receipt(
+            "", true, true, 0L, 0L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        c.observeNativeStatusReadback(100L, old, c.accept(old), 75L, 80L);
+        check(c.nativeReadbackObservation(80L).ageNanos == 60L,
+            "rejected old generation/revision does not refresh witness");
+        for (long invalid : new long[] {-1L, 0L, 101L, Long.MAX_VALUE}) {
+            c.observeNativeStatusReadback(100L, first, true, invalid, 100L);
+            check(c.nativeReadbackObservation(100L).ageNanos == 80L,
+                "nonpositive/future timestamp cannot refresh witness");
+        }
+        check(!c.nativeReadbackObservation(99L).available,
+            "clock regression clears observation");
+        check(!c.nativeReadbackObservation(110L).available,
+            "clock recovery does not resurrect old observation");
+        c.observeNativeStatusReadback(100L, first, true, 105L, 120L);
+        check(c.nativeReadbackObservation(130L).ageNanos == 25L,
+            "a genuinely newer matching read restores observation");
+        ExperimentSessionPanelCoordinator.NativeReceipt next = receipt(
+            "", true, true, 2L, 2L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        accepted = c.accept(next);
+        check(!c.nativeReadbackObservation(140L).available,
+            "changed session is unknown until its own status witness");
+        c.observeNativeStatusReadback(100L, next, accepted, 135L, 150L);
+        check(c.nativeReadbackObservation(160L).generation == 2L,
+            "new session witness joins exact generation and revision");
+        c.admitTrustedColdLaunch(2L);
+        c.observeNativeStatusReadback(100L, next, true, 165L, 170L);
+        check(!c.nativeReadbackObservation(170L).available,
+            "pending runtime replacement excludes old-epoch callbacks");
+        c.acceptRuntimeEpoch(101L);
+        check(!c.nativeReadbackObservation(180L).available, "new runtime clears old witness");
+        c.observeNativeStatusReadback(100L, next, true, 185L, 190L);
+        check(!c.nativeReadbackObservation(190L).available, "old runtime cannot resurrect witness");
+        ExperimentSessionPanelCoordinator.NativeReceipt fresh = receipt(
+            "", true, true, 0L, 0L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        accepted = c.accept(fresh);
+        c.observeNativeStatusReadback(101L, fresh, accepted, 195L, 200L);
+        check(c.nativeReadbackObservation(Long.MAX_VALUE).ageNanos == Long.MAX_VALUE - 195L,
+            "positive monotonic ages cannot wrap into fresh values");
+        ExperimentSessionPanelCoordinator malformed = new ExperimentSessionPanelCoordinator();
+        malformed.acceptRuntimeEpoch(200L);
+        ExperimentSessionPanelCoordinator.NativeReceipt unknownPhase = receipt(
+            "", true, true, 0L, 0L, "future-phase", false, "none", 0L, 0L, 0L, 0L, 0L);
+        malformed.acceptNativeReadback(200L, unknownPhase, 10L, 20L);
+        check(!malformed.nativeReadbackObservation(20L).available,
+            "existing fallback phase cannot mint a status witness");
+        malformed.acceptNativeReadback(200L, null, 25L, 30L);
+        check(!malformed.nativeReadbackObservation(30L).available,
+            "null native receipt cannot mint a status witness");
+        System.out.println("NativeReadbackObservationPolicy PASS poll/callback/session/epoch/clock controls");
+    }
     private static void guidanceBiasPendingPolicy() {
         ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
         check(coordinator.pendingBreathGuidanceBiasPercent() == -1,
@@ -480,13 +723,33 @@ public final class ExperimentSessionPanelCoordinatorTest {
         long earlyOne,
         long earlyTwo
     ) {
+        return receipt(operation, accepted, durable, generation, revision, phase, recording,
+            route, routeRevision, completeOne, completeTwo, earlyOne, earlyTwo, false);
+    }
+
+    private static ExperimentSessionPanelCoordinator.NativeReceipt receipt(
+        String operation,
+        boolean accepted,
+        boolean durable,
+        long generation,
+        long revision,
+        String phase,
+        boolean recording,
+        String route,
+        long routeRevision,
+        long completeOne,
+        long completeTwo,
+        long earlyOne,
+        long earlyTwo,
+        boolean remotePreparationFinalization
+    ) {
         return new ExperimentSessionPanelCoordinator.NativeReceipt(
-            operation, accepted, durable, generation, revision, phase,
+            operation, accepted, durable, generation, revision, phase, "",
             recording ? ExperimentSessionPanelCoordinator.CONDITION_ONE : "none",
-            recording, false, "ready", true,
+            recording, "", 0L, false, "ready", true,
             completeOne, completeTwo, earlyOne, earlyTwo,
             true, true, false, completeOne + completeTwo, earlyOne + earlyTwo, 0L,
-            route, routeRevision, "test"
+            route, routeRevision, "test", remotePreparationFinalization
         );
     }
 

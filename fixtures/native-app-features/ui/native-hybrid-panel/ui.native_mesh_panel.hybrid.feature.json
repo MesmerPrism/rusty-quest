@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.native_mesh_panel.hybrid",
+  "module_path": "ui/native-hybrid-panel",
+  "module_kind": "mesh-ui",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile" },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in native vector toolbar and higher-density original forms on the existing native device, scene and input owner.",
+  "provides": ["ui.native_vector_toolbar", "ui.logical_panel_density", "ui.system_ime_text_input"],
+  "depends_on": ["ui.native_mesh_panel.original_product"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": { "permissions": [], "uses_features": ["com.oculus.feature.VIRTUAL_KEYBOARD", "oculus.software.overlay_keyboard"], "activities": [], "services": [], "queries": [] },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": ["solid-black-private-particles"] },
+  "build_inputs": {
+    "env": [{ "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID", "value": "true" }],
+    "assets": [],
+    "shaders": ["apps/native-renderer-android/native/shaders/native_panel_ui.vert.glsl", "apps/native-renderer-android/native/shaders/native_panel_ui.frag.glsl"]
+  },
+  "markers": { "required": ["nativeMeshUiHybrid=true"], "forbidden": [] },
+  "validation": { "quick": [], "standard": [], "device": [] },
+  "public_private_boundary": "Reusable platform presentation only; application state and private algorithms retain their existing owners."
+}

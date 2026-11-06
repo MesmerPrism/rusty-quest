@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.native_renderer_android.packaging_input.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "app_id",
+    "package_name",
+    "feature_lock_sha256",
+    "source_commit",
+    "source_tree",
+    "source_composition_fingerprint",
+    "android_version_code",
+    "android_version_name"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.native_renderer_android.packaging_input.v1"
+    },
+    "app_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "package_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+    },
+    "feature_lock_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "source_tree": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "source_composition_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "android_version_code": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "android_version_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+    }
+  }
+}

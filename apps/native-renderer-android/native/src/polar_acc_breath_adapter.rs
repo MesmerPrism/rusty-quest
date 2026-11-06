@@ -294,6 +294,8 @@ pub(crate) struct PolarAccBreathAdapter {
     calibration: AcceptedFrameCalibration,
     phase: PolarPhaseOwner,
     unbiased_phase: PolarPhaseOwner,
+    #[cfg(feature = "showcase")]
+    dynamic_state: Option<(PolarDirectState, bool)>,
     generation: Option<BreathGeneration>,
     next_runtime_generation: u64,
     last_sensor_monotonic_time_ns: Option<u64>,
@@ -311,6 +313,8 @@ impl PolarAccBreathAdapter {
         Self {
             phase: PolarPhaseOwner::from_settings(settings),
             unbiased_phase: PolarPhaseOwner::from_settings(settings),
+            #[cfg(feature = "showcase")]
+            dynamic_state: None,
             settings,
             calibration: AcceptedFrameCalibration::new(),
             generation: None,
@@ -324,6 +328,36 @@ impl PolarAccBreathAdapter {
             last_tracking: None,
             telemetry: PolarAccAdapterTelemetry::default(),
         }
+    }
+
+    #[cfg(feature = "showcase")]
+    pub(crate) fn enable_dynamic_state(&mut self, inverted: bool) {
+        self.dynamic_state = Some((
+            PolarDirectState::Rolling(
+                crate::native_controller_breath_state::PolarRollingBreathState::new(),
+            ),
+            inverted,
+        ));
+    }
+
+    #[cfg(feature = "showcase")]
+    pub(crate) fn enable_tilt_state(&mut self, inverted: bool) {
+        self.dynamic_state = Some((
+            PolarDirectState::Tilt(Box::new(
+                crate::polar_tilt_breath_state::PolarTiltBreathState::new(),
+            )),
+            inverted,
+        ));
+    }
+
+    #[cfg(feature = "showcase")]
+    pub(crate) fn enable_adaptive_tilt_state(&mut self, inverted: bool) {
+        self.dynamic_state = Some((
+            PolarDirectState::Tilt(Box::new(
+                crate::polar_tilt_breath_state::PolarTiltBreathState::new_adaptive(),
+            )),
+            inverted,
+        ));
     }
 
     pub(crate) fn configure(&mut self, at: BreathTimestampMicros) -> CalibrationObservation {
@@ -347,6 +381,12 @@ impl PolarAccBreathAdapter {
         generation: BreathGeneration,
     ) -> CalibrationObservation {
         if !self.settings.enabled {
+            return self.calibration.snapshot();
+        }
+        #[cfg(feature = "showcase")]
+        if self.dynamic_state.is_some() {
+            self.configure(at);
+            self.generation = Some(generation);
             return self.calibration.snapshot();
         }
         let observation = self.calibration.start(at, generation);
@@ -443,6 +483,12 @@ impl PolarAccBreathAdapter {
         );
         self.last_tracking = None;
         Ok(())
+    }
+
+    pub(crate) fn acknowledged_phase_configuration(
+        &self,
+    ) -> Option<(BreathGeneration, PolarAccPhaseParameters)> {
+        Some((self.generation?, self.settings.polar_phase?.parameters()))
     }
 
     pub(crate) fn observe(
@@ -594,6 +640,10 @@ impl PolarAccBreathAdapter {
                 increment(&mut self.telemetry.meters_per_second_squared_frame_count);
             }
         }
+        #[cfg(feature = "showcase")]
+        if self.dynamic_state.is_some() {
+            return self.observe_dynamic_state(at, normalized);
+        }
         let calibration = self.calibration.observe(
             at,
             generation,
@@ -620,6 +670,65 @@ impl PolarAccBreathAdapter {
             Some(motion_delta_mg),
             guidance,
         )
+    }
+
+    #[cfg(feature = "showcase")]
+    fn observe_dynamic_state(
+        &mut self,
+        at: BreathTimestampMicros,
+        frame: NormalizedPolarAccFrame,
+    ) -> PolarAccAssessmentResult {
+        let parameters = self.settings.calibration.parameters();
+        let mut phase = CommonBreathPhase::Unknown;
+        let tracking = if frame.sampled_at > at
+            || frame
+                .acceleration_g
+                .iter()
+                .any(|value| value.abs() > parameters.maximum_component_abs)
+        {
+            BreathTrackingState::Malformed
+        } else if at.get() - frame.sampled_at.get() > parameters.stale_after_micros {
+            BreathTrackingState::Stale
+        } else {
+            self.last_sensor_monotonic_time_ns = Some(frame.sensor_monotonic_time_ns);
+            self.last_source_sequence_id = Some(frame.source_sequence_id);
+            self.last_sampled_at = Some(frame.sampled_at);
+            self.last_acceleration_g = Some(frame.acceleration_g);
+            let (estimator, inverted) = self.dynamic_state.as_mut().expect("dynamic state enabled");
+            let (confirmed, motion_rejected) = estimator.push_acceleration(
+                frame.sampled_at.get() as f64 / 1_000_000.0,
+                frame.acceleration_g,
+            );
+            phase = confirmed;
+            if *inverted {
+                phase = match phase {
+                    CommonBreathPhase::Inhale => CommonBreathPhase::Exhale,
+                    CommonBreathPhase::Exhale => CommonBreathPhase::Inhale,
+                    phase => phase,
+                };
+            }
+            if motion_rejected {
+                BreathTrackingState::RejectedMotion
+            } else {
+                BreathTrackingState::Valid
+            }
+        };
+        let mut result = self.finish(
+            at,
+            frame.sampled_at.min(at),
+            frame.sequence_id,
+            tracking,
+            None,
+            self.calibration.snapshot(),
+            None,
+            None,
+        );
+        if tracking == BreathTrackingState::Valid {
+            if let Some(assessment) = result.assessment.as_mut() {
+                assessment.phase = phase;
+            }
+        }
+        result
     }
 
     fn drop_late_sample(&mut self) -> PolarAccAssessmentResult {
@@ -679,6 +788,15 @@ impl PolarAccBreathAdapter {
         guidance: Option<BreathGuidanceTarget>,
     ) -> PolarAccAssessmentResult {
         let generation = self.generation.expect("active adapter retains generation");
+        #[cfg(feature = "showcase")]
+        if !matches!(
+            tracking,
+            BreathTrackingState::Valid | BreathTrackingState::RejectedMotion
+        ) {
+            if let Some((estimator, _)) = self.dynamic_state.as_mut() {
+                estimator.lose_signal();
+            }
+        }
         if tracking == BreathTrackingState::Stale
             && self.last_tracking != Some(BreathTrackingState::Stale)
         {
@@ -758,12 +876,26 @@ impl PolarAccBreathAdapter {
         if rejection.is_some() {
             increment(&mut self.telemetry.rejected_input_count);
         }
+        // Tuned emits a derivative only after validation and priming, on the
+        // path that actually evaluates guided_derivative. Common ignores the
+        // target, and a reset/prime must not inherit an applied bias receipt.
+        let applied_guidance = if tracking == BreathTrackingState::Valid
+            && calibration.live.is_some()
+            && matches!(&self.phase, PolarPhaseOwner::Tuned(_))
+            && phase_observation
+                .and_then(|observation| observation.filtered_derivative_per_second)
+                .is_some()
+        {
+            guidance
+        } else {
+            None
+        };
         PolarAccAssessmentResult {
             assessment,
             calibration,
             phase: phase_observation,
             unbiased_phase: unbiased_phase_observation,
-            guidance,
+            guidance: applied_guidance,
             rejection,
             telemetry: self.telemetry,
         }
@@ -824,10 +956,45 @@ impl PolarAccBreathAdapter {
     }
 
     fn reset_phase(&mut self, at: BreathTimestampMicros, reason: CommonPhaseResetReason) {
+        #[cfg(feature = "showcase")]
+        if let Some((estimator, _)) = self.dynamic_state.as_mut() {
+            estimator.reset_history();
+        }
         let observation = self.phase.reset_history(at, reason);
         self.last_phase_observation = Some(observation);
         let unbiased = self.unbiased_phase.reset_history(at, reason);
         self.last_unbiased_phase_observation = Some(unbiased);
+    }
+}
+
+#[cfg(feature = "showcase")]
+#[derive(Debug)]
+enum PolarDirectState {
+    Rolling(crate::native_controller_breath_state::PolarRollingBreathState),
+    Tilt(Box<crate::polar_tilt_breath_state::PolarTiltBreathState>),
+}
+
+#[cfg(feature = "showcase")]
+impl PolarDirectState {
+    fn push_acceleration(&mut self, at: f64, g: [f64; 3]) -> (CommonBreathPhase, bool) {
+        match self {
+            Self::Rolling(estimator) => estimator.push_acceleration(at, g),
+            Self::Tilt(estimator) => estimator.push_acceleration(at, g),
+        }
+    }
+
+    fn lose_signal(&mut self) {
+        match self {
+            Self::Rolling(estimator) => estimator.lose_signal(),
+            Self::Tilt(estimator) => estimator.lose_signal(),
+        }
+    }
+
+    fn reset_history(&mut self) {
+        match self {
+            Self::Rolling(estimator) => estimator.reset_history(),
+            Self::Tilt(estimator) => estimator.reset_history(),
+        }
     }
 }
 
@@ -1122,6 +1289,116 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "showcase")]
+    #[test]
+    fn polar_dynamic_axis_classifies_without_volume_and_resets_on_signal_loss() {
+        let mut adapter = adapter(PolarAccProjection::Full3d);
+        adapter.enable_dynamic_state(false);
+        let generation = BreathGeneration::new(1).unwrap();
+        let at = BreathTimestampMicros::new(0);
+        adapter.configure(at);
+        assert_eq!(
+            adapter.start(at, generation).lifecycle,
+            CalibrationLifecycle::Configured
+        );
+        let mut inhale = false;
+        let mut exhale = false;
+        for index in 1..400 {
+            let at = index * 16_000;
+            let motion = (index as f64 * 0.035).sin() * 0.04;
+            let sample = frame(
+                index,
+                at,
+                at * 1_000,
+                [motion, 1.0, motion * 0.25],
+                PolarAccelerationUnit::StandardGravity,
+            );
+            let result = adapter.observe(BreathTimestampMicros::new(at), generation, sample);
+            let assessment = result.assessment.unwrap();
+            assert_eq!(assessment.tracking, BreathTrackingState::Valid);
+            assert!(assessment.volume01.is_none());
+            inhale |= assessment.phase == CommonBreathPhase::Inhale;
+            exhale |= assessment.phase == CommonBreathPhase::Exhale;
+        }
+        assert!(inhale && exhale);
+        let missing = adapter.observe(
+            BreathTimestampMicros::new(6_400_000),
+            generation,
+            PolarAccInput::Missing { sequence_id: 400 },
+        );
+        assert_eq!(
+            missing.assessment.unwrap().tracking,
+            BreathTrackingState::Missing
+        );
+        let resumed = adapter.observe(
+            BreathTimestampMicros::new(6_416_000),
+            generation,
+            frame(
+                401,
+                6_416_000,
+                6_416_000_000,
+                [0.0, 1.0, 0.0],
+                PolarAccelerationUnit::StandardGravity,
+            ),
+        );
+        assert_eq!(
+            resumed.assessment.unwrap().phase,
+            CommonBreathPhase::BadTracking
+        );
+        let after_gap = adapter.observe(
+            BreathTimestampMicros::new(6_680_000),
+            generation,
+            frame(
+                402,
+                6_680_000,
+                6_680_000_000,
+                [0.0, 1.0, 0.0],
+                PolarAccelerationUnit::StandardGravity,
+            ),
+        );
+        assert_eq!(
+            after_gap.assessment.unwrap().phase,
+            CommonBreathPhase::BadTracking
+        );
+        let after_short_gap = adapter.observe(
+            BreathTimestampMicros::new(6_760_000),
+            generation,
+            frame(
+                403,
+                6_760_000,
+                6_760_000_000,
+                [0.0, 1.0, 0.0],
+                PolarAccelerationUnit::StandardGravity,
+            ),
+        );
+        assert_eq!(
+            after_short_gap.assessment.unwrap().phase,
+            CommonBreathPhase::BadTracking
+        );
+        for index in 1..=4 {
+            let at = 6_760_000 + index * 16_000;
+            let result = adapter.observe(
+                BreathTimestampMicros::new(at),
+                generation,
+                frame(
+                    403 + index,
+                    at,
+                    at * 1_000,
+                    [0.0, 1.0, 0.0],
+                    PolarAccelerationUnit::StandardGravity,
+                ),
+            );
+            assert_eq!(
+                result.assessment.unwrap().phase,
+                if index == 4 {
+                    CommonBreathPhase::Hold
+                } else {
+                    CommonBreathPhase::BadTracking
+                }
+            );
+        }
+    }
+
     fn calibrate_line(
         adapter: &mut PolarAccBreathAdapter,
         generation_id: u64,
@@ -1153,6 +1430,7 @@ mod tests {
     #[test]
     fn pmd_ingress_translation_normalizes_timestamp_and_unit() {
         let translated = TimedPolarAccFrame::from_pmd_measurement(PolarAccMeasurement {
+            source_clock_provenance: None,
             sequence_id: 7,
             source_sequence_id: 7,
             host_time_ns: 123_456_789,
@@ -1818,5 +2096,206 @@ mod tests {
         assert_eq!(diagnostics.classifier, "common-default");
         assert_eq!(diagnostics.stale_gap_count, 0);
         assert_eq!(PolarAccelerationUnit::Milligravity.marker_value(), "mg");
+    }
+
+    #[test]
+    fn applied_guidance_excludes_common_priming_and_rejected_observations() {
+        let target = BreathGuidanceTarget {
+            expected_phase: CommonBreathPhase::Inhale,
+            expected_phase_token: "inhale",
+            bias_percent: 100,
+            bias_revision: 7,
+            official_active_time_ms: 1000,
+        };
+        let ready = |tuned: bool| {
+            let mut adapter = adapter(PolarAccProjection::Xz);
+            start(&mut adapter, 1_000_000, 1);
+            calibrate_line(&mut adapter, 1, 1_000_000, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+            if tuned {
+                adapter
+                    .apply_polar_phase_parameters(
+                        timestamp(1_700_001),
+                        crate::breath_composition_runtime::guided_arm_parameters(),
+                    )
+                    .unwrap();
+            }
+            adapter
+        };
+        let observe = |adapter: &mut PolarAccBreathAdapter, sequence, at, sampled, x| {
+            adapter.observe_guided(
+                timestamp(at),
+                generation(1),
+                frame(
+                    sequence,
+                    sampled,
+                    800_010_000 + sequence * 100_000_000,
+                    [x, 1.0, 0.0],
+                    PolarAccelerationUnit::StandardGravity,
+                ),
+                Some(target),
+            )
+        };
+        let mut common = ready(false);
+        let common_result = observe(&mut common, 9, 1_800_000, 1_800_000, 0.20);
+        assert_eq!(
+            common_result.assessment.unwrap().tracking,
+            BreathTrackingState::Valid
+        );
+        assert_eq!(common_result.guidance, None);
+
+        let mut tuned = ready(true);
+        let primed = observe(&mut tuned, 9, 1_800_000, 1_800_000, 0.20);
+        assert_eq!(
+            primed.phase.unwrap().status,
+            rusty_quest_breath_contract::phase::CommonPhaseStatus::Primed
+        );
+        assert_eq!(primed.guidance, None);
+        let applied = observe(&mut tuned, 10, 1_900_000, 1_900_000, 0.19);
+        assert_eq!(applied.guidance, Some(target));
+        let mut no_live_calibration = applied.calibration.clone();
+        no_live_calibration.live = None;
+        let no_live = tuned.finish(
+            timestamp(1_900_001),
+            timestamp(1_900_001),
+            11,
+            BreathTrackingState::Valid,
+            None,
+            no_live_calibration,
+            Some(3.0),
+            Some(target),
+        );
+        assert_eq!(no_live.phase, None);
+        assert_eq!(no_live.guidance, None);
+
+        // Each independent adapter has real calibrated state and actual prior
+        // guidance use, so a rejection cannot silently retain the last receipt.
+        for (at, sampled, x, expected) in [
+            (
+                2_000_000,
+                2_000_000,
+                f64::NAN,
+                BreathTrackingState::Malformed,
+            ),
+            (2_200_001, 2_000_000, 0.18, BreathTrackingState::Stale),
+            (
+                2_000_000,
+                2_000_000,
+                8.0,
+                BreathTrackingState::RejectedMotion,
+            ),
+            (1_899_999, 2_000_000, 0.18, BreathTrackingState::Malformed),
+        ] {
+            let mut adapter = ready(true);
+            observe(&mut adapter, 9, 1_800_000, 1_800_000, 0.20);
+            assert_eq!(
+                observe(&mut adapter, 10, 1_900_000, 1_900_000, 0.19).guidance,
+                Some(target)
+            );
+            let result = observe(&mut adapter, 11, at, sampled, x);
+            assert_eq!(result.assessment.unwrap().tracking, expected);
+            assert_eq!(result.guidance, None);
+        }
+        let missing = tuned.observe_guided(
+            timestamp(2_000_000),
+            generation(1),
+            PolarAccInput::Missing { sequence_id: 11 },
+            Some(target),
+        );
+        assert_eq!(missing.guidance, None);
+
+        let mut collecting = adapter(PolarAccProjection::Xz);
+        start(&mut collecting, 1_000_000, 1);
+        collecting
+            .apply_polar_phase_parameters(
+                timestamp(1_000_001),
+                crate::breath_composition_runtime::guided_arm_parameters(),
+            )
+            .unwrap();
+        let calibrating = observe(&mut collecting, 1, 1_100_000, 1_100_000, 0.0);
+        assert_eq!(
+            calibrating.assessment.unwrap().tracking,
+            BreathTrackingState::Calibrating
+        );
+        assert_eq!(calibrating.guidance, None);
+
+        // Exercise the classifier's own time guard even with a valid live
+        // calibration observation; entering observe_guided is not proof of use.
+        let mut guarded = ready(true);
+        guarded
+            .phase
+            .reset_history(timestamp(3_000_000), CommonPhaseResetReason::Explicit);
+        let result = observe(&mut guarded, 9, 1_800_000, 1_800_000, 0.20);
+        assert_eq!(
+            result.assessment.unwrap().tracking,
+            BreathTrackingState::Valid
+        );
+        assert_eq!(
+            result.phase.unwrap().status,
+            rusty_quest_breath_contract::phase::CommonPhaseStatus::Reset(
+                CommonPhaseResetReason::TimeRegression
+            )
+        );
+        assert_eq!(result.guidance, None);
+    }
+
+    #[test]
+    fn actual_polar_adapter_guidance_and_acknowledged_tuning_change_phase_without_rewriting_signal()
+    {
+        let run = |confirmation_micros| {
+            let mut adapter = adapter(PolarAccProjection::Xz);
+            start(&mut adapter, 1_000_000, 1);
+            assert_eq!(
+                calibrate_line(&mut adapter, 1, 1_000_000, [1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+                    .calibration
+                    .lifecycle,
+                CalibrationLifecycle::Ready
+            );
+            let mut parameters = crate::breath_composition_runtime::guided_arm_parameters();
+            parameters.confirmation_micros = confirmation_micros;
+            adapter
+                .apply_polar_phase_parameters(timestamp(1_700_001), parameters)
+                .unwrap();
+            assert_eq!(
+                adapter.acknowledged_phase_configuration(),
+                Some((generation(1), parameters))
+            );
+            let target = BreathGuidanceTarget {
+                expected_phase: CommonBreathPhase::Inhale,
+                expected_phase_token: "inhale",
+                bias_percent: 100,
+                bias_revision: 3,
+                official_active_time_ms: 1000,
+            };
+            let mut result = None;
+            for i in 0..12_u64 {
+                let at = 1_800_000 + i * 100_000;
+                result = Some(adapter.observe_guided(
+                    timestamp(at),
+                    generation(1),
+                    frame(
+                        9 + i,
+                        at,
+                        800_010_000 + i * 100_000_000,
+                        [0.20 - i as f64 * 0.003, 1.0, 0.0],
+                        PolarAccelerationUnit::StandardGravity,
+                    ),
+                    Some(target),
+                ));
+            }
+            result.unwrap()
+        };
+        let tuned = run(400_000);
+        assert_eq!(tuned.phase.unwrap().phase, CommonBreathPhase::Inhale);
+        assert_eq!(
+            tuned.unbiased_phase.unwrap().phase,
+            CommonBreathPhase::Exhale
+        );
+        assert_eq!(tuned.guidance.unwrap().bias_revision, 3);
+        assert_eq!(
+            tuned.assessment.unwrap().tracking,
+            BreathTrackingState::Valid
+        );
+        let slower = run(2_000_000);
+        assert_ne!(slower.phase.unwrap().phase, CommonBreathPhase::Inhale);
     }
 }

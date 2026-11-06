@@ -109,6 +109,7 @@ struct NativeDisplayCompositeReaderContext {
     last_accepted_timestamp_ns: AtomicI64,
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_DisplayCompositeProjectionService_nativeCreateDisplayCompositeSurface(
     env: *mut JNIEnv,
@@ -174,6 +175,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Di
     }
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_DisplayCompositeProjectionService_nativeStopDisplayCompositeStream(
     _env: *mut JNIEnv,
@@ -194,6 +196,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Di
     }
 }
 
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_DisplayCompositeProjectionService_nativeDisplayCompositeLifecycleEvent(
     _env: *mut JNIEnv,

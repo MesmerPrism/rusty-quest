@@ -62,6 +62,8 @@ pub const BROKER_CLIENT_SPEC_SCHEMA: &str = "rusty.quest.broker_client_spec.v1";
 pub const PEER_SESSION_CONTRACT: &str = "rusty.manifold.peer.session_descriptor.v1";
 /// Shared generic media-session contract family.
 pub const MEDIA_SESSION_CONTRACT: &str = "rusty.manifold.media.session_descriptor.v1";
+/// Explicit optional Connection Hub provider registration contract family.
+pub const HUB_SURFACE_REGISTRATION_CONTRACT: &str = "rusty.manifold.hub.surface_registration.v1";
 /// Signature permission needed by the Android Binder adapter.
 pub const BROKER_ADMISSION_PERMISSION: &str =
     "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION";
@@ -241,7 +243,11 @@ pub fn validate_broker_client_spec(spec: &BrokerClientSpec) -> Result<(), Vec<St
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let supported = BTreeSet::from([PEER_SESSION_CONTRACT, MEDIA_SESSION_CONTRACT]);
+    let supported = BTreeSet::from([
+        PEER_SESSION_CONTRACT,
+        MEDIA_SESSION_CONTRACT,
+        HUB_SURFACE_REGISTRATION_CONTRACT,
+    ]);
     if actual_contracts.is_empty()
         || actual_contracts.len() != spec.contract_families.len()
         || !actual_contracts.is_subset(&supported)
@@ -264,6 +270,14 @@ pub fn validate_broker_client_spec(spec: &BrokerClientSpec) -> Result<(), Vec<St
         errors.push("client capabilities must be unique and sorted".to_string());
     }
     let mut required = BTreeSet::from(["capability.command.session.list"]);
+    if actual_contracts.contains(HUB_SURFACE_REGISTRATION_CONTRACT)
+        != capabilities.contains("capability.connection_hub.provider.register")
+    {
+        errors.push(
+            "Hub provider contract and registration capability must be selected together"
+                .to_string(),
+        );
+    }
     if actual_contracts.contains(PEER_SESSION_CONTRACT) {
         required.insert("capability.peer.session.observe");
     }
@@ -298,6 +312,93 @@ pub fn validate_broker_client_spec(spec: &BrokerClientSpec) -> Result<(), Vec<St
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+#[cfg(test)]
+mod hub_client_contract_tests {
+    use super::*;
+
+    fn baseline() -> BrokerClientSpec {
+        serde_json::from_str(include_str!(
+            "../../../fixtures/broker-clients/native-renderer.client.json"
+        ))
+        .expect("existing app client fixture")
+    }
+
+    fn selected() -> BrokerClientSpec {
+        let mut client = baseline();
+        client
+            .contract_families
+            .push(HUB_SURFACE_REGISTRATION_CONTRACT.into());
+        client.contract_families.sort();
+        client
+            .capabilities
+            .push("capability.connection_hub.provider.register".into());
+        client.capabilities.sort();
+        client
+    }
+
+    #[test]
+    fn optional_hub_contract_retains_one_existing_media_client_and_defaults() {
+        let original = baseline();
+        assert_eq!(validate_broker_client_spec(&original), Ok(()));
+        let client = selected();
+        assert_eq!(validate_broker_client_spec(&client), Ok(()));
+        assert_eq!(client.client_id, original.client_id);
+        assert_eq!(client.package_name, original.package_name);
+        assert_eq!(client.feature_lock_id, original.feature_lock_id);
+        assert_eq!(client.marker_namespace, original.marker_namespace);
+        for capability in original.capabilities {
+            assert!(client.capabilities.contains(&capability));
+        }
+    }
+
+    #[test]
+    fn hub_selection_requires_exact_requested_contract_and_capability_pair() {
+        for remove_contract in [false, true] {
+            let mut client = selected();
+            if remove_contract {
+                client
+                    .contract_families
+                    .retain(|value| value != HUB_SURFACE_REGISTRATION_CONTRACT);
+            } else {
+                client
+                    .capabilities
+                    .retain(|value| value != "capability.connection_hub.provider.register");
+            }
+            assert!(validate_broker_client_spec(&client).unwrap_err().iter().any(|error|
+                error == "Hub provider contract and registration capability must be selected together"));
+        }
+    }
+
+    #[test]
+    fn hub_selection_does_not_relax_existing_closed_client_validation() {
+        for case in 0..9 {
+            let mut client = selected();
+            match case {
+                0 => client
+                    .contract_families
+                    .push(HUB_SURFACE_REGISTRATION_CONTRACT.into()),
+                1 => client
+                    .contract_families
+                    .push("rusty.manifold.hub.unrequested.v1".into()),
+                2 => client.schema = "rusty.quest.broker_client_spec.v0".into(),
+                3 => client
+                    .capabilities
+                    .push("capability.connection_hub.provider.register".into()),
+                4 => client
+                    .capabilities
+                    .retain(|value| value != "capability.media.session.observe"),
+                5 => client
+                    .capabilities
+                    .retain(|value| value != "capability.peer.session.observe"),
+                6 => client.runtime_properties.push("not-owned".into()),
+                7 => client.application_defaults.push("not-owned".into()),
+                _ => client.adapter_permissions.clear(),
+            }
+            assert!(validate_broker_client_spec(&client).is_err(), "case {case}");
+        }
     }
 }
 

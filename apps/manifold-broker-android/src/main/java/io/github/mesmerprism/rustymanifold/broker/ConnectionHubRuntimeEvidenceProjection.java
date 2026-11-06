@@ -27,6 +27,14 @@ public final class ConnectionHubRuntimeEvidenceProjection {
     private ConnectionHubRuntimeEvidenceProjection() {
     }
 
+    /** Diagnostic only: retain nested admission precedence and exact Boolean types. */
+    static boolean operationApplied(JSONObject response) {
+        JSONObject receipt = response.optJSONObject("receipt");
+        if (receipt != null) return Boolean.TRUE.equals(receipt.opt("applied"));
+        if (response.has("applied")) return Boolean.TRUE.equals(response.opt("applied"));
+        return Boolean.TRUE.equals(response.opt("accepted"));
+    }
+
     public static JSONObject project(JSONObject authorityEvidence) throws Exception {
         if (authorityEvidence == null
                 || !hasExactString(authorityEvidence, "$schema", SOURCE_EVIDENCE_SCHEMA)

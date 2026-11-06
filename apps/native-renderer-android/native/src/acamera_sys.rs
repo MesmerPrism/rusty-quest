@@ -384,6 +384,11 @@ extern "C" {
         characteristics: *mut *mut ACameraMetadata,
     ) -> camera_status_t;
     pub fn ACameraMetadata_free(metadata: *mut ACameraMetadata);
+    pub fn ACameraMetadata_getAllTags(
+        metadata: *const ACameraMetadata,
+        numEntries: *mut i32,
+        tags: *mut *const u32,
+    ) -> camera_status_t;
     pub fn ACameraMetadata_getConstEntry(
         metadata: *const ACameraMetadata,
         tag: u32,

@@ -112,6 +112,8 @@ public final class NativeRendererSoftKioskAccessibilityService extends Accessibi
         }
         String packageName = text(event.getPackageName());
         String className = text(event.getClassName());
+        if (NativeRendererActivityComponents.nativeClass(this).equals(className))
+            className = NativeRendererActivityComponents.policyClass(className);
         if (packageName.isEmpty() || className.isEmpty()) {
             return;
         }
@@ -270,7 +272,9 @@ public final class NativeRendererSoftKioskAccessibilityService extends Accessibi
                         || claim.kind
                             == NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_PANEL) {
                     try {
-                        startActivity(recoveryIntent(claim));
+                        Intent recovery=recoveryIntent(claim);
+                        if(claim.kind!=NativeRendererSoftKioskCoordinator.ActionKind.RECOVER_PANEL
+                                ||!ControlPanelActivity.routeToNativePanel(recovery,true))startActivity(recovery);
                         Log.i(TAG, "status=recovery-requested generation=" + generation
                             + " recovery_episode=" + recoveryEpisodeId
                             + " attempt=" + claim.recoveryAttempt
@@ -302,7 +306,7 @@ public final class NativeRendererSoftKioskAccessibilityService extends Accessibi
             intent.putExtra(EXTRA_PANEL_ROUTE_GENERATION, action.generation);
             intent.putExtra(EXTRA_PANEL_ROUTE_PROVENANCE, PROVENANCE_SOFT_KIOSK_RECOVERY);
         } else {
-            intent.setComponent(new ComponentName(getPackageName(), "android.app.NativeActivity"));
+            intent.setComponent(new ComponentName(getPackageName(), NativeRendererActivityComponents.nativeClass(this)));
             intent.addCategory("com.oculus.intent.category.VR");
             intent.addCategory(Intent.CATEGORY_LAUNCHER);
         }
@@ -329,7 +333,7 @@ public final class NativeRendererSoftKioskAccessibilityService extends Accessibi
                 NativeRendererSoftKioskCoordinator.EXTRA_HOME_EPISODE,
                 action.homeEpisodeId);
         try {
-            startActivity(intent);
+            if(!ControlPanelActivity.routeToNativePanel(intent,false))startActivity(intent);
             Log.i(TAG, "status=terminal-save-exit-requested saved=false generation="
                 + action.generation + " home_episode=" + action.homeEpisodeId);
         } catch (RuntimeException error) {

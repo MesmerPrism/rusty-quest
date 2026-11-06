@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.experiment_session_direct_network",
+  "module_path": "ui/experiment-session-direct-network",
+  "module_kind": "same-apk-attended-direct-network",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Optional attended Android local-only hotspot and Wi-Fi Direct network formation for the same authenticated app gateway.",
+  "provides": [
+    "ui.experiment_session_direct_network"
+  ],
+  "depends_on": [
+    "ui.experiment_session_command_gateway"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.ACCESS_WIFI_STATE",
+      "android.permission.CHANGE_WIFI_STATE",
+      "android.permission.NEARBY_WIFI_DEVICES",
+      "android.permission.ACCESS_FINE_LOCATION"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Temporary platform network credentials are shown only in local attended UI; no fixed SSID, passphrase, private data or runtime evidence is packaged."
+}

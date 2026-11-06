@@ -13,14 +13,38 @@ public final class ExperimentSessionPackagedClosureTest {
     private static final String AUDIO_B_SHA = repeat('b');
 
     public static void main(String[] args) throws Exception {
+        ExperimentSessionPackagedClosure.requireOwnerProfilePolicy(
+            "rusty.viscereality.experiment_session_profile.standalone.v2", Boolean.FALSE, true);
+        for (Object kiosk : new Object[]{null, Boolean.TRUE, "false", Integer.valueOf(0)}) {
+            boolean denied=false;
+            try { ExperimentSessionPackagedClosure.requireOwnerProfilePolicy(
+                "rusty.viscereality.experiment_session_profile.standalone.v2", kiosk, true); }
+            catch (IllegalArgumentException expected) { denied=true; }
+            if (!denied) throw new AssertionError("standalone rejects ambiguous or requested kiosk");
+        }
+        for (boolean standalone : new boolean[]{false,true}) {
+            boolean denied=false;
+            try { ExperimentSessionPackagedClosure.requireOwnerProfilePolicy(standalone
+                ? "rusty.viscereality.experiment_session_profile.v1"
+                : "rusty.viscereality.experiment_session_profile.standalone.v2", Boolean.FALSE, standalone); }
+            catch (IllegalArgumentException expected) { denied=true; }
+            if (!denied) throw new AssertionError("profile schema cannot cross owner routes");
+        }
+
         validClosureMaterializesExactBytesAndBuildsOnlyAudio();
+        validatedOpenControlDefaults();
         validGuidanceClosureMaterializesAndBindsAudio();
+        phaseAudioClosedOptInControls();
         inactiveClosureDoesNotMaterialize();
         rejectsWrongAssetCardinalityAndIds();
         rejectsProfileHashBytesBomAndUtf8Damage();
         rejectsOuterSchemaAliasAndDamage();
         rejectsOuterNestedClosureAndProviderDrift();
         rejectsExistingFileTamper();
+        retainedUpgradePreservesLegacyAndSessionBytes();
+        partialClosureAndPathControls();
+        concurrentExactMaterialization();
+        linkedSelectedDirectoryIsDenied();
         if (args.length != 0) {
             if (args.length != 7 || !"--real-closure".equals(args[0])) {
                 throw new IllegalArgumentException("expected --real-closure feature-lock profile manifest-sha inventory-sha audio-a audio-b");
@@ -62,8 +86,8 @@ public final class ExperimentSessionPackagedClosureTest {
                 check(result.audioEntries[i].sourceSha256.equals(sha(audioBytes[i])),
                     "real audio hash is preserved");
             }
-            check(java.util.Arrays.equals(profile, Files.readAllBytes(root.resolve(
-                ExperimentSessionPackagedClosure.MATERIALIZED_DIRECTORY).resolve(
+            check(java.util.Arrays.equals(profile, Files.readAllBytes(
+                ExperimentSessionPackagedClosure.materializedDirectory(root, sha(profile)).resolve(
                 ExperimentSessionPackagedClosure.MATERIALIZED_FILE))),
                 "real profile bytes are materialized unchanged");
         } finally { deleteTree(root); }
@@ -77,6 +101,7 @@ public final class ExperimentSessionPackagedClosureTest {
         try {
             ExperimentSessionPackagedClosure.Result result = fixture.prepare();
             check(result.active, "linked closure is active");
+            check(!result.openControlDefault, "older absent policy remains gated");
             check(result.audioEntries.length == 2, "profile entry is excluded from audio");
             check("condition-a".equals(result.audioEntries[0].conditionId)
                 && "condition-b".equals(result.audioEntries[1].conditionId),
@@ -87,6 +112,25 @@ public final class ExperimentSessionPackagedClosureTest {
             check(java.util.Arrays.equals(profile, Files.readAllBytes(fixture.target())),
                 "matching later start preserves existing bytes");
         } finally { fixture.close(); }
+    }
+
+    private static void validatedOpenControlDefaults() throws Exception {
+        String baseline = profile("provider.one", audio("session-audio/condition-a.mp3",
+            AUDIO_A_SHA, 101L), audio("session-audio/condition-b.mp3", AUDIO_B_SHA, 202L), false);
+        for (String policy : new String[] {"true", "false", "null", "\"true\"", "1"}) {
+            byte[] bytes = baseline.replace("\"recording_default\":true,",
+                "\"open_control_default\":" + policy + ",\"recording_default\":true,")
+                .getBytes(StandardCharsets.UTF_8);
+            Fixture fixture = fixture(bytes, "provider.one", entries(bytes, "", false));
+            try {
+                if ("true".equals(policy) || "false".equals(policy)) {
+                    check(fixture.prepare().openControlDefault == "true".equals(policy),
+                        "validated profile policy is projected exactly");
+                } else {
+                    expectRejected(fixture, "nonboolean default policy");
+                }
+            } finally { fixture.close(); }
+        }
     }
 
     private static void inactiveClosureDoesNotMaterialize() throws Exception {
@@ -149,11 +193,54 @@ public final class ExperimentSessionPackagedClosureTest {
             check(result.guidanceEntries.length == 1
                     && result.guidanceEntries[0].defaultBiasPercent == 35,
                 "guided condition identity and default bias are exposed");
-            check(java.util.Arrays.equals(guidance, Files.readAllBytes(fixture.root.resolve(
-                ExperimentSessionPackagedClosure.MATERIALIZED_DIRECTORY)
+            check(java.util.Arrays.equals(guidance, Files.readAllBytes(
+                ExperimentSessionPackagedClosure.materializedDirectory(fixture.root, sha(profile))
                 .resolve("breath-guidance").resolve("condition-a.json"))),
                 "exact breathing pattern bytes are materialized");
         } finally { fixture.close(); }
+    }
+
+
+    private static void phaseAudioClosedOptInControls() throws Exception {
+        for (int mode=0;mode<8;mode++) {
+            java.util.Map<String,byte[]> assetBytes = new java.util.HashMap<String,byte[]>();
+            String a=audio("session-audio/condition-a.mp3",AUDIO_A_SHA,101);
+            String b=audio("session-audio/condition-b.mp3",AUDIO_B_SHA,202);
+            String text=profile("provider.one",a,b,false);
+            String extra="";
+            for(String condition:new String[]{"condition-a","condition-b"}) {
+                String hash="condition-a".equals(condition)?AUDIO_A_SHA:AUDIO_B_SHA;
+                byte[] raw=("{\"schema\":\"rusty.quest.breath_guidance_timeline.v1\",\"timebase\":\"official-active-time-ms\",\"audio_source_sha256\":\""+hash+"\",\"segments\":[{\"start_ms\":0,\"end_ms\":4000,\"phase\":\"inhale\"}]}").getBytes(StandardCharsets.UTF_8);
+                String dest="breath-guidance/"+condition+".json";assetBytes.put(dest,raw);
+                String identity="{\"asset\":{\"logical_destination\":\""+dest+"\",\"source_sha256\":\""+sha(raw)+"\",\"source_bytes\":"+raw.length+",\"media_type\":\"application/json\"},\"default_bias_percent\":100}";
+                String audio="condition-a".equals(condition)?a:b;
+                String outer=outerCondition(condition,"condition-a".equals(condition)?"Condition 1":"Condition 2",audio);
+                String projected=projectedCondition(audio);
+                text=text.replace(outer,outer.substring(0,outer.length()-1)+",\"breath_guidance\":"+identity+"}")
+                    .replace("\""+condition+"\":"+projected,"\""+condition+"\":"+projected.substring(0,projected.length()-1)+",\"breath_guidance\":"+identity+"}");
+                extra+=","+entry("breath-guidance-"+("condition-a".equals(condition)?"a":"b"),dest,sha(raw),raw.length,"application/json");
+            }
+            String config="{\"enabled\":"+(mode==1?"false":mode==2?"1":"true");
+            for(String role:new String[]{"inhale","retention","exhale"}) {
+                byte[] raw=("synthetic-mp3-"+role).getBytes(StandardCharsets.UTF_8);
+                String dest="phase-audio/"+role+".mp3";
+                config+=",\""+role+"\":"+audio(mode==4&&role.equals("inhale")?"phase-audio/retention.mp3":dest,sha(raw),raw.length);
+                assetBytes.put(dest,mode==6?new byte[]{1}:raw);
+                if(!(mode==5&&role.equals("exhale")))extra+=","+entry("phase-audio-"+role,dest,sha(raw),raw.length,"audio/mpeg");
+            }
+            config+=mode==3?",\"unknown\":true}":"}";
+            if(mode!=7)text=text.substring(0,text.length()-1)+",\"phase_audio\":"+config+"}";
+            final byte[] profile=text.getBytes(StandardCharsets.UTF_8);
+            Fixture fixture=fixture(profile,"provider.one",entries(profile,"",false)+extra);
+            assetBytes.put(ExperimentSessionPackagedClosure.PROFILE_DESTINATION,profile);
+            try {
+                try {
+                    ExperimentSessionPackagedClosure.Result result=ExperimentSessionPackagedClosure.prepare(fixture.lock,destination->assetBytes.get(destination),fixture.root,fixture.anchors);
+                    check(mode<=1,"hostile optional audio must deny mode="+mode);
+                    check(result.phaseAudioEntries.length==(mode==0?3:0),"exact opt-in controls looping/cues");
+                }catch(IllegalArgumentException error){if(mode<=1)throw error;check(mode>=2,"positive closure rejected mode="+mode);}
+            }finally{fixture.close();}
+        }
     }
 
     private static void rejectsWrongAssetCardinalityAndIds() throws Exception {
@@ -383,6 +470,81 @@ public final class ExperimentSessionPackagedClosureTest {
         } catch (Exception error) { throw new AssertionError(error); }
     }
 
+    private static void retainedUpgradePreservesLegacyAndSessionBytes() throws Exception {
+        byte[] profile = profile("provider.one", audio("session-audio/condition-a.mp3",
+            AUDIO_A_SHA, 101L), audio("session-audio/condition-b.mp3", AUDIO_B_SHA, 202L), false)
+            .getBytes(StandardCharsets.UTF_8);
+        Fixture fixture = fixture(profile, "provider.one", entries(profile, "", false));
+        try {
+            Path legacy=fixture.root.resolve(ExperimentSessionPackagedClosure.MATERIALIZED_DIRECTORY);
+            Files.createDirectories(legacy.resolve("breath-guidance"));
+            Files.write(legacy.resolve(ExperimentSessionPackagedClosure.MATERIALIZED_FILE), "retained old profile".getBytes(StandardCharsets.UTF_8));
+            Files.write(legacy.resolve("breath-guidance/condition-a.json"), "retained old guidance".getBytes(StandardCharsets.UTF_8));
+            Path session=legacy.resolve("20261011T120000000Z");Files.createDirectory(session);
+            Files.write(session.resolve("events.jsonl"), "retained journal".getBytes(StandardCharsets.UTF_8));
+            fixture.prepare();
+            check(java.util.Arrays.equals(profile,Files.readAllBytes(fixture.target())),"selected new profile exact");
+            check("retained old profile".equals(new String(Files.readAllBytes(legacy.resolve(ExperimentSessionPackagedClosure.MATERIALIZED_FILE)),StandardCharsets.UTF_8)),"old fixed profile untouched");
+            check("retained old guidance".equals(new String(Files.readAllBytes(legacy.resolve("breath-guidance/condition-a.json")),StandardCharsets.UTF_8)),"old fixed guidance untouched");
+            check("retained journal".equals(new String(Files.readAllBytes(session.resolve("events.jsonl")),StandardCharsets.UTF_8)),"session history untouched");
+        } finally { fixture.close(); }
+    }
+
+    private static void partialClosureAndPathControls() throws Exception {
+        byte[] profile=profile("provider.one", audio("session-audio/condition-a.mp3",AUDIO_A_SHA,101L),audio("session-audio/condition-b.mp3",AUDIO_B_SHA,202L),false).getBytes(StandardCharsets.UTF_8);
+        Fixture fixture=fixture(profile,"provider.one",entries(profile,"",false));
+        try {
+            Files.createDirectories(fixture.target().getParent());Files.write(fixture.target(),new byte[]{1,2});
+            boolean rejected=false;try {fixture.prepare();}catch(IllegalArgumentException e){rejected=true;}
+            check(rejected && java.util.Arrays.equals(new byte[]{1,2},Files.readAllBytes(fixture.target())),"partial selected profile denied without overwrite");
+            Files.delete(fixture.target());Files.createDirectory(fixture.target());
+            rejected=false;try {fixture.prepare();}catch(IllegalArgumentException e){rejected=true;}
+            check(rejected && Files.isDirectory(fixture.target()),"non-file selected target denied");
+            for(String digest:new String[]{"../escape",repeat('A'),repeat('g')}) {
+                rejected=false;try {ExperimentSessionPackagedClosure.materializedDirectory(fixture.root,digest);}catch(IllegalArgumentException e){rejected=true;}
+                check(rejected,"invalid closure key denied");
+            }
+            rejected=false;try {ExperimentSessionPackagedClosure.materializedDirectory(java.nio.file.Paths.get("relative"),repeat('a'));}catch(IllegalArgumentException e){rejected=true;}
+            check(rejected,"relative root denied");
+            rejected=false;try {ExperimentSessionPackagedClosure.materializedDirectory(fixture.root.resolve("child/.."),repeat('a'));}catch(IllegalArgumentException e){rejected=true;}
+            check(rejected,"root parent traversal denied");
+        } finally { fixture.close(); }
+    }
+
+    private static void concurrentExactMaterialization() throws Exception {
+        byte[] profile=profile("provider.one",audio("session-audio/condition-a.mp3",AUDIO_A_SHA,101L),audio("session-audio/condition-b.mp3",AUDIO_B_SHA,202L),false).getBytes(StandardCharsets.UTF_8);
+        Fixture fixture=fixture(profile,"provider.one",entries(profile,"",false));
+        try {
+            java.util.concurrent.ExecutorService pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+            java.util.concurrent.CountDownLatch start=new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.Callable<Boolean> action=()->{start.await();try {fixture.prepare();return true;}catch(IllegalArgumentException racedPartial){return false;}};
+            try {
+                java.util.concurrent.Future<Boolean> a=pool.submit(action),b=pool.submit(action);start.countDown();
+                check(a.get()|b.get(),"one concurrent CreateNew publisher completes");
+                check(java.util.Arrays.equals(profile,Files.readAllBytes(fixture.target())),"raced selected bytes exact");
+                fixture.prepare(); // Only exact completed bytes are accepted; no raced partial success.
+            } finally {pool.shutdownNow();}
+        } finally {fixture.close();}
+    }
+
+    private static void linkedSelectedDirectoryIsDenied() throws Exception {
+        byte[] profile=profile("provider.one",audio("session-audio/condition-a.mp3",AUDIO_A_SHA,101L),audio("session-audio/condition-b.mp3",AUDIO_B_SHA,202L),false).getBytes(StandardCharsets.UTF_8);
+        Fixture fixture=fixture(profile,"provider.one",entries(profile,"",false));
+        Path link=fixture.target().getParent();
+        try {
+            Path target=fixture.root.resolve("other-owner-directory");Files.createDirectory(target);
+            Files.createDirectories(fixture.target().getParent().getParent());
+            if(System.getProperty("os.name").startsWith("Windows")) {
+                Process p=new ProcessBuilder("cmd.exe","/c","mklink","/J",link.toString(),target.toString())
+                    .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.INHERIT).start();
+                check(p.waitFor()==0,"actual task-owned junction created");
+            } else Files.createSymbolicLink(link,target);
+            boolean rejected=false;try {fixture.prepare();}catch(IllegalArgumentException e){rejected=true;}
+            check(rejected,"linked selected directory denied before write");
+            check(!Files.exists(target.resolve(ExperimentSessionPackagedClosure.MATERIALIZED_FILE)),"linked target unchanged");
+        } finally {Files.deleteIfExists(link);fixture.close();}
+    }
+
     private static String repeat(char value) {
         char[] values = new char[64];
         java.util.Arrays.fill(values, value);
@@ -420,7 +582,7 @@ public final class ExperimentSessionPackagedClosureTest {
         }
 
         Path target() {
-            return root.resolve(ExperimentSessionPackagedClosure.MATERIALIZED_DIRECTORY)
+            return ExperimentSessionPackagedClosure.materializedDirectory(root, anchors.profileSha256)
                 .resolve(ExperimentSessionPackagedClosure.MATERIALIZED_FILE);
         }
 

@@ -84,6 +84,15 @@ app property manifest before applying the capsule profile, serialize by
 headset serial, and restore exact prior property values in `finally`. See
 [APK Build And Run Isolation](APK_RUN_ISOLATION.md).
 
+`input.controllers_only` narrows the legacy optional-hands input substrate for
+an explicit controller-only APK. Resolution removes the hand-tracking permission
+and uses-feature before checking the app's declared manifest. The builder binds
+the compile value to that feature and verifies the generated manifest. The
+native input policy disables hand-tracking extensions and hand permission
+requests. Hand pointers, live hand geometry and simultaneous hands/controllers
+features conflict with this policy. Existing input selections keep their
+original manifest and runtime behavior.
+
 Hand and particle decisions are intentionally different Rust types. A hand
 decision cannot cross a particle effect gate (or vice versa), and neither type
 has a public constructor or public inner fields. Compile-fail doctests preserve
@@ -102,3 +111,7 @@ cargo test -p rusty-quest-feature-activation -p rusty-quest-particle-adapter -p 
 Application promotion additionally requires its workspace lock checks and,
 when runtime behavior is claimed, explicit serial-scoped device evidence for
 both applied and damaged inputs with cleanup and bounded fatal scanning.
+
+The opt-in [standalone experiment owner](EXPERIMENT_SESSION_STANDALONE_OWNER.md)
+uses its own panel source closure and selected profile policy. It reuses the
+existing command/audio owner while excluding kiosk and remote transports.

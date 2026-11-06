@@ -27,8 +27,9 @@ use crate::{
         SESSION_CHECKPOINT_SCHEMA, SESSION_FINAL_SCHEMA, SESSION_INDEX_SCHEMA,
         SESSION_MANIFEST_SCHEMA, SESSION_STREAM_FILES,
     },
+    session_recording_inventory::{elapsed_us, RecoveryInventory},
     session_recording_recovery::{
-        recover_recordings, validate_recording_root_no_links, RecoveryDisposition, RecoveryReport,
+        validate_recording_root_no_links, RecoveryDisposition, RecoveryReport,
     },
 };
 
@@ -127,6 +128,25 @@ pub(crate) struct FinalizedReceipt {
     pub(crate) saved: bool,
     pub(crate) dropped_records: u64,
     pub(crate) recovery: RecoveryReport,
+    pub(crate) timings: FinalizationTimings,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FinalizationTimings {
+    pub(crate) drain_us: u64,
+    pub(crate) durable_finalize_us: u64,
+    pub(crate) recovery_us: u64,
+    pub(crate) index_us: u64,
+    pub(crate) fence_us: u64,
+    pub(crate) fence_bytes_hashed: u64,
+    pub(crate) total_us: u64,
+}
+
+impl FinalizationTimings {
+    pub(crate) fn value(self) -> Value {
+        json!({"drain_us":self.drain_us,"durable_finalize_us":self.durable_finalize_us,
+            "recovery_us":self.recovery_us,"index_us":self.index_us,"fence_us":self.fence_us,"fence_bytes_hashed":self.fence_bytes_hashed,"total_us":self.total_us})
+    }
 }
 
 pub(crate) struct ControlReceipt<T> {
@@ -134,6 +154,15 @@ pub(crate) struct ControlReceipt<T> {
 }
 
 impl<T> ControlReceipt<T> {
+    /// Retain ownership of an admitted durable operation until the writer replies.
+    /// Only the dedicated session-control owner or host tests may block here;
+    /// Android UI, OpenXR, render and BLE callbacks remain nonblocking.
+    pub(crate) fn receive(self) -> Result<T, String> {
+        self.receiver
+            .recv()
+            .map_err(|_| "recording-control-disconnected".to_owned())?
+    }
+
     pub(crate) fn try_receive(&self) -> Result<Option<Result<T, String>>, String> {
         match self.receiver.try_recv() {
             Ok(value) => Ok(Some(value)),
@@ -311,6 +340,10 @@ impl LossSnapshot {
 }
 
 enum ControlCommand {
+    RecordBiasChange {
+        change: crate::session_recording_contract::BiasChange,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
     RecordControl {
         generation: u64,
         at: MonotonicNanos,
@@ -462,6 +495,17 @@ impl SessionRecordingWriter {
                 kind,
                 reply,
             })
+            .map_err(|_| "recording-writer-closed".to_owned())?;
+        Ok(ControlReceipt { receiver })
+    }
+
+    pub(crate) fn record_bias_change(
+        &self,
+        change: crate::session_recording_contract::BiasChange,
+    ) -> Result<ControlReceipt<()>, String> {
+        let (reply, receiver) = mpsc::channel();
+        self.control_sender
+            .send(ControlCommand::RecordBiasChange { change, reply })
             .map_err(|_| "recording-writer-closed".to_owned())?;
         Ok(ControlReceipt { receiver })
     }
@@ -618,6 +662,7 @@ fn run_actor(
     external_loss: Arc<ExternalLossLedger>,
 ) {
     let mut active: Option<ActiveRecording> = None;
+    let mut inventory = RecoveryInventory::default();
     let mut running = true;
     while running {
         while let Ok(command) = control_receiver.try_recv() {
@@ -629,6 +674,7 @@ fn run_actor(
                 &queued_bytes,
                 &external_loss,
                 &mut active,
+                &mut inventory,
             );
             if !running {
                 break;
@@ -675,6 +721,7 @@ fn handle_control(
     queued_bytes: &AtomicUsize,
     external_loss: &ExternalLossLedger,
     active: &mut Option<ActiveRecording>,
+    inventory: &mut RecoveryInventory,
 ) -> bool {
     match command {
         ControlCommand::Prepare {
@@ -707,6 +754,56 @@ fn handle_control(
                     receipt
                 })
             };
+            let _ = reply.send(result);
+        }
+        ControlCommand::RecordBiasChange { change, reply } => {
+            let generation = change.generation;
+            let result = active
+                .as_mut()
+                .ok_or_else(|| "recording-not-active".to_owned())
+                .and_then(|recording| {
+                    if recording.generation != generation {
+                        return Err("recording-generation-stale".to_owned());
+                    }
+                    if let Some(error) = recording.last_error.as_ref() {
+                        return Err(format!("recording-writer-fault:{error}"));
+                    }
+                    let previous_bias = recording.last_bias_change.as_ref();
+                    let previous_percent = previous_bias.map_or(
+                        recording
+                            .spec
+                            .experiment_identity
+                            .breath_guidance_bias_percent,
+                        |c| c.new_bias_percent,
+                    );
+                    let previous_revision = previous_bias.map_or(0, |c| c.bias_revision);
+                    if recording.spec.experiment_identity.breath_guidance.is_none()
+                        || change.old_bias_percent != previous_percent
+                        || change.bias_revision != previous_revision + 1
+                        || previous_bias.is_some_and(|c| change.observed_at < c.observed_at)
+                    {
+                        return Err("recording-bias-chain-invalid".to_owned());
+                    }
+                    recording.write_record(
+                        recording.written_sequence,
+                        &SessionRecord::BiasChange(change.clone()),
+                    )?;
+                    recording.last_bias_change = Some(change);
+                    recording
+                        .checkpoint(
+                            recording.completion_durable,
+                            loss_snapshot(admission, external_loss, generation),
+                        )
+                        .map(|_| ())
+                });
+            if let Err(error) = &result {
+                if let Some(recording) = active
+                    .as_mut()
+                    .filter(|recording| recording.generation == generation)
+                {
+                    recording.last_error = Some(error.clone());
+                }
+            }
             let _ = reply.send(result);
         }
         ControlCommand::RecordControl {
@@ -768,12 +865,16 @@ fn handle_control(
                     Err("recording-generation-stale".to_owned())
                 } else {
                     let directory = recording.directory.clone();
-                    let finalization_loss = loss.clone();
-                    let finalization = recording
-                        .drain_to_cutoff(data_receiver, queued_bytes, cutoff)
-                        .and_then(|()| {
-                            recording.finalize(at, reason, threshold_reached, finalization_loss)
-                        });
+                    let total_start = Instant::now();
+                    let mut timings = FinalizationTimings::default();
+                    let start = Instant::now();
+                    let drained = recording.drain_to_cutoff(data_receiver, queued_bytes, cutoff);
+                    timings.drain_us = elapsed_us(start);
+                    let start = Instant::now();
+                    let finalization = drained.and_then(|()| {
+                        recording.finalize(at, reason, threshold_reached, loss.clone())
+                    });
+                    timings.durable_finalize_us = elapsed_us(start);
                     let completed = recording.completion_durable;
                     // Drop every stream handle on the actor even when durable
                     // finalization fails. The latest checkpoint remains
@@ -787,9 +888,17 @@ fn handle_control(
                     state.finalize_requested = true;
                     drop(state);
                     finalization.and_then(|()| {
-                        let recovery = recover_recordings(&config.root)?;
+                        let start = Instant::now();
+                        let recovery = inventory.recover(&config.root, Some(&directory))?;
+                        timings.recovery_us = elapsed_us(start);
                         let saved = validate_current_recovery(&recovery, &directory, &loss)?;
+                        let start = Instant::now();
                         publish_index(&config.root, &recovery)?;
+                        timings.index_us = elapsed_us(start);
+                        let start = Instant::now();
+                        timings.fence_bytes_hashed = inventory.confirm_publication(&config.root)?;
+                        timings.fence_us = elapsed_us(start);
+                        timings.total_us = elapsed_us(total_start);
                         Ok(FinalizedReceipt {
                             generation,
                             directory,
@@ -798,6 +907,7 @@ fn handle_control(
                             saved,
                             dropped_records: loss.dropped_records,
                             recovery,
+                            timings,
                         })
                     })
                 }
@@ -810,7 +920,7 @@ fn handle_control(
             let result = if active.is_some() {
                 Err("recording-recovery-while-active".to_owned())
             } else {
-                recover_recordings(&config.root)
+                inventory.recover(&config.root, None)
             };
             let _ = reply.send(result);
         }
@@ -950,6 +1060,7 @@ fn release_queued_bytes(queued_bytes: &AtomicUsize, payload_bytes: usize) {
 }
 
 struct ActiveRecording {
+    last_bias_change: Option<crate::session_recording_contract::BiasChange>,
     generation: u64,
     spec: SessionStartSpec,
     directory: PathBuf,
@@ -990,6 +1101,7 @@ impl ActiveRecording {
                     "started_at_utc": spec.started_at.as_str(),
                     "condition": spec.condition.as_str(),
                     "experiment_identity": spec.experiment_identity.encoded_value(),
+                    "breath_tracking_configuration": spec.breath_tracking_configuration,
                     "completion_threshold_ns": spec.completion_threshold_ns,
                     "clock_anchor": {
                         "monotonic_clock": "android-elapsed-realtime",
@@ -997,7 +1109,7 @@ impl ActiveRecording {
                         "utc_epoch_ns": spec.clock_anchor.utc.get()
                     },
                     "session_identifier_policy": "utc-start-date-time-only",
-                    "runtime_generation_persisted": false
+                    "runtime_generation_persisted": true
                 }),
             )?;
             let mut streams = BTreeMap::new();
@@ -1010,6 +1122,7 @@ impl ActiveRecording {
                 streams.insert(name, BufWriter::with_capacity(256 * 1024, file));
             }
             let mut recording = Self {
+                last_bias_change: None,
                 generation,
                 spec,
                 directory: directory.clone(),
@@ -1170,6 +1283,8 @@ impl ActiveRecording {
                 "started_at_utc": self.spec.started_at.as_str(),
                 "condition": self.spec.condition.as_str(),
                 "experiment_identity": self.spec.experiment_identity.encoded_value(),
+                "breath_tracking_configuration": self.spec.breath_tracking_configuration,
+                "breath_guidance_state": self.committed_bias_state(),
                 "completed": completed,
                 "last_accepted_sequence": self.written_sequence,
                 "last_consumed_sequence": self.consumed_sequence,
@@ -1210,6 +1325,8 @@ impl ActiveRecording {
                 "started_at_utc": self.spec.started_at.as_str(),
                 "condition": self.spec.condition.as_str(),
                 "experiment_identity": self.spec.experiment_identity.encoded_value(),
+                "breath_tracking_configuration": self.spec.breath_tracking_configuration,
+                "breath_guidance_state": self.committed_bias_state(),
                 "completed": self.completion_durable,
                 "completion_threshold_ns": self.spec.completion_threshold_ns,
                 "stop_reason": reason.as_str(),
@@ -1243,6 +1360,14 @@ impl ActiveRecording {
             lengths.insert((*name).to_owned(), length);
         }
         Ok(lengths)
+    }
+
+    fn committed_bias_state(&self) -> Value {
+        json!({
+            "bias_percent": self.last_bias_change.as_ref().map_or(self.spec.experiment_identity.breath_guidance_bias_percent, |c| c.new_bias_percent),
+            "bias_revision": self.last_bias_change.as_ref().map_or(0, |c| c.bias_revision),
+            "decision_status": "committed-before-application"
+        })
     }
 }
 
@@ -1361,8 +1486,9 @@ fn sync_directory(_directory: &Path) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::session_recording_recovery::recover_recordings;
     use std::{
         sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
@@ -1382,7 +1508,80 @@ mod tests {
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
-    fn temp_root(label: &str) -> PathBuf {
+    #[test]
+    fn admitted_durable_receipt_survives_the_previous_ten_second_wait() {
+        let (reply, receiver) = mpsc::channel();
+        let receipt = ControlReceipt { receiver };
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_secs(11));
+            reply
+                .send(Ok(PreparedReceipt {
+                    generation: 17,
+                    directory: PathBuf::from("original-admitted-session"),
+                }))
+                .expect("owner must retain the original reply receiver");
+        });
+        let prepared = receipt.receive().unwrap();
+        assert_eq!(prepared.generation, 17);
+        assert_eq!(
+            prepared.directory,
+            PathBuf::from("original-admitted-session")
+        );
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn admitted_finalize_receipt_survives_previous_wait_and_keeps_saved_counts() {
+        let (reply, receiver) = mpsc::channel();
+        let receipt = ControlReceipt { receiver };
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_secs(11));
+            let mut recovery = RecoveryReport::default();
+            recovery.counts.completed = 1;
+            reply
+                .send(Ok(FinalizedReceipt {
+                    timings: FinalizationTimings::default(),
+                    generation: 19,
+                    directory: PathBuf::from("original-finalized-session"),
+                    accepted_sequence_cutoff: 71,
+                    completed: true,
+                    saved: true,
+                    dropped_records: 0,
+                    recovery,
+                }))
+                .expect("finalize receiver must remain owned until actual result");
+        });
+        let finalized = receipt.receive().unwrap();
+        assert_eq!(finalized.generation, 19);
+        assert_eq!(finalized.accepted_sequence_cutoff, 71);
+        assert!(finalized.saved && finalized.completed);
+        assert_eq!(finalized.dropped_records, 0);
+        assert_eq!(finalized.recovery.counts.completed, 1);
+        assert_eq!(finalized.recovery.counts.errors, 0);
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn durable_receipt_preserves_writer_failure_and_disconnection() {
+        let (reply, receiver) = mpsc::channel();
+        reply
+            .send(Err::<(), _>(
+                "recording-session-directory-create:denied".to_owned(),
+            ))
+            .unwrap();
+        assert_eq!(
+            ControlReceipt { receiver }.receive().unwrap_err(),
+            "recording-session-directory-create:denied"
+        );
+        let (reply, receiver) = mpsc::channel::<Result<(), String>>();
+        drop(reply);
+        assert_eq!(
+            ControlReceipt { receiver }.receive().unwrap_err(),
+            "recording-control-disconnected"
+        );
+    }
+
+    pub(crate) fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir()
             .join(format!(
                 "rusty-quest-session-writer-{label}-{}-{}",
@@ -1395,9 +1594,10 @@ mod tests {
             .join("viscereality-recordings")
     }
 
-    fn spec(utc: u64) -> SessionStartSpec {
+    pub(crate) fn spec(utc: u64) -> SessionStartSpec {
         let utc = UtcEpochNanos::new(utc);
         SessionStartSpec {
+            breath_tracking_configuration: None,
             started_at: SessionTimestampKey::from_utc(utc),
             condition: ConditionKey::parse("condition-a").unwrap(),
             completion_threshold_ns: DEFAULT_COMPLETION_THRESHOLD_NS,
@@ -1432,7 +1632,7 @@ mod tests {
         }
     }
 
-    fn config(root: PathBuf, capacity: usize, checkpoint_ms: u64) -> WriterConfig {
+    pub(crate) fn config(root: PathBuf, capacity: usize, checkpoint_ms: u64) -> WriterConfig {
         WriterConfig {
             root,
             data_queue_capacity: capacity,
@@ -1452,6 +1652,10 @@ mod tests {
 
     fn breath(at: u64) -> SessionRecord {
         SessionRecord::Breath(BreathObservation {
+            assessment_source: None,
+            tracking_status: None,
+            polar_source_provenance: None,
+            guidance_bias_revision: 0,
             source_sequence: at,
             sampled_at: SourceTimestamp {
                 clock: SourceClock::OpenXrTime,
@@ -1471,6 +1675,92 @@ mod tests {
             quality01: 1.0,
             settings_revision: 3,
         })
+    }
+
+    #[test]
+    fn bias_checkpoint_failure_remains_sticky_after_storage_repair() {
+        let root = temp_root("bias-checkpoint-failure");
+        let writer = SessionRecordingWriter::spawn(config(root.clone(), 16, 1000)).unwrap();
+        let mut start = spec(1_725_000_000_000_000_000);
+        start.experiment_identity.breath_guidance =
+            Some(crate::breath_guidance::BreathGuidanceAssetIdentity {
+                logical_destination: "breath-guidance/condition-a.json".to_owned(),
+                source_sha256: "55".repeat(32),
+                source_bytes: 123,
+                media_type: "application/json".to_owned(),
+            });
+        let prepared = writer.prepare(1, start).unwrap().receive().unwrap();
+        let original_length = fs::metadata(prepared.directory.join("events.jsonl"))
+            .unwrap()
+            .len();
+        fs::create_dir(
+            prepared
+                .directory
+                .join("checkpoint-00000000000000000002.json"),
+        )
+        .unwrap();
+        let result = writer
+            .record_bias_change(crate::session_recording_contract::BiasChange {
+                observed_at: MonotonicNanos::new(2000),
+                generation: 1,
+                operation_id: "bias-disk-failure".to_owned(),
+                operator_origin: "ui-session-v2".to_owned(),
+                old_bias_percent: 0,
+                new_bias_percent: 60,
+                bias_revision: 1,
+            })
+            .unwrap()
+            .receive();
+        assert!(result.is_err());
+        let failed_event_bytes = fs::read(prepared.directory.join("events.jsonl")).unwrap();
+        fs::remove_dir(
+            prepared
+                .directory
+                .join("checkpoint-00000000000000000002.json"),
+        )
+        .unwrap();
+        // Storage is writable again, but this actor has already lost durability.
+        // Without the sticky-fault admission check this valid next revision succeeds.
+        let second = writer
+            .record_bias_change(crate::session_recording_contract::BiasChange {
+                observed_at: MonotonicNanos::new(2500),
+                generation: 1,
+                operation_id: "bias-after-fault".to_owned(),
+                operator_origin: "ui-session-v2".to_owned(),
+                old_bias_percent: 60,
+                new_bias_percent: 80,
+                bias_revision: 2,
+            })
+            .unwrap()
+            .receive();
+        assert!(second.unwrap_err().starts_with("recording-writer-fault:"));
+        assert_eq!(
+            fs::read(prepared.directory.join("events.jsonl")).unwrap(),
+            failed_event_bytes
+        );
+        assert!(writer
+            .try_finalize(
+                1,
+                MonotonicNanos::new(3000),
+                FinalizationReason::SaveAndExit,
+                false
+            )
+            .unwrap()
+            .receive()
+            .is_err());
+        writer.shutdown(Duration::from_secs(2)).unwrap();
+        let recovery = crate::session_recording_recovery::recover_recordings(&root).unwrap();
+        assert_eq!(
+            recovery.sessions[0].durable_stream_lengths["events.jsonl"],
+            original_length
+        );
+        assert!(
+            fs::metadata(prepared.directory.join("events.jsonl"))
+                .unwrap()
+                .len()
+                > original_length
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2089,6 +2379,10 @@ mod tests {
                 rr_interval_ms: Some(f32::INFINITY),
             }),
             SessionRecord::Breath(BreathObservation {
+                assessment_source: None,
+                tracking_status: None,
+                polar_source_provenance: None,
+                guidance_bias_revision: 0,
                 source_sequence: 3,
                 sampled_at: SourceTimestamp {
                     clock: SourceClock::OpenXrTime,
@@ -2109,6 +2403,10 @@ mod tests {
                 settings_revision: 1,
             }),
             SessionRecord::Breath(BreathObservation {
+                assessment_source: None,
+                tracking_status: None,
+                polar_source_provenance: None,
+                guidance_bias_revision: 0,
                 source_sequence: 4,
                 sampled_at: SourceTimestamp {
                     clock: SourceClock::OpenXrTime,
@@ -2193,6 +2491,7 @@ mod tests {
         let key = SessionTimestampKey::parse("utc-ns-01725000000000000999").unwrap();
         let directory = PathBuf::from("root").join(key.as_str());
         let recovery = RecoveryReport {
+            work: Default::default(),
             sessions: vec![crate::session_recording_recovery::RecoveredSession {
                 started_at: key,
                 experiment_identity: None,

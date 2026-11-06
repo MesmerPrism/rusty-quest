@@ -97,6 +97,41 @@ if ($null -ne $capsule.property_manifest) {
     Assert-FileRecord -Record $capsule.property_manifest -Label "property manifest"
     if ([string]$capsule.property_manifest.scope -ne "complete-manifest") { throw "APK run capsule property scope must be complete-manifest." }
 }
+# Validate only the opt-in packaging contract; historical Spatial/QFM capsules
+# retain their existing validation path, including legacy extra fields.
+$buildManifest = try {Get-Content -LiteralPath $capsule.build_manifest.path -Raw | ConvertFrom-Json} catch {$null}
+$packagingFields = @('packaging_fingerprint','packaging_input_lock')
+$hasPackaging = @($packagingFields | Where-Object {$capsule.PSObject.Properties.Name -contains $_}).Count -gt 0 -or
+    @('version_code','version_name' | Where-Object {$capsule.android.PSObject.Properties.Name -contains $_}).Count -gt 0 -or
+    @('packaging_fingerprint','android_version_code','android_version_name' | Where-Object {$buildManifest.PSObject.Properties.Name -contains $_}).Count -gt 0
+if ($hasPackaging) {
+    if ($capsule.app_lane -cne 'native-renderer-android') {throw 'Packaging input lock requires the native renderer lane.'}
+    foreach($field in $packagingFields){if($null -eq $capsule.PSObject.Properties[$field]){throw "Incomplete packaging contract: $field"}}
+    if (($capsule.packaging_input_lock.PSObject.Properties.Name | Sort-Object) -join ',' -cne 'path,sha256') {throw 'Packaging input lock file record must be closed.'}
+    if($capsule.packaging_input_lock.path -isnot [string] -or $capsule.packaging_input_lock.sha256 -isnot [string]){throw 'Packaging file record types are invalid.'}
+    Assert-FileRecord -Record $capsule.packaging_input_lock -Label 'packaging input lock'
+    $packagingText=Get-Content -LiteralPath $capsule.packaging_input_lock.path -Raw
+    $packagingSchema=Join-Path $PSScriptRoot '../schemas/rusty.quest.native_renderer_android.packaging_input.v1.schema.json'
+    if (-not (Test-Json -Json $packagingText -SchemaFile $packagingSchema -ErrorAction SilentlyContinue)) {throw 'Packaging input lock failed closed schema validation.'}
+    $packaging=$packagingText | ConvertFrom-Json
+    foreach($fingerprint in @($capsule.packaging_fingerprint,$buildManifest.packaging_fingerprint)){
+        if($fingerprint -isnot [string] -or $fingerprint -cnotmatch '\A[0-9a-f]{64}\z'){throw 'Packaging fingerprint must be a scalar lowercase SHA-256 string.'}
+    }
+    if($capsule.packaging_fingerprint -cne $capsule.packaging_input_lock.sha256 -or $buildManifest.packaging_fingerprint -cne $capsule.packaging_fingerprint){throw 'Packaging fingerprint cross-record mismatch.'}
+    $featureLock=Get-Content -LiteralPath $capsule.build_lock.path -Raw | ConvertFrom-Json
+    foreach($pair in @(
+        @($packaging.app_id,$capsule.app_id),@($packaging.app_id,$featureLock.app_id),@($packaging.app_id,$buildManifest.app_id),
+        @($packaging.package_name,$capsule.android.package_name),@($packaging.package_name,$featureLock.android_manifest.package_name),@($packaging.package_name,$buildManifest.package_name),
+        @($packaging.feature_lock_sha256,$capsule.build_lock.sha256),@($packaging.feature_lock_sha256,$buildManifest.app_build_lock_sha256),
+        @($packaging.source_commit,$capsule.source.commit),@($packaging.source_commit,$buildManifest.source_commit),
+        @($packaging.source_tree,$capsule.source.tree),@($packaging.source_tree,$buildManifest.source_tree),
+        @($packaging.source_composition_fingerprint,$capsule.source.composition_fingerprint),@($packaging.source_composition_fingerprint,$buildManifest.source_composition_fingerprint),
+        @($packaging.android_version_name,$capsule.android.version_name),@($packaging.android_version_name,$buildManifest.android_version_name)
+    )) {if($pair[1] -isnot [string] -or $pair[0] -cne $pair[1]){throw 'Packaging identity cross-record mismatch.'}}
+    foreach($value in @($capsule.android.version_code,$buildManifest.android_version_code)){
+        if(($value -isnot [int] -and $value -isnot [long]) -or $value -ne $packaging.android_version_code){throw 'Android version code cross-record type/value mismatch.'}
+    }
+}
 if ([string]$capsule.android.package_name -notmatch '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$' -or [string]::IsNullOrWhiteSpace([string]$capsule.android.activity)) {
     throw "APK run capsule Android identity is invalid."
 }

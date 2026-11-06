@@ -41,6 +41,24 @@ addressed by app, lock, and source revision:
 target/native-renderer-android/builds/<app-id>/<lock-sha-prefix>/<source-commit-prefix>/
 ```
 
+Native Android versions are explicit `-AndroidVersionCode` / `-AndroidVersionName`
+inputs (defaults `1` / `0.1.0`). The version code is a canonical positive Android
+integer; the display name is bounded to 64 identifier characters. The default
+pair retains legacy explicit `-OutDir` behavior. Every other pair appends
+`p-<16-hex-packaging-fingerprint>` to the output base, including an explicit base.
+Generated `android-build-identity.json` is reserved during public destination
+preflight/materialization and private closure preflight/materialization, including
+retained direct closures. Folded-name and path-prefix collisions are rejected
+before builder output creation or native compilation. The focused route check is
+`tools/checks/Test-NativeRendererBuildIdentityAssetDestinations.ps1`.
+Versions do not alter the native Cargo intermediate address or the feature-lock
+`android_manifest`. A separate closed `packaging-input-lock.json` binds app,
+package, feature-lock hash, exact source composition and effective Android versions.
+Its full SHA-256 is verified against the build manifest and run capsule. Partial
+new records fail validation; retained capsules without this contract keep their
+legacy path. Run `tools/checks/Test-NativeRendererAndroidPackaging.ps1` for focused
+version/address, cross-record damage, and legacy/Spatial compatibility checks.
+
 Spatial builds require an explicit `-AppId` unless the caller deliberately
 uses `-AllowSharedDevelopmentPackage`. Their explicit inputs form a build-input
 lock and fingerprint under:
@@ -207,6 +225,21 @@ package, restores only the receipt snapshot, verifies every property, and
 atomically writes a distinct `cleaned` or `partial` terminal receipt. Damaged,
 mismatched, terminal, or concurrently owned receipts are rejected; this is not
 a generic shell, property, or package cleanup command.
+
+Recovery retains the receipt's safe property-name character policy without a
+92-character name limit: legitimate complete-manifest property names can be
+longer. Before any ADB operation, including force-stop, it preflights the entire
+snapshot through the same bounded UTF-8 `setprop` batching used by apply and
+restore. Unsafe names/values, duplicate names and oversized operations are
+rejected before effects; the original entered receipt bytes remain unchanged.
+
+The focused host recovery fixture executes the actual recovery CLI against a
+generated fake ADB only:
+
+```powershell
+pwsh -NoProfile -File tools/checks/Test-QuestRunIsolationRecovery.ps1 `
+  -OutputRoot <fresh-absolute-output-directory>
+```
 
 Do not use blanket force-stop of neighboring XR packages as ordinary
 preflight. The Spatial wrapper exposes `-ForceStopKnownXrPackages` only for an

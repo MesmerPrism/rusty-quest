@@ -1,0 +1,186 @@
+# Opt-in Experimenter Hub status provider component
+
+This dormant source component binds the fixed Connection Hub admission service
+only after an explicit main-looper `start()`. `close()` retires its own surface,
+cancels publication/deadlines, and unbinds. It never enables a listener, sends an
+application command, creates an issuer/grant, or launches an Activity. Binding
+uses Android `BIND_AUTO_CREATE` for the existing admission service; this can
+initialize that service but cannot opt into the Hub LAN listener.
+
+`ExperimentSessionHubSurfaceClient` is the real Android Messenger/ServiceConnection
+adapter. Android PackageManager supplies the exact installed broker UID; shared
+UIDs are rejected and callback sending UID must match. Each binding has a fresh
+Messenger and generation, death link and timer cleanup. The provider subject is
+never serialized by this client: ConnectionHubAdmissionService derives the
+calling UID/package/single signer and consumes its real retained admission use.
+No broker signing certificate is invented by this component; broker product
+selection/provenance remains the owner's prerequisite.
+
+`ExperimentSessionHubProvider` drives the existing public admission reducer in
+the order runtime evidence, issue token, authorize use, register surface. It
+retains only genuine correlated owner responses. Late replies are fenced by the
+actual uptime deadline even before a queued timer runs. Broker epoch changes,
+wrong message kinds, stale session/binding/correlation, rejected grants and
+invalid responses cannot start publication. The reducer's one equivalent
+registration retry uses identical cached registration bytes and identity;
+ambiguous completion stays nonregistered. It does not retry arbitrary commands.
+
+The fixed surface is `surface.experimenter.status`, label `Experimenter status`,
+description `Read-only application status observation; no physical readiness claim`.
+Its exact Hub canonical digest is computed over `v1`, those three strings, and
+their newline delimiters with no command records. Host controls compare the
+digest to the actual HubSurfaceDescriptor implementation. `commands` is exactly
+`[]`. State contains thirteen typed scalars: schema, channel, epoch, sequence,
+generation, revision, source_state, source_age_ms, phase, foreground, recording,
+active_ms and completion. The existing closed observation producer supplies
+these exact values; an unavailable status has null age and status fields. No
+Boolean or numeric value is converted to a string. This representation fits
+the Hub's scalar-only update contract (sixteen keys, 256 characters per string,
+4096 UTF-8 bytes), unlike wrapping the observation JSON in one oversized string.
+The application supplies the
+same-lock NativeStatusSnapshot, selected channel and native runtime epoch to
+the existing producer. Polling once per second does not synthesize native
+readbacks or refresh sequence. Unavailable source publishes a null status
+projection. Hub stores this data; it does not treat it as authority, native
+freshness, application readiness or physical observation.
+
+## Deliberate packaging and caller prerequisites
+
+The public optional feature ui.experiment_session_hub_status_provider depends
+on the breath composition panel. Feature off retains the established client
+JSON specialization, has no Hub Java module or package query, and generates no
+Hub caller. Feature on adds the exact three panel drivers and public admission
+reducer to the hashed optional module. The compile list deduplicates the reducer
+already present in the shared admission supplier. The exact broker package
+query and signature admission permission are explicitly selected.
+
+The selected Application initializer composes with the existing self-kiosk
+Application; it does not replace its lifecycle callbacks or foreground probe.
+It materializes and verifies the exact packaged experiment closure before cold
+`android.app.NativeActivity` startup. Feature-off and no-panel compositions have
+an inert generated bridge. No listener, token request or application command is
+started by materialization.
+
+The actual native AndroidApp owner starts one application-context status owner
+only after a positive initialized runtime epoch exists. JNI start/Drop hooks
+carry an exact process-local owner identity and runtime epoch. Synchronous desired
+identity fencing precedes queued main-looper work: former starts, callbacks and
+Drop cannot start or close a replacement. Drop retires the Java provider before
+attempting native shutdown, including failed shutdown acknowledgement. Shutdown
+targets its captured runtime Arc and an atomic owner claim, never a later registry
+lookup. A replacement on the same Arc fences former shutdown; a claimed retiring
+Arc refuses new ownership until existing Closed/rearm produces a new runtime.
+Concurrent startup during retirement remains ineligible rather than retrying. The
+Application status owner retains no Activity. Panel resume/pause/destroy changes
+UI subscription only; it does not create a Binder lifetime or reopen failure.
+
+A separate read-only shell executor polls the exact status command, with only
+one request in flight. Live status queries use a dedicated capacity-four worker
+request/acknowledgement lane, bounded to 250 ms. The worker checks terminal work
+first and acknowledges a current projection without changing product revision,
+last product receipt or mutation admission. No authority lock is held while
+waiting. A live JoinHandle, cached projection or Java timestamp alone is not
+worker responsiveness. Healthy idle revisions can remain unchanged while actual
+worker acknowledgements advance observation identity.
+
+Accepted matching-epoch acknowledgements retain the existing coordinator
+state/epoch/monotonic witness guards. Future, nonadvancing or rejected responses
+cannot refresh it. Transient query unavailability retains only the prior aged
+observation; a supplier age bound and an independent watchdog retire it after
+1500 ms without a valid acknowledgement, even if the poll callback never arrives.
+Closed completion, exact worker loss, clock regression, native Drop and terminal
+Binder/admission failure permanently retire the owner and read executor. A later
+ACK or panel reopening cannot retry a retired generation.
+
+An actual NativeActivity pause followed by resume may recover only a lifetime
+retired for the acknowledgement age bound. The native thread carries its captured
+owner identity and runtime epoch into a synchronous JNI lifecycle signal; no
+lookup of a replacement runtime supplies that identity. Each pause authorizes
+one resume signal, and replacement/Drop fence queued recovery. Resume closes an
+expired registration even when its watchdog is still queued, then opens a new
+read-only executor and observation generation. Old suppliers, callbacks and
+watchdogs remain unavailable or inert even when the native epoch is unchanged.
+
+A new coordinator requires an accepted current-epoch query completed after the
+new observer opened and within the existing freshness bound before constructing
+a fresh Binder client. Cached status, initialization, product revision and resume
+alone cannot register a surface. No fresh query within 1500 ms permanently retires
+that recovery generation; admission failure also remains terminal across later
+resume signals. A healthy pause/resume does not replace its registration. This
+path never reopens mutation admission, replays commands or changes the product
+revision. Existing BLE carrier generation, authentication, status, commands and
+navigation remain separate.
+
+tools/Prepare-NativeRendererBrokerClient.ps1 -AppSpec <spec> -OutputRoot <new>
+runs the real source-only resolver and writes one generated client lock using
+the same specialization function as the APK builder. The optional feature adds
+only provider-register capability and surface-registration contract family to
+the existing media client. Its actual app/package/client/marker identity is
+preserved; it creates no second subject. Output is packaged input, not a grant,
+signer, token or runtime admission. Caller must select the private exact Java
+allowlist and source binding separately; current installed candidates are not
+changed by this source implementation.
+
+The broker product must separately select reviewed empty-command support in
+both Quest and Manifold, and a canonical owner-packaged provider grant/client
+lock with the actual new APK package/signer and exact surface digest, allowed
+commands `[]`, provider-register admission capability, and existing controller
+policy. This document supplies no token, client/provider identity, grant or
+authenticated subscription. Older owners reject empty-command registration.
+
+The caller must start only in its expressly selected lifetime and close when
+that native eligibility ends. The bounded native lifecycle recovery above adds
+one fresh registration generation after an expired observation; it does not retry
+a terminal Binder/admission operation or create a persistent service.
+Browser consumption requires a genuine authenticated Hub snapshot/event route
+and matching selected surface/channel/epoch before admitting observation bytes.
+LAN listening, plaintext security posture, wearer opt-in, same-origin assets,
+and remote Internet relay remain separate existing owner decisions.
+
+## Host qualification
+
+`tools/checks/Test-ExperimentSessionHubProvider.ps1` accepts explicit existing
+Android and org.json jars and a create-new output. It compiles/runs the actual
+pure driver with the public reducer and Hub descriptor, and separately compiles
+the real Android adapter against android.jar. Synthetic callback replies prove
+protocol/lifetime behavior, not actual Binder credentials or owner issuance.
+No test starts a listener, contacts a broker, builds an APK or touches a device.
+
+## Bounded lifecycle diagnostics
+
+The explicitly selected provider emits observation-only `hub-status` markers
+under the existing `RQNativeRenderer` tag. A resumed panel reports at most eight
+native callbacks. The `accepted` field remains the last product receipt result;
+`status_response_accepted` and `state_accepted` separately describe the status
+envelope and coordinator reduction. Closed `state_reason` and `witness_reason`
+codes identify the existing rejection predicate without changing it. Numeric
+receipt/coordinator epoch, generation, revision and completion/observation clocks,
+plus initialization readiness and fresh-runtime expectation, bind that immediate
+callback diagnostic. These fields do not grant command success or witness admission.
+Its Hub lifetime reports at most sixteen creation,
+witness eligibility, factory/start, and closure markers. The provider and Android
+adapter each cap their markers at thirty-two. Repeated unknown witnesses are
+deduplicated. Ordinary packages without the selected lifetime emit none of these.
+
+Reply markers follow existing generation/session/correlation/deadline fences.
+`registration_applied` requires the reducer's actual positive registration reply;
+bind accepted and start returned describe only those local operations. Arbitrary
+reducer reasons map to a closed `reducer_marker_other` code. Raw JSON, subjects,
+UIDs, tokens, correlations, secrets and exception messages are excluded. Logging
+failures cannot alter admission, cleanup or retry behavior. Marker caps can leave
+later events unreported; an empty log is not proof that a stage never occurred.
+
+Initialization alone has no status-read timestamp. Idle generation zero is valid,
+but eligibility still requires a genuine accepted status read and the coordinator's
+exact epoch/state/monotonic witness. No marker substitutes for that witness, physical
+XR readiness, live Binder evidence or authenticated browser status.
+
+The exact two-field native status command obtains a current worker acknowledgement
+without entering the mutation queue. Its accepted status envelope does not change
+the last product receipt. Malformed or extended commands retain normal command
+validation, and a busy readback cache remains rejected. Mutations retain queued
+acknowledgements and their existing actor validation and terminal admission.
+An unavailable worker observation or unexpected completed worker rejects the
+query. A normal Closed projection remains readable only after complete shutdown
+and a positive shutdown acknowledgement; direct retained status inspection keeps
+its existing semantics.

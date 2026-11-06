@@ -66,6 +66,30 @@ foreach ($spec in $validSpecs) {
     Invoke-Resolver -SpecPath $spec.FullName
 }
 
+$foundationDir = Get-ContentAddressedResolutionDirectory -AppId "native_worldspace_panel_test"
+$foundationLock = Read-Json -Path (Join-Path $foundationDir "feature-lock.json")
+Assert-SetEquals -Label "worldspace foundation raw hand pointer closure" -Expected @(
+    "quest.native.openxr_vulkan_base", "renderer.native_scene", "ui.native_mesh_panel",
+    "input.controllers_and_hands_optional", "input.tracked_hand_pointer"
+) -Actual @($foundationLock.selected_feature_ids | ForEach-Object { [string]$_ })
+$foundationEnv = Read-Json -Path (Join-Path $foundationDir "build-env.json")
+if (@($foundationEnv.env | Where-Object { $_.name -eq "RUSTY_QUEST_NATIVE_RENDERER_TRACKED_HAND_POINTER_ENABLED" -and $_.value -eq "true" }).Count -ne 1) {
+    throw "Worldspace foundation must explicitly package its tracked joint pointer"
+}
+if (@($foundationEnv.payloads).Count -ne 0) { throw "Raw hand pointer foundation must not require a rig/payload" }
+$foundationManifest = Get-Content -Raw -LiteralPath (Join-Path $foundationDir "AndroidManifest.xml")
+if ($foundationManifest -notmatch 'com\.oculus\.permission\.HAND_TRACKING' -or
+    $foundationManifest -notmatch 'android:name="com\.oculus\.handtracking\.support"\s+android:value="HANDS_AND_CONTROLLERS"') {
+    throw "Raw hand pointer foundation must permit hands or controllers and declare hand tracking"
+}
+$foundationProfile = Read-Json -Path (Join-Path $foundationDir "runtime-profile.json")
+if (@($foundationProfile.set_properties | Where-Object { $_.name -eq "debug.rustyquest.native_renderer.hand_mesh.input.source" -and $_.value -eq "disabled" }).Count -ne 1) {
+    throw "Raw pointer foundation must keep compact rig input disabled"
+}
+if (@($foundationProfile.owned_android_properties | Where-Object { $_ -match '\.(hand_adapter|simultaneous_hands_controllers)\.' }).Count -ne 0) {
+    throw "Raw pointer foundation must not require hand adapter or simultaneous authority"
+}
+
 $canaryDir = Get-ContentAddressedResolutionDirectory -AppId "private_particle_solid_black_canary"
 $lockPath = Join-Path $canaryDir "feature-lock.json"
 $profilePath = Join-Path $canaryDir "runtime-profile.json"
@@ -283,6 +307,9 @@ if ($manifestText -notmatch 'com\.oculus\.permission\.HAND_TRACKING') {
 }
 if ($manifestText -notmatch 'android:name="oculus\.software\.handtracking"\s+android:required="false"') {
     throw "Generated canary manifest must declare optional oculus.software.handtracking"
+}
+if ($manifestText -notmatch 'android:name="com\.oculus\.handtracking\.support"\s+android:value="HANDS_AND_CONTROLLERS"') {
+    throw "Optional hands/controllers manifest must allow launch with either input mode"
 }
 if ($manifestText -notmatch 'android:name="io\.github\.mesmerprism\.rustyquest\.native_renderer\.ControlPanelActivity"') {
     throw "Generated canary manifest must include the same-APK control panel activity"

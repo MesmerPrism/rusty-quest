@@ -21,6 +21,7 @@ public final class NativeRendererSelfKioskApplication extends Application {
 
     @Override public void onCreate() {
         super.onCreate();
+        NativeRendererAppStatusBridge.prepare(this);
         NativeRendererSoftKioskCoordinator.process().useSelfWatchdog();
         PanelImmersiveHandoff.setImmersiveForegroundProbe(
             new PanelImmersiveHandoff.ImmersiveForegroundProbe() {
@@ -29,18 +30,25 @@ public final class NativeRendererSelfKioskApplication extends Application {
                 }
             });
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
-            @Override public void onActivityCreated(Activity a, Bundle b) { remember(a); }
+            @Override public void onActivityCreated(Activity a, Bundle b) {
+                NativeRendererBootObservation.created(a, a != null && NativeRendererForegroundGuardPolicy
+                    .CONTROL_PANEL_ACTIVITY.equals(a.getClass().getName()));
+                remember(a);
+            }
             @Override public void onActivityStarted(Activity a) { remember(a); }
             @Override public void onActivityResumed(Activity a) {
+                NativeRendererBootObservation.resumed(a, a != null && NativeRendererForegroundGuardPolicy
+                    .CONTROL_PANEL_ACTIVITY.equals(a.getClass().getName()));
                 if (!own(a)) return;
                 remember(a);
-                resumed.put(a.getClass().getName(), true);
-                departures.remove(a.getClass().getName());
+                resumed.put(NativeRendererActivityComponents.policyClass(a.getClass().getName()), true);
+                departures.remove(NativeRendererActivityComponents.policyClass(a.getClass().getName()));
                 NativeRendererSelfKioskService.resumePendingTerminal(a);
+                reconcileSelectedBleOwner();
             }
             @Override public void onActivityPaused(Activity a) {
                 if (!own(a)) return;
-                String name = a.getClass().getName();
+                String name = NativeRendererActivityComponents.policyClass(a.getClass().getName());
                 resumed.put(name, false);
                 NativeRendererSoftKioskCoordinator c = NativeRendererSoftKioskCoordinator.process();
                 long generation = c.snapshot().generation;
@@ -56,7 +64,7 @@ public final class NativeRendererSelfKioskApplication extends Application {
             @Override public void onActivitySaveInstanceState(Activity a, Bundle b) { }
             @Override public void onActivityDestroyed(Activity a) {
                 if (!own(a)) return;
-                String name = a.getClass().getName();
+                String name = NativeRendererActivityComponents.policyClass(a.getClass().getName());
                 WeakReference<Activity> current = activities.get(name);
                 if (current != null && current.get() == a) {
                     activities.remove(name);
@@ -76,11 +84,24 @@ public final class NativeRendererSelfKioskApplication extends Application {
 
     private boolean own(Activity activity) {
         return activity != null && getPackageName().equals(activity.getPackageName())
-            && NativeRendererForegroundGuardPolicy.isAllowedComponent(activity.getClass().getName());
+            && (!NativeRendererActivityComponents.PRODUCT_NATIVE.equals(activity.getClass().getName())
+                || NativeRendererActivityComponents.isNative(activity))
+            && NativeRendererForegroundGuardPolicy.isAllowedComponent(NativeRendererActivityComponents.policyClass(activity.getClass().getName()));
+    }
+
+    private static void reconcileSelectedBleOwner() {
+        try {
+            Class.forName("io.github.mesmerprism.rustyquest.native_renderer.BreathCompositionPanelModule")
+                .getMethod("reconcileCurrentExperimentSessionBleOwner").invoke(null);
+        } catch (ClassNotFoundException disabledModule) {
+            // Other app compositions do not select the experiment transport.
+        } catch (ReflectiveOperationException unavailableOwner) {
+            Log.w("RustyQuestSelfKiosk", "status=ble-resume-reconciliation-unavailable", unavailableOwner);
+        }
     }
 
     private void remember(Activity a) {
-        if (own(a)) activities.put(a.getClass().getName(), new WeakReference<>(a));
+        if (own(a)) activities.put(NativeRendererActivityComponents.policyClass(a.getClass().getName()), new WeakReference<>(a));
     }
 
     boolean isResumed(String component) { return Boolean.TRUE.equals(resumed.get(component)); }
@@ -89,6 +110,21 @@ public final class NativeRendererSelfKioskApplication extends Application {
         WeakReference<Activity> reference = activities.get(component);
         Activity activity = reference == null ? null : reference.get();
         return activity != null && isResumed(component) && activity.hasWindowFocus();
+    }
+
+    /** App-owned foreground observation, sampled on the Android main thread. */
+    static String foregroundForOwnApp(Context context) {
+        if (context == null || !(context.getApplicationContext()
+                instanceof NativeRendererSelfKioskApplication)) return "unknown";
+        NativeRendererSelfKioskApplication owner =
+            (NativeRendererSelfKioskApplication) context.getApplicationContext();
+        if (owner.hasWindowFocus(NativeRendererForegroundGuardPolicy.NATIVE_ACTIVITY)) {
+            return "focused";
+        }
+        if (owner.hasWindowFocus(NativeRendererForegroundGuardPolicy.CONTROL_PANEL_ACTIVITY)) {
+            return "panel";
+        }
+        return "background";
     }
 
     boolean hasDeparture(String component, long generation) {
@@ -134,9 +170,16 @@ public final class NativeRendererSelfKioskApplication extends Application {
 
     public static void armed(Context context) {
         if (!(context.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return;
+        NativeRendererSoftKioskCoordinator coordinator = NativeRendererSoftKioskCoordinator.process();
+        final long attempt = coordinator.beginSelfServiceStart();
+        if (attempt == 0L) return;
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() { @Override public void run() {
+            coordinator.failSelfServiceStart(attempt);
+        }}, 10000L);
         try {
             context.startForegroundService(new Intent(context, NativeRendererSelfKioskService.class));
         } catch (RuntimeException error) {
+            coordinator.failSelfServiceStart(attempt);
             Log.w("RustyQuestSelfKiosk", "status=watchdog-start-failed", error);
         }
     }
@@ -188,5 +231,27 @@ public final class NativeRendererSelfKioskApplication extends Application {
         } else {
             NativeRendererSelfKioskService.resumePendingTerminal(activity);
         }
+    }
+
+    /** Same-app remote operator path; the existing terminal writer remains authoritative. */
+    static boolean requestSaveAndExitFromRemote(Context context) {
+        return requestSaveAndExitFromRemote(context,null);
+    }
+
+    static boolean requestSaveAndExitFromRemote(Context context,
+            java.util.function.Consumer<NativeRendererSoftKioskCoordinator.Action> observer) {
+        if (context == null || !(context.getApplicationContext()
+                instanceof NativeRendererSelfKioskApplication)) return false;
+        NativeRendererSoftKioskCoordinator.Action action =
+            NativeRendererSoftKioskCoordinator.process().requestExplicitTerminalExit();
+        if (action.kind == NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT) {
+            // Observation cannot strand the already admitted original action or authorize replay.
+            if(observer!=null)try{observer.accept(action);}catch(RuntimeException unavailable){
+                Log.w("RustyQuestSelfKiosk","status=remote-terminal-observation-unavailable");
+            }
+            NativeRendererSelfKioskService.dispatchTerminal(context, action);
+            return true;
+        }
+        return NativeRendererSelfKioskService.resumePendingTerminal(context);
     }
 }

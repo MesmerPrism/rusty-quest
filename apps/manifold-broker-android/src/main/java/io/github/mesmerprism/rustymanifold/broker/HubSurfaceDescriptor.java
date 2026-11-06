@@ -54,9 +54,10 @@ public final class HubSurfaceDescriptor {
         this.displayLabel = requireText(displayLabel, ConnectionHubProtocol.MAX_LABEL_CHARS, "display_label");
         this.description = requireText(description, ConnectionHubProtocol.MAX_DESCRIPTION_CHARS, "description");
         this.providerIdentity = Objects.requireNonNull(providerIdentity, "providerIdentity");
-        if (commands == null || commands.isEmpty()
-                || commands.size() > ConnectionHubProtocol.MAX_COMMANDS) {
-            throw new IllegalArgumentException("command allowlist is empty or too large");
+        // Explicit empty is a read-only surface. It never permits a command;
+        // null is not a declaration and remains invalid.
+        if (commands == null || commands.size() > ConnectionHubProtocol.MAX_COMMANDS) {
+            throw new IllegalArgumentException("command allowlist is null or too large");
         }
         Set<String> unique = new LinkedHashSet<>();
         List<Command> checkedCommands = new ArrayList<>();

@@ -27,7 +27,63 @@ pub(crate) enum NativeRendererRenderMode {
     SolidBlackStimulusVolume,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorldspaceInputPolicy {
+    ExistingRoute,
+    NeutralExclusive,
+    OriginalProduct,
+}
+
+impl WorldspaceInputPolicy {
+    fn for_panel_selection(
+        mode: NativeRendererRenderMode,
+        original_product: bool,
+        original_scene_mesh: bool,
+    ) -> Self {
+        if mode == NativeRendererRenderMode::SolidBlackPrivateParticles && original_scene_mesh {
+            Self::OriginalProduct
+        } else {
+            Self::for_selection(mode, original_product)
+        }
+    }
+    fn for_selection(mode: NativeRendererRenderMode, original_product: bool) -> Self {
+        if mode != NativeRendererRenderMode::NativeWorldspaceIntegration {
+            Self::ExistingRoute
+        } else if original_product {
+            Self::OriginalProduct
+        } else {
+            Self::NeutralExclusive
+        }
+    }
+
+    pub(crate) fn admits_simultaneous_selection(self, selected: bool) -> bool {
+        self != Self::NeutralExclusive || !selected
+    }
+
+    pub(crate) fn suppresses_hand_tracking_for_controller(self, controller_ready: bool) -> bool {
+        self == Self::NeutralExclusive && controller_ready
+    }
+
+    pub(crate) fn marker(self) -> &'static str {
+        match self {
+            Self::ExistingRoute => "existing-route",
+            Self::NeutralExclusive => "neutral-exclusive",
+            Self::OriginalProduct => "original-product",
+        }
+    }
+}
+
 impl NativeRendererRenderMode {
+    pub(crate) fn worldspace_input_policy(self) -> WorldspaceInputPolicy {
+        // The builder admits this exact value only with the authenticated
+        // original-composable scene or original-renderer mesh descriptor closure.
+        WorldspaceInputPolicy::for_panel_selection(
+            self,
+            option_env!("RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS") == Some("false"),
+            option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ORIGINAL_SCENE") == Some("true"),
+        )
+    }
+
     pub(crate) fn from_property(value: Option<String>) -> Self {
         let normalized = value
             .as_deref()
@@ -111,14 +167,26 @@ impl NativeRendererRenderMode {
         )
     }
 
-    pub(crate) fn uses_solid_black_background(self) -> bool {
-        matches!(
-            self,
-            Self::SolidBlackHandsAndGrafts
-                | Self::SolidBlackOpenXrHandsAnchorParticles
-                | Self::SolidBlackPrivateParticles
-                | Self::SolidBlackStimulusVolume
+    pub(crate) fn uses_solid_black_background(self, native_passthrough_requested: bool) -> bool {
+        self.solid_black_background_selected(
+            option_env!("RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE") == Some("solid-black"),
+            native_passthrough_requested,
         )
+    }
+
+    fn solid_black_background_selected(
+        self,
+        composable_black_selected: bool,
+        native_passthrough_requested: bool,
+    ) -> bool {
+        !native_passthrough_requested
+            && (matches!(
+                self,
+                Self::SolidBlackHandsAndGrafts
+                    | Self::SolidBlackOpenXrHandsAnchorParticles
+                    | Self::SolidBlackPrivateParticles
+                    | Self::SolidBlackStimulusVolume
+            ) || (self == Self::NativeWorldspaceIntegration && composable_black_selected))
     }
 
     pub(crate) fn uses_stimulus_volume(self) -> bool {
@@ -233,6 +301,16 @@ impl CompactHandInputSourceMode {
 
     pub(crate) fn allows_recorded_fallback(self) -> bool {
         matches!(self, Self::Auto | Self::RecordedReplay | Self::LiveMeta)
+    }
+
+    /// Neutral worldspace never substitutes recorded poses. The explicit original
+    /// composition retains its existing source-specific visual fallback policy.
+    pub(crate) fn allows_recorded_fallback_in(self, render_mode: NativeRendererRenderMode) -> bool {
+        self.allows_recorded_fallback_with_policy(render_mode.worldspace_input_policy())
+    }
+
+    fn allows_recorded_fallback_with_policy(self, policy: WorldspaceInputPolicy) -> bool {
+        policy != WorldspaceInputPolicy::NeutralExclusive && self.allows_recorded_fallback()
     }
 }
 
@@ -551,6 +629,132 @@ impl Default for NativePrivateLayerSettings {
             layer_seconds: 5.0,
             layer_override: -1.0,
             effect: [1.0, 1.0, 0.0, 1.0],
+        }
+    }
+}
+
+#[cfg(test)]
+mod worldspace_source_tests {
+    use super::*;
+    #[test]
+    fn original_mesh_retains_scene_policy_and_simultaneous_hand_sources() {
+        let mode = NativeRendererRenderMode::SolidBlackPrivateParticles;
+        let input = WorldspaceInputPolicy::for_panel_selection(mode, false, true);
+        assert_eq!(input, WorldspaceInputPolicy::OriginalProduct);
+        assert!(input.admits_simultaneous_selection(true));
+        assert!(!input.suppresses_hand_tracking_for_controller(true));
+        assert!(!mode.uses_scene_depth());
+        assert!(!mode.uses_custom_stereo_projection());
+        assert!(mode.uses_solid_black_background(false));
+        assert_eq!(
+            mode.camera_runtime_mode(),
+            "skipped-solid-black-private-particles"
+        );
+        assert_eq!(
+            WorldspaceInputPolicy::for_panel_selection(mode, false, false),
+            WorldspaceInputPolicy::ExistingRoute,
+        );
+        assert_eq!(
+            WorldspaceInputPolicy::for_panel_selection(
+                NativeRendererRenderMode::NativeWorldspaceIntegration,
+                false,
+                false,
+            ),
+            WorldspaceInputPolicy::NeutralExclusive,
+        );
+    }
+
+    #[test]
+    fn original_policy_admits_simultaneous_tracking_without_controller_hand_suppression() {
+        let mode = NativeRendererRenderMode::NativeWorldspaceIntegration;
+        let neutral = WorldspaceInputPolicy::for_selection(mode, false);
+        let original = WorldspaceInputPolicy::for_selection(mode, true);
+        assert!(!neutral.admits_simultaneous_selection(true));
+        assert!(neutral.admits_simultaneous_selection(false));
+        assert!(neutral.suppresses_hand_tracking_for_controller(true));
+        assert!(!neutral.suppresses_hand_tracking_for_controller(false));
+        assert!(original.admits_simultaneous_selection(true));
+        assert!(!original.suppresses_hand_tracking_for_controller(true));
+        for source in [
+            CompactHandInputSourceMode::Auto,
+            CompactHandInputSourceMode::LiveMeta,
+            CompactHandInputSourceMode::RecordedReplay,
+            CompactHandInputSourceMode::Disabled,
+        ] {
+            assert_eq!(
+                source.allows_recorded_fallback_with_policy(original),
+                source.allows_recorded_fallback()
+            );
+        }
+        assert_eq!(
+            WorldspaceInputPolicy::for_selection(
+                NativeRendererRenderMode::SolidBlackPrivateParticles,
+                true
+            ),
+            WorldspaceInputPolicy::ExistingRoute
+        );
+    }
+
+    #[test]
+    fn composable_black_is_explicit_worldspace_only_and_passthrough_wins() {
+        let worldspace = NativeRendererRenderMode::NativeWorldspaceIntegration;
+        assert!(!worldspace.solid_black_background_selected(false, false));
+        assert!(worldspace.solid_black_background_selected(true, false));
+        assert!(!worldspace.solid_black_background_selected(true, true));
+        for mode in [
+            NativeRendererRenderMode::CustomStereoProjection,
+            NativeRendererRenderMode::NativePassthroughStyleOnly,
+            NativeRendererRenderMode::NativePassthroughMediaOnly,
+            NativeRendererRenderMode::NativePassthroughGraftOnly,
+            NativeRendererRenderMode::NativePassthroughStimulusVolume,
+        ] {
+            assert!(!mode.solid_black_background_selected(true, false));
+        }
+        for mode in [
+            NativeRendererRenderMode::SolidBlackHandsAndGrafts,
+            NativeRendererRenderMode::SolidBlackOpenXrHandsAnchorParticles,
+            NativeRendererRenderMode::SolidBlackPrivateParticles,
+            NativeRendererRenderMode::SolidBlackStimulusVolume,
+        ] {
+            assert!(mode.solid_black_background_selected(false, false));
+            assert!(!mode.solid_black_background_selected(true, true));
+        }
+    }
+
+    #[test]
+    fn worldspace_live_selection_never_allows_recorded_pose_fallback() {
+        let policy = WorldspaceInputPolicy::NeutralExclusive;
+        let live = CompactHandInputSourceMode::from_property(
+            Some("live-meta-openxr-hand-tracking".into()),
+            false,
+        );
+        assert!(live.selects_live_frame());
+        assert!(!live.allows_recorded_fallback_with_policy(policy));
+        // Even an accidentally selected replay/auto mode cannot animate recordings here.
+        for source in [
+            CompactHandInputSourceMode::Auto,
+            CompactHandInputSourceMode::RecordedReplay,
+            CompactHandInputSourceMode::Disabled,
+        ] {
+            assert!(!source.allows_recorded_fallback_with_policy(policy));
+        }
+    }
+
+    #[test]
+    fn other_render_modes_preserve_existing_recorded_pose_policy() {
+        for mode in [
+            NativeRendererRenderMode::CustomStereoProjection,
+            NativeRendererRenderMode::SolidBlackHandsAndGrafts,
+            NativeRendererRenderMode::NativePassthroughGraftOnly,
+        ] {
+            for source in [
+                CompactHandInputSourceMode::Auto,
+                CompactHandInputSourceMode::LiveMeta,
+                CompactHandInputSourceMode::RecordedReplay,
+            ] {
+                assert!(source.allows_recorded_fallback_in(mode));
+            }
+            assert!(!CompactHandInputSourceMode::Disabled.allows_recorded_fallback_in(mode));
         }
     }
 }

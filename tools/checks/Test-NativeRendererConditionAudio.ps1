@@ -13,6 +13,8 @@ $contract = Join-Path $javaRoot 'ConditionAudioContract.java'
 $runtime = Join-Path $javaRoot 'ConditionAudioRuntime.java'
 $androidFactory = Join-Path $javaRoot 'ConditionAudioAndroidMediaBackendFactory.java'
 $test = Join-Path $testRoot 'ConditionAudioRuntimeTest.java'
+$phaseEngine = Join-Path $javaRoot 'BreathPhaseAudioEngine.java'
+$phaseTest = Join-Path $testRoot 'BreathPhaseAudioEngineTest.java'
 
 foreach ($path in @($contract, $runtime, $androidFactory, $test)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -71,12 +73,24 @@ $java = Get-Command java -ErrorAction Stop
 $output = Join-Path ([IO.Path]::GetTempPath()) ("rq-condition-audio-{0}" -f [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($output) | Out-Null
 try {
-    & $javac.Source '--release' '8' '-encoding' 'UTF-8' '-d' $output $contract $runtime $test
+    & $javac.Source '--release' '8' '-encoding' 'UTF-8' '-d' $output $contract $runtime $test $phaseEngine $phaseTest
     if ($LASTEXITCODE -ne 0) { throw "Condition-audio javac failed: $LASTEXITCODE" }
     & $java.Source '-cp' $output 'io.github.mesmerprism.rustyquest.native_renderer.ConditionAudioRuntimeTest'
     if ($LASTEXITCODE -ne 0) { throw "Condition-audio test failed: $LASTEXITCODE" }
+    & $java.Source '-cp' $output 'io.github.mesmerprism.rustyquest.native_renderer.BreathPhaseAudioEngineTest'
+    if ($LASTEXITCODE -ne 0) { throw 'Phase audio engine controls failed' }
     & $java.Source '-cp' $output 'io.github.mesmerprism.rustyquest.native_renderer.ConditionAudioRuntimeTest' '--failed-app-lifetime-barrier'
     if ($LASTEXITCODE -ne 0) { throw "Condition-audio failed-barrier test failed: $LASTEXITCODE" }
+    $platformStubs = Join-Path $repo 'apps/native-renderer-android/tests/phase-audio-platform-stubs'
+    $platformSources = @((Get-ChildItem -LiteralPath $platformStubs -Recurse -File -Filter '*.java').FullName)
+    $platformSources += @($contract,$runtime,$androidFactory,$phaseEngine,
+        (Join-Path $javaRoot 'BreathPhaseAudioAndroidOwner.java'),
+        (Join-Path $testRoot 'BreathPhaseAudioAndroidOwnerTest.java'))
+    $platformOutput=Join-Path $output 'platform-controls';[IO.Directory]::CreateDirectory($platformOutput)|Out-Null
+    & $javac.Source '--release' '8' '-encoding' 'UTF-8' '-d' $platformOutput @platformSources
+    if($LASTEXITCODE -ne 0){throw 'Production phase/background host compilation failed'}
+    & $java.Source '-cp' $platformOutput 'io.github.mesmerprism.rustyquest.native_renderer.BreathPhaseAudioAndroidOwnerTest'
+    if($LASTEXITCODE -ne 0){throw 'Production phase/background controls failed'}
 } finally {
     if (Test-Path -LiteralPath $output) {
         Remove-Item -LiteralPath $output -Recurse -Force

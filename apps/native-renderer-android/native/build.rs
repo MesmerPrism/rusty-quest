@@ -6,6 +6,33 @@ use std::{
 };
 
 fn main() {
+    if env::var_os("CARGO_FEATURE_SHOWCASE").is_some() {
+        for name in [
+            "RUSTY_QUEST_NATIVE_RECORDING_EXPORT",
+            "RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED",
+        ] {
+            println!("cargo:rerun-if-env-changed={name}");
+            assert!(
+                env::var(name).ok().is_none_or(|v| v == "false"),
+                "forbidden showcase capability: {name}"
+            );
+        }
+        assert!(
+            env::var_os("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_none(),
+            "showcase cannot select captured hand source"
+        );
+    }
+
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDING_EXPORT");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_NATIVE_PAGE");
+    println!("cargo:rerun-if-changed=shaders/native_panel_ui.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/native_panel_text.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/native_panel_text.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/native_panel_ui.frag.glsl");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE");
     println!("cargo:rustc-check-cfg=cfg(native_meta_xr_operator)");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED");
     let operator_feature = env::var_os("CARGO_FEATURE_META_XR_OPERATOR").is_some();
@@ -27,7 +54,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED");
     println!("cargo:rerun-if-changed=shaders/development_feedback_scene.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/development_feedback_scene.frag.glsl");
-    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
     println!("cargo:rerun-if-changed=shaders/mesh_ui_panel.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/mesh_ui_panel.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/mesh_pointer.frag.glsl");
@@ -73,10 +99,9 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
-    println!(
-        "cargo:rerun-if-changed=../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json"
-    );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER");
@@ -241,7 +266,35 @@ fn main() {
     println!(
         "cargo:rustc-env=RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL={diagnostics_level}"
     );
-    write_recorded_hand_replay_source(&out_dir);
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_CONTROLLER_ONLY");
+    if let Ok(value) = env::var("RUSTY_QUEST_NATIVE_RENDERER_CONTROLLER_ONLY") {
+        assert!(
+            matches!(value.as_str(), "true" | "false"),
+            "invalid controller-only input selection"
+        );
+    }
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED");
+    println!("cargo:rustc-check-cfg=cfg(native_hand_geometry_disabled)");
+    // Supplied by the owning builder from the verified particles-only feature lock.
+    // A runtime property or panel visibility control cannot re-enable these resources.
+    match env::var("RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED").as_deref() {
+        Ok("false") => {
+            for input in [
+                "RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE",
+                "RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR",
+                "RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT",
+            ] {
+                assert!(
+                    env::var_os(input).is_none(),
+                    "particles-only build forbids hand input {input}"
+                );
+            }
+            println!("cargo:rustc-cfg=native_hand_geometry_disabled");
+            // Do not copy, generate, read, or substitute a rig source for this selection.
+        }
+        Ok("true") | Err(env::VarError::NotPresent) => write_recorded_hand_replay_source(&out_dir),
+        other => panic!("invalid build-locked hand geometry selection: {other:?}"),
+    }
     let private_layer_sources = private_layer_shader_sources();
     write_private_layer_payload_config(&out_dir, private_layer_sources.is_some());
     let private_particle_payload = private_particle_payload_sources();
@@ -271,6 +324,30 @@ fn main() {
             );
         }
     }
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/native_panel_text.vert.glsl"),
+        &out_dir.join("native_panel_text.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/native_panel_text.frag.glsl"),
+        &out_dir.join("native_panel_text.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/native_panel_ui.vert.glsl"),
+        &out_dir.join("native_panel_ui.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/native_panel_ui.frag.glsl"),
+        &out_dir.join("native_panel_ui.frag.spv"),
+    );
     compile_shader(
         &glslc,
         "vertex",
@@ -560,12 +637,28 @@ fn main() {
         let anchor_echo_radius_m_define = anchor_echo_radius_m.to_string();
         let anchor_echo_alpha_define = anchor_echo_alpha.to_string();
         let anchor_echo_rotation_radians_define = anchor_echo_rotation_radians.to_string();
+        let showcase = env::var_os("CARGO_FEATURE_SHOWCASE").is_some();
+        let extension_enabled =
+            env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1")
+                .ok()
+                .as_deref()
+                == Some("true");
+        println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1");
+        assert_eq!(
+            showcase, extension_enabled,
+            "showcase and frame-extension source selections must match"
+        );
+        let frame_extension_define = if extension_enabled { "1" } else { "0" };
         compile_shader_with_defines(
             &glslc,
             "compute",
             &payload.shader,
             &out_dir.join("private_particles.comp.spv"),
             &[
+                (
+                    "PRIVATE_PARTICLE_FRAME_EXTENSION_V1",
+                    frame_extension_define,
+                ),
                 (
                     "PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT",
                     &anchor_echo_max_count_define,
@@ -740,6 +833,19 @@ const PRIVATE_LAYER_GUIDE_OUTPUTS: [(&str, &str); 6] = [
 
 fn write_recorded_hand_replay_source(out_dir: &Path) {
     let output = out_dir.join("recorded_hand_replay_source.json");
+    if let Ok(prepared) = env::var("RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE") {
+        assert!(
+            !prepared.trim().is_empty(),
+            "selected prepared hand input is empty"
+        );
+        assert!(
+            env::var("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_err(),
+            "ambiguous hand inputs"
+        );
+        println!("cargo:rerun-if-changed={prepared}");
+        fs::copy(&prepared, &output).expect("selected prepared hand source is unavailable");
+        return;
+    }
     if let Ok(capture_dir) = env::var("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR") {
         let capture_dir = PathBuf::from(capture_dir);
         if capture_dir.is_dir() {
@@ -761,6 +867,7 @@ fn write_recorded_hand_replay_source(out_dir: &Path) {
 
     let fallback =
         Path::new("../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json");
+    println!("cargo:rerun-if-changed={}", fallback.display());
     fs::copy(fallback, &output).unwrap_or_else(|error| {
         panic!(
             "failed to copy public recorded hand replay source {} -> {}: {error}",
@@ -1699,6 +1806,14 @@ fn write_private_particle_payload_config(
         particle_size_default_oscillation_percent,
         particle_size_default_parameter_source,
     ) = private_particle_size_default_config();
+    let orbit_env = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DEFAULT_ORBIT_ENABLED";
+    println!("cargo:rerun-if-env-changed={orbit_env}");
+    let orbit_default_enabled = match env::var(orbit_env).ok().as_deref() {
+        None | Some("") | Some("false") => false,
+        Some("true") => true,
+        Some(_) => panic!("{orbit_env} must be true or false"),
+    };
+
     let (material_default_preset, material_default_parameter_source) =
         private_particle_material_default_config(
             transparency_opacity,
@@ -1898,7 +2013,7 @@ fn write_private_particle_payload_config(
         panic!("an auxiliary compute shader requires positive logical invocations");
     }
     let source = format!(
-        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED: bool = {particle_size_default_override_enabled};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_MODE: u32 = {particle_size_default_mode};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS: f32 = {particle_size_default_world_meters:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT: f32 = {particle_size_default_sphere_radius_percent:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT: f32 = {particle_size_default_oscillation_percent:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE: &str = \"{particle_size_default_parameter_source}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET: &str = \"{material_default_preset}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE: &str = \"{material_default_parameter_source}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT: usize = {anchor_echo_max_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT: usize = {anchor_echo_draw_echo_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS: usize = {auxiliary_compute_logical_invocations};\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X: u32 = {auxiliary_compute_local_size_x};\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS: u32 = {mask_mip_levels};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS: u32 = {mask_atlas_columns};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS: u32 = {mask_atlas_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH: u32 = {mask_image_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT: u32 = {mask_image_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS: u32 = {mask_image_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
+        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_OVERRIDE_ENABLED: bool = {particle_size_default_override_enabled};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_ORBIT_ENABLED: bool = {orbit_default_enabled};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_MODE: u32 = {particle_size_default_mode};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_WORLD_METERS: f32 = {particle_size_default_world_meters:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_SPHERE_RADIUS_PERCENT: f32 = {particle_size_default_sphere_radius_percent:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_OSCILLATION_PERCENT: f32 = {particle_size_default_oscillation_percent:.8};\npub(crate) const PRIVATE_PARTICLE_DEFAULT_SIZE_PARAMETER_SOURCE: &str = \"{particle_size_default_parameter_source}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_MATERIAL_PRESET: &str = \"{material_default_preset}\";\npub(crate) const PRIVATE_PARTICLE_DEFAULT_MATERIAL_PARAMETER_SOURCE: &str = \"{material_default_parameter_source}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT: usize = {anchor_echo_max_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT: usize = {anchor_echo_draw_echo_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOGICAL_INVOCATIONS: usize = {auxiliary_compute_logical_invocations};\npub(crate) const PRIVATE_PARTICLE_AUXILIARY_COMPUTE_LOCAL_SIZE_X: u32 = {auxiliary_compute_local_size_x};\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS: u32 = {mask_mip_levels};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS: u32 = {mask_atlas_columns};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS: u32 = {mask_atlas_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH: u32 = {mask_image_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT: u32 = {mask_image_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS: u32 = {mask_image_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
         rust_string_literal(&shader_path),
         rust_string_literal(&data_path),
         rust_string_literal(&kind),

@@ -97,15 +97,18 @@ mod acquire_fence {
     }
 }
 
-pub(crate) const WIDTH: u32 = 1024;
-pub(crate) const HEIGHT: u32 = 768;
+pub(crate) const WIDTH: u32 = super::native_panel_resolution::LOGICAL_WIDTH;
+pub(crate) const HEIGHT: u32 = super::native_panel_resolution::LOGICAL_HEIGHT;
+pub(crate) use crate::native_panel_model::PanelPose;
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PanelPose {
-    pub(crate) center: [f32; 3],
-    pub(crate) right: [f32; 3],
-    pub(crate) up: [f32; 3],
-    pub(crate) width: f32,
-    pub(crate) height: f32,
+struct SubmittedGeometry {
+    pose: PanelPose,
+    pose_revision: u64,
+    frame: u64,
+    reference_space: &'static str,
+    visible: bool,
+    attachment: &'static str,
+    tracking_valid: bool,
 }
 impl Default for PanelPose {
     fn default() -> Self {
@@ -136,9 +139,13 @@ pub(crate) struct ControlSnapshot {
     pub(crate) particle_scale: f32,
     pub(crate) pose: PanelPose,
     pub(crate) pose_initialized: bool,
+    pub(crate) pose_revision: u64,
+    submitted_geometry: Option<SubmittedGeometry>,
     pub(crate) initial_pose: PanelPose,
     pub(crate) pose_distance: f32,
     pub(crate) panel_visible: bool,
+    pub(crate) attachment: &'static str,
+    pub(crate) tracking_valid: bool,
     pub(crate) visibility_revision: u64,
     pub(crate) effective_panel_visible: bool,
     pub(crate) effective_visibility_revision: u64,
@@ -162,9 +169,13 @@ impl Default for ControlSnapshot {
             particle_scale: 0.5,
             pose: PanelPose::default(),
             pose_initialized: false,
+            pose_revision: 0,
+            submitted_geometry: None,
             initial_pose: PanelPose::default(),
             pose_distance: 1.4,
             panel_visible: true,
+            attachment: "WORLD",
+            tracking_valid: true,
             visibility_revision: 0,
             effective_panel_visible: false,
             effective_visibility_revision: 0,
@@ -177,6 +188,104 @@ fn controls() -> &'static Mutex<ControlSnapshot> {
 }
 pub(crate) fn snapshot() -> ControlSnapshot {
     *controls().lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn observe_geometry(
+    state: &mut ControlSnapshot,
+    frame: ControlSnapshot,
+    submitted_frame: u64,
+    reference_space: &'static str,
+) -> bool {
+    if frame.generation == 0
+        || frame.generation != state.generation
+        || !frame.pose_initialized
+        || !matches!(reference_space, "LOCAL" | "STAGE")
+        || frame.pose_revision > state.pose_revision
+        || state.submitted_geometry.is_some_and(|prior| {
+            submitted_frame < prior.frame || frame.pose_revision < prior.pose_revision
+        })
+    {
+        return false;
+    }
+    state.submitted_geometry = Some(SubmittedGeometry {
+        pose: frame.pose,
+        pose_revision: frame.pose_revision,
+        frame: submitted_frame,
+        reference_space,
+        visible: frame.panel_visible,
+        attachment: frame.attachment,
+        tracking_valid: frame.tracking_valid,
+    });
+    true
+}
+
+/// Observation only: caller has submitted this exact frozen frame and completed xrEndFrame.
+pub(crate) fn renderer_observed_geometry(
+    frame: ControlSnapshot,
+    submitted_frame: u64,
+    reference_space_type: &'static str,
+) -> bool {
+    observe_geometry(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        frame,
+        submitted_frame,
+        reference_space_type,
+    )
+}
+
+fn geometry_readback(state: ControlSnapshot, generation: u64) -> serde_json::Value {
+    let status = if generation == 0 || generation != state.generation {
+        "unavailable"
+    } else if !state.pose_initialized {
+        "uninitialized"
+    } else if state
+        .submitted_geometry
+        .is_some_and(|seen| seen.pose_revision == state.pose_revision)
+    {
+        "applied"
+    } else {
+        "pending"
+    };
+    let mut value = serde_json::json!({"schema":"rusty.quest.native_mesh_ui.panel_geometry.v1","generation":generation,
+        "status":status,"pose_revision":state.pose_revision,"surface_width_pixels":WIDTH,"surface_height_pixels":HEIGHT,
+        "evidence":"native-submitted-frame","visible_confirmation":false});
+    // No current/requested pose is exposed before its actual submitted frame.
+    if status == "applied" {
+        let seen = state
+            .submitted_geometry
+            .expect("applied geometry has submitted observation");
+        value["effective_pose_revision"] = serde_json::json!(seen.pose_revision);
+        value["submitted_frame"] = serde_json::json!(seen.frame);
+        value["reference_space"] = serde_json::json!(seen.reference_space);
+        value["frame_panel_visible"] = serde_json::json!(seen.visible);
+        value["attachment"] = serde_json::json!(seen.attachment);
+        value["tracking_valid"] = serde_json::json!(seen.tracking_valid);
+        value["center"] = serde_json::json!(seen.pose.center);
+        value["right"] = serde_json::json!(seen.pose.right);
+        value["up"] = serde_json::json!(seen.pose.up);
+        value["width_meters"] = serde_json::json!(seen.pose.width);
+        value["height_meters"] = serde_json::json!(seen.pose.height);
+    }
+    value
+}
+
+#[cfg(target_os = "android")]
+#[cfg(any(not(feature = "showcase"), feature = "showcase-vulkan-ui"))]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelGeometry(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    generation: i64,
+) -> jni::sys::jstring {
+    use jni::Outcome;
+    let body = geometry_readback(snapshot(), generation.max(0) as u64).to_string();
+    match env
+        .with_env(|env| env.new_string(body).map(|s| s.into_raw()))
+        .into_outcome()
+    {
+        Outcome::Ok(value) => value,
+        Outcome::Err(_) | Outcome::Panic(_) => std::ptr::null_mut(),
+    }
 }
 fn set_visibility(state: &mut ControlSnapshot, generation: u64, visible: bool) -> Option<u64> {
     if generation == 0 || state.generation != generation || state.revision >= i64::MAX as u64 {
@@ -215,6 +324,19 @@ pub(crate) fn renderer_observed_visibility(frame: ControlSnapshot) -> bool {
         frame,
     )
 }
+fn submitted_visibility(state: ControlSnapshot, frame: ControlSnapshot) -> Option<bool> {
+    (frame.generation != 0
+        && frame.generation == state.generation
+        && frame.pose_initialized
+        && frame.visibility_revision == state.effective_visibility_revision
+        && frame.panel_visible == state.effective_panel_visible)
+        .then_some(frame.panel_visible)
+}
+/// Read only after observing this exact successfully ended frame. A setter or
+/// a retired producer cannot supply submitted presentation evidence.
+pub(crate) fn renderer_submitted_visibility(frame: ControlSnapshot) -> Option<bool> {
+    submitted_visibility(snapshot(), frame)
+}
 fn visibility_status(state: ControlSnapshot, generation: u64, revision: u64) -> &'static str {
     if generation == 0 || generation != state.generation {
         "unavailable"
@@ -230,6 +352,7 @@ fn visibility_status(state: ControlSnapshot, generation: u64, revision: u64) -> 
 }
 
 #[cfg(target_os = "android")]
+#[cfg(any(not(feature = "showcase"), feature = "showcase-vulkan-ui"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeSetPanelVisible(
     _env: *mut jni::sys::JNIEnv,
@@ -244,6 +367,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
 }
 
 #[cfg(target_os = "android")]
+#[cfg(any(not(feature = "showcase"), feature = "showcase-vulkan-ui"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelVisibility(
     mut env: jni::EnvUnowned,
@@ -269,6 +393,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
         "effective_revision":state.effective_visibility_revision,
         "effective_visible":state.effective_panel_visible, "status":status,
         "evidence":"native-submitted-frame", "visible_confirmation":false,
+        "neutral_controls_enabled":neutral_controls_enabled(),
+        "settings_authority":if neutral_controls_enabled() { "neutral-mesh-demo" } else { "original-app-owners" },
     })
     .to_string();
     match env
@@ -285,6 +411,42 @@ pub(crate) fn initialize_pose(generation: u64, position: [f32; 3], orientation: 
     let mut state = controls().lock().unwrap_or_else(|p| p.into_inner());
     calibrate(&mut state, generation, position, orientation)
 }
+/// Explicit user recenter using the current valid head pose in the same reference space.
+/// Preserve logical/raster density and the user's physical panel size.
+pub(crate) fn recenter_pose(generation: u64, position: [f32; 3], orientation: [f32; 4]) -> bool {
+    recenter(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        position,
+        orientation,
+    )
+}
+fn recenter(
+    state: &mut ControlSnapshot,
+    generation: u64,
+    position: [f32; 3],
+    orientation: [f32; 4],
+) -> bool {
+    if generation == 0
+        || state.generation != generation
+        || !state.pose_initialized
+        || state.revision >= i64::MAX as u64
+    {
+        return false;
+    }
+    let Some(mut pose) = head_relative_pose(position, orientation) else {
+        return false;
+    };
+    pose.width = state.pose.width;
+    pose.height = state.pose.height;
+    state.revision += 1;
+    state.pose_revision = state.revision;
+    state.pose = pose;
+    state.pose_distance = 1.4;
+    state.attachment = "WORLD";
+    state.tracking_valid = true;
+    true
+}
 fn calibrate(
     state: &mut ControlSnapshot,
     generation: u64,
@@ -297,6 +459,11 @@ fn calibrate(
     let Some(pose) = head_relative_pose(position, orientation) else {
         return false;
     };
+    if state.revision >= i64::MAX as u64 {
+        return false;
+    }
+    state.revision += 1;
+    state.pose_revision = state.revision;
     state.pose = pose;
     state.initial_pose = pose;
     state.pose_initialized = true;
@@ -331,8 +498,43 @@ fn head_relative_pose(position: [f32; 3], orientation: [f32; 4]) -> Option<Panel
     })
 }
 pub(crate) fn enabled_for_mode(mode: &str) -> bool {
-    option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true")
-        && mode == "native-worldspace-integration"
+    mesh_selection(
+        mode,
+        option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true"),
+        original_scene_selected(),
+    )
+}
+pub(crate) fn original_scene_selected() -> bool {
+    option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ORIGINAL_SCENE") == Some("true")
+}
+fn mesh_selection(mode: &str, packaged: bool, original_scene: bool) -> bool {
+    packaged
+        && if original_scene {
+            mode == "solid-black-private-particles"
+        } else {
+            mode == "native-worldspace-integration"
+        }
+}
+pub(crate) fn render_configuration_matches(mode: &str, scene_depth: bool) -> bool {
+    render_selection(
+        mode,
+        option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true"),
+        original_scene_selected(),
+        scene_depth,
+    )
+}
+fn render_selection(mode: &str, packaged: bool, original_scene: bool, scene_depth: bool) -> bool {
+    mesh_selection(mode, packaged, original_scene) && scene_depth != original_scene
+}
+/// The original product panel owns its existing settings handlers. The neutral
+/// mesh test panel's defaults never become that product's rendering settings.
+pub(crate) fn neutral_controls_enabled() -> bool {
+    !cfg!(feature = "showcase-vulkan-ui")
+        && option_env!("RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS") != Some("false")
+}
+
+pub(crate) fn neutral_frame_controls(frame: Option<ControlSnapshot>) -> Option<ControlSnapshot> {
+    frame.filter(|_| neutral_controls_enabled())
 }
 /// Records host frame application only; does not claim visible GPU adoption.
 pub(crate) fn renderer_observed(generation: u64, revision: u64) -> bool {
@@ -355,13 +557,91 @@ pub(crate) fn deactivate(generation: u64) {
     let mut s = controls().lock().unwrap_or_else(|p| p.into_inner());
     if s.generation == generation {
         s.generation = 0;
-        #[cfg(native_meta_xr_operator)]
-        crate::native_input_geometry::reset();
     }
+}
+/// Native chrome may mutate presentation geometry only; product settings retain their owner.
+pub(crate) fn request_panel_action(generation: u64, action: i32) -> bool {
+    panel_action(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        action,
+    )
+}
+/// Absolute presentation width from a native slider; original product settings are untouched.
+pub(crate) fn set_panel_width(generation: u64, width: f32) -> bool {
+    panel_width(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        width,
+    )
+}
+fn panel_width(s: &mut ControlSnapshot, generation: u64, width: f32) -> bool {
+    if generation == 0
+        || generation != s.generation
+        || !s.pose_initialized
+        || !width.is_finite()
+        || !(0.48..=1.44).contains(&width)
+        || s.revision >= i64::MAX as u64
+    {
+        return false;
+    }
+    if (s.pose.width - width).abs() < 0.00001 {
+        return true;
+    }
+    s.pose.width = width;
+    s.pose.height = width * 0.75;
+    s.revision += 1;
+    s.pose_revision = s.revision;
+    true
+}
+/// A current tracked attachment or explicit world recall owns this presentation-only pose.
+pub(crate) fn set_attachment_pose(
+    generation: u64,
+    pose: PanelPose,
+    attachment: &'static str,
+    tracking_valid: bool,
+) -> bool {
+    attachment_pose(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        pose,
+        attachment,
+        tracking_valid,
+    )
+}
+fn attachment_pose(
+    s: &mut ControlSnapshot,
+    generation: u64,
+    pose: PanelPose,
+    attachment: &'static str,
+    tracking_valid: bool,
+) -> bool {
+    if generation == 0
+        || generation != s.generation
+        || !s.pose_initialized
+        || !pose.valid()
+        || !matches!(attachment, "WORLD" | "WRIST")
+        || s.revision >= i64::MAX as u64
+    {
+        return false;
+    }
+    if s.pose == pose && s.attachment == attachment && s.tracking_valid == tracking_valid {
+        return true;
+    }
+    s.pose = pose;
+    s.attachment = attachment;
+    s.tracking_valid = tracking_valid;
+    s.revision += 1;
+    s.pose_revision = s.revision;
+    true
+}
+fn panel_action(state: &mut ControlSnapshot, generation: u64, action: i32) -> bool {
+    matches!(action, 7 | 13) && apply(state, generation, action, 1.0)
 }
 fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> bool {
     if generation == 0
         || generation != s.generation
+        || s.revision >= i64::MAX as u64
         || !value.is_finite()
         || !(0.0..=1.0).contains(&value)
     {
@@ -405,10 +685,15 @@ fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> boo
             }
             s.pose = s.initial_pose;
             s.pose_distance = 1.4;
+            s.attachment = "WORLD";
+            s.tracking_valid = true;
         }
         _ => return false,
     }
     s.revision = s.revision.saturating_add(1);
+    if matches!(code, 6 | 7 | 13) {
+        s.pose_revision = s.revision;
+    }
     true
 }
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -455,61 +740,78 @@ pub(crate) fn ray_pixels(
     if !(0.0..=5.0).contains(&t) {
         return None;
     }
-    let offset = std::array::from_fn(|i| origin[i] + direction[i] * t - pose.center[i]);
-    Some([
-        (dot(offset, pose.right) / pose.width + 0.5) * WIDTH as f32,
-        (0.5 - dot(offset, pose.up) / pose.height) * HEIGHT as f32,
-    ])
+    crate::native_panel_model::PanelModel {
+        id: 1,
+        pose,
+        logical: crate::native_panel_model::LogicalBounds {
+            min: [0.0, 0.0],
+            max: [WIDTH as f32, HEIGHT as f32],
+        },
+        visible: true,
+        enabled: true,
+    }
+    .map_ray(crate::native_panel_model::Ray { origin, direction })
+    .map(|h| h.logical)
 }
 #[derive(Default)]
 pub(crate) struct PointerCapture {
-    pressed: bool,
-    captured: bool,
+    capture: crate::native_panel_interaction::CaptureState,
     last: [f32; 2],
 }
 impl PointerCapture {
+    /// Only a current fresh edge backed by the source arbiter's valid-open proof may rearm.
+    /// Cancel the previous owner first; this method never emits an Android event.
+    pub(crate) fn admit_fresh_press(&mut self) {
+        if !self.captured() {
+            self.capture.update(true, false, None, false);
+        }
+    }
+
     pub(crate) fn captured(&self) -> bool {
-        self.captured
+        self.capture.captured().is_some()
     }
     /// Codes: 0 down,1 move,2 up,3 cancel. One authoritative pointer owner only.
+    /// Every invalid sample disarms capture until a valid open sample, including owner changes.
     pub(crate) fn update(
         &mut self,
         valid: bool,
         pressed: bool,
         pixels: Option<[f32; 2]>,
     ) -> Option<(i32, [f32; 2])> {
-        if !valid {
-            let had = self.captured;
-            self.captured = false;
-            self.pressed = pressed;
-            return had.then_some((3, self.last));
-        }
-        let edge = pressed && !self.pressed;
-        self.pressed = pressed;
-        if self.captured {
-            if let Some(p) = pixels {
-                self.last = [p[0].clamp(0.0, 1023.0), p[1].clamp(0.0, 767.0)];
-            }
-            if !pressed {
-                self.captured = false;
-                return Some((2, self.last));
-            }
-            return Some((1, self.last));
-        }
-        if edge {
-            if let Some(p) = pixels {
-                if (0.0..WIDTH as f32).contains(&p[0]) && (0.0..HEIGHT as f32).contains(&p[1]) {
-                    self.captured = true;
-                    self.last = p;
-                    return Some((0, p));
-                }
+        let finite = pixels.filter(|p| p.iter().all(|v| v.is_finite()));
+        let hit = finite
+            .filter(|p| (0.0..WIDTH as f32).contains(&p[0]) && (0.0..HEIGHT as f32).contains(&p[1]))
+            .map(|_| crate::native_panel_interaction::ControlId {
+                panel: 1,
+                control: 0,
+            });
+        let was_captured = self.captured();
+        let outcome = self.capture.update(valid, pressed, hit, false);
+        if valid && (was_captured || outcome.pressed.is_some()) {
+            if let Some(p) = finite {
+                self.last = [
+                    p[0].clamp(0.0, WIDTH as f32 - 1.0),
+                    p[1].clamp(0.0, HEIGHT as f32 - 1.0),
+                ];
             }
         }
-        None
+        let action = if outcome.cancelled.is_some() {
+            3
+        } else if outcome.pressed.is_some() {
+            0
+        } else if outcome.released.is_some() {
+            2
+        } else if outcome.dragging.is_some() {
+            1
+        } else {
+            return None;
+        };
+        Some((action, self.last))
     }
 }
 
 #[cfg(target_os = "android")]
+#[cfg(not(feature = "showcase"))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeControl(
     _env: *mut jni::sys::JNIEnv,
@@ -541,67 +843,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
 }
 
 #[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeInputSelected(
-    _env: *mut jni::sys::JNIEnv,
-    _class: jni::sys::jclass,
-) -> jni::sys::jboolean {
-    cfg!(native_meta_xr_operator).into()
-}
-
-#[cfg(all(target_os = "android", native_meta_xr_operator))]
-#[no_mangle]
-pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativePublishInputGeometry(
-    mut env: jni::EnvUnowned,
-    _class: jni::objects::JClass,
-    generation: i64,
-    body: jni::objects::JString,
-) -> jni::sys::jboolean {
-    use jni::Outcome;
-    let current = snapshot().generation;
-    if generation <= 0 || current != generation as u64 {
-        return false.into();
-    }
-    let result = env
-        .with_env(|env| {
-            let text: String = env.get_string(&body)?.into();
-            Ok::<bool, jni::errors::Error>(
-                crate::native_input_geometry::update(current, &text).is_ok(),
-            )
-        })
-        .into_outcome();
-    matches!(result, Outcome::Ok(true)).into()
-}
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeFeedbackSelected(
-    _env: *mut jni::sys::JNIEnv,
-    _class: jni::sys::jclass,
-) -> jni::sys::jboolean {
-    crate::native_development_feedback::selected().into()
-}
-
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeFeedbackStatus(
-    mut env: jni::EnvUnowned,
-    _class: jni::objects::JClass,
-    generation: i64,
-) -> jni::sys::jstring {
-    use jni::Outcome;
-    let body = crate::native_development_feedback::ui_status(generation as u64);
-    match env
-        .with_env(|env| env.new_string(body).map(|s| s.into_raw()))
-        .into_outcome()
-    {
-        Outcome::Ok(value) => value,
-        Outcome::Err(_) | Outcome::Panic(_) => std::ptr::null_mut(),
-    }
-}
-
-#[cfg(target_os = "android")]
 pub(crate) mod android {
+    use super::super::native_panel_resolution::RasterExtent;
     use super::*;
     use crate::acamera_sys as media;
     use crate::android_hardware_buffer::AndroidHardwareBufferHandle;
@@ -610,7 +853,11 @@ pub(crate) mod android {
         objects::{JClass, JClassLoader, JObject, JValue},
         JavaVM,
     };
-    use std::ptr;
+    use std::{
+        cell::Cell,
+        ptr,
+        rc::{Rc, Weak},
+    };
     #[link(name = "android")]
     extern "C" {
         fn ANativeWindow_toSurface(
@@ -618,9 +865,55 @@ pub(crate) mod android {
             window: *mut ndk_sys::ANativeWindow,
         ) -> jni::sys::jobject;
     }
+    /// A reader cannot disappear while an acquired image or the Java writer still uses it.
+    struct ReaderOwner {
+        reader: *mut media::AImageReader,
+        extent: RasterExtent,
+        epoch: u64,
+        writer_detached: Cell<bool>,
+        quarantined: Cell<bool>,
+    }
+    impl Drop for ReaderOwner {
+        fn drop(&mut self) {
+            if self.writer_detached.get() && !self.quarantined.get() {
+                unsafe {
+                    media::AImageReader_delete(self.reader);
+                }
+            }
+        }
+    }
+    unsafe fn new_reader(extent: RasterExtent, epoch: u64) -> Result<Rc<ReaderOwner>, String> {
+        if !extent.supported() {
+            return Err("unsupported mesh UI raster extent".into());
+        }
+        let mut reader = ptr::null_mut();
+        if media::AImageReader_newWithUsage(
+            extent.width as i32,
+            extent.height as i32,
+            1,
+            (1 << 8) | (1 << 9),
+            8,
+            &mut reader,
+        ) != 0
+            || reader.is_null()
+        {
+            return Err("create mesh UI RGBA reader".into());
+        }
+        Ok(Rc::new(ReaderOwner {
+            reader,
+            extent,
+            epoch,
+            writer_detached: Cell::new(false),
+            quarantined: Cell::new(false),
+        }))
+    }
     pub(crate) struct ImageLease {
         pub(crate) image: *mut media::AImage,
         pub(crate) buffer: AndroidHardwareBufferHandle,
+        pub(crate) raster_extent: RasterExtent,
+        pub(crate) raster_epoch: u64,
+        // Fields drop after ImageLease::drop calls AImage_delete.
+        _reader: Rc<ReaderOwner>,
     }
     #[link(name = "mediandk")]
     extern "C" {
@@ -648,7 +941,10 @@ pub(crate) mod android {
         }
     }
     pub(crate) struct Producer {
-        reader: *mut media::AImageReader,
+        reader: Rc<ReaderOwner>,
+        resize: Option<Rc<ReaderOwner>>,
+        retired_reader: Option<Weak<ReaderOwner>>,
+        next_raster_epoch: u64,
         pub(crate) generation: u64,
         pending: Option<acquire_fence::Pending<*mut media::AImage>>,
         acquire_quarantined: bool,
@@ -658,23 +954,23 @@ pub(crate) mod android {
             app: &android_activity::AndroidApp,
             generation: u64,
         ) -> Result<Self, String> {
-            let mut reader = ptr::null_mut();
-            // RGBA8, GPU_SAMPLED_IMAGE|GPU_COLOR_OUTPUT. Retained AImages prevent producer recycling.
-            if media::AImageReader_newWithUsage(
-                WIDTH as i32,
-                HEIGHT as i32,
-                1,
-                (1 << 8) | (1 << 9),
-                8,
-                &mut reader,
-            ) != 0
-                || reader.is_null()
-            {
-                return Err("create mesh UI RGBA reader".into());
-            }
+            Self::start_with_extent(
+                app,
+                generation,
+                super::super::native_panel_resolution::RasterExtent::BASE,
+            )
+        }
+        /// Startup only. A caller must retire Vulkan imports/fences and stop the old writer
+        /// before replacing its reader; this API never mutates a live image generation.
+        pub(crate) unsafe fn start_with_extent(
+            app: &android_activity::AndroidApp,
+            generation: u64,
+            extent: super::super::native_panel_resolution::RasterExtent,
+        ) -> Result<Self, String> {
+            let reader = new_reader(extent, 1)?;
             let mut window = ptr::null_mut();
-            if media::AImageReader_getWindow(reader, &mut window) != 0 {
-                media::AImageReader_delete(reader);
+            if media::AImageReader_getWindow(reader.reader, &mut window) != 0 {
+                reader.writer_detached.set(true);
                 return Err("mesh UI reader window".into());
             }
             activate(generation);
@@ -688,8 +984,8 @@ pub(crate) mod android {
                     &[
                         JValue::Object(activity),
                         JValue::Object(&surface),
-                        JValue::Int(WIDTH as i32),
-                        JValue::Int(HEIGHT as i32),
+                        JValue::Int(extent.width as i32),
+                        JValue::Int(extent.height as i32),
                         JValue::Long(generation as i64),
                     ],
                 )?;
@@ -699,6 +995,9 @@ pub(crate) mod android {
                 // Exceptional return still joins any possibly queued Java start.
                 let owner = Self {
                     reader,
+                    resize: None,
+                    retired_reader: None,
+                    next_raster_epoch: 2,
                     generation,
                     pending: None,
                     acquire_quarantined: false,
@@ -708,10 +1007,187 @@ pub(crate) mod android {
             }
             Ok(Self {
                 reader,
+                resize: None,
+                retired_reader: None,
+                next_raster_epoch: 2,
                 generation,
                 pending: None,
                 acquire_quarantined: false,
             })
+        }
+        pub(crate) fn raster_extent(&self) -> RasterExtent {
+            self.reader.extent
+        }
+        pub(crate) fn resize_pending(&self) -> bool {
+            self.resize.is_some()
+        }
+        fn quarantine_readers(&mut self) {
+            self.acquire_quarantined = true;
+            self.reader.quarantined.set(true);
+            if let Some(reader) = &self.resize {
+                reader.quarantined.set(true);
+            }
+        }
+        /// Single in-flight raster transition, independent from control/UI generation.
+        /// Java owns the Surface wrapper only when requestResize returns true.
+        pub(crate) unsafe fn request_resize(
+            &mut self,
+            app: &android_activity::AndroidApp,
+            extent: RasterExtent,
+        ) -> Result<bool, String> {
+            if self.acquire_quarantined
+                || self.resize.is_some()
+                || extent == self.reader.extent
+                || self
+                    .retired_reader
+                    .as_ref()
+                    .and_then(Weak::upgrade)
+                    .is_some()
+            {
+                return Ok(false);
+            }
+            let epoch = self.next_raster_epoch;
+            if epoch > i64::MAX as u64 {
+                return Err("mesh UI raster epoch exhausted".into());
+            }
+            self.next_raster_epoch = epoch
+                .checked_add(1)
+                .ok_or("mesh UI raster epoch exhausted")?;
+            let reader = new_reader(extent, epoch)?;
+            let mut window = ptr::null_mut();
+            if media::AImageReader_getWindow(reader.reader, &mut window) != 0 || window.is_null() {
+                reader.writer_detached.set(true);
+                return Err("mesh UI resize reader window".into());
+            }
+            self.resize = Some(reader.clone());
+            let mut admitted = false;
+            let result = with_class(app, |env, class, _| {
+                let raw = ANativeWindow_toSurface(env.get_raw(), window);
+                let surface = env.as_cast_raw::<JObject>(&raw)?;
+                admitted = env
+                    .call_static_method(
+                        class,
+                        jni_str!("requestResize"),
+                        jni_sig!("(JJLandroid/view/Surface;II)Z"),
+                        &[
+                            JValue::Long(self.generation as i64),
+                            JValue::Long(epoch as i64),
+                            JValue::Object(&surface),
+                            JValue::Int(extent.width as i32),
+                            JValue::Int(extent.height as i32),
+                        ],
+                    )?
+                    .z()?;
+                if !admitted {
+                    env.call_method(&surface, jni_str!("release"), jni_sig!("()V"), &[])?;
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                // Invocation may have reached Java; neither Surface/reader ownership is proven.
+                self.quarantine_readers();
+                return Err(error);
+            }
+            if !admitted {
+                reader.writer_detached.set(true);
+                self.resize = None;
+                return Ok(false);
+            }
+            crate::marker("native-mesh-ui", format!("event=raster-resize-request generation={} rasterEpoch={} rasterWidth={} rasterHeight={} evidence=request-only", self.generation, epoch, extent.width, extent.height));
+            Ok(true)
+        }
+        /// Copy a published UI-thread snapshot. Null retires native pixels; empty means unchanged.
+        pub(crate) fn read_native_page(
+            &self,
+            app: &android_activity::AndroidApp,
+            revision: u64,
+            atlas_epoch: u64,
+        ) -> Result<Option<Vec<u8>>, String> {
+            let mut packet = None;
+            with_class(app, |env, class, _| {
+                let result = env
+                    .call_static_method(
+                        class,
+                        jni_str!("readNativePage"),
+                        jni_sig!("(JJJ)[B"),
+                        &[
+                            JValue::Long(self.generation as i64),
+                            JValue::Long(revision as i64),
+                            JValue::Long(atlas_epoch as i64),
+                        ],
+                    )?
+                    .l()?;
+                if !result.is_null() {
+                    let bytes = env.cast_local::<jni::objects::JByteArray>(result)?;
+                    if bytes.len(env)? > crate::native_page::MAX_PACKET {
+                        return Err(jni::errors::Error::JniCall(
+                            jni::errors::JniError::InvalidArguments,
+                        ));
+                    }
+                    packet = Some(env.convert_byte_array(&bytes)?);
+                }
+                Ok(())
+            })?;
+            Ok(packet)
+        }
+        /// Returns writer commitment only; the first acquired/imported/submitted image is later.
+        pub(crate) unsafe fn poll_resize(
+            &mut self,
+            app: &android_activity::AndroidApp,
+        ) -> Result<Option<RasterExtent>, String> {
+            if self.acquire_quarantined {
+                return Ok(None);
+            }
+            let Some(candidate) = self.resize.as_ref() else {
+                return Ok(None);
+            };
+            let epoch = candidate.epoch;
+            let mut status = 0;
+            let result = with_class(app, |env, class, _| {
+                status = env
+                    .call_static_method(
+                        class,
+                        jni_str!("resizeStatus"),
+                        jni_sig!("(JJ)I"),
+                        &[
+                            JValue::Long(self.generation as i64),
+                            JValue::Long(epoch as i64),
+                        ],
+                    )?
+                    .i()?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                self.quarantine_readers();
+                return Err(error);
+            }
+            match status {
+                0 => Ok(None),
+                1 => {
+                    // The old pending image was never imported; transfer its OWN acquire FD.
+                    if let Some(pending) = self.pending.take() {
+                        media::AImage_deleteAsync(pending.image, pending.fence);
+                    }
+                    let next = self.resize.take().unwrap();
+                    let old = std::mem::replace(&mut self.reader, next);
+                    old.writer_detached.set(true);
+                    self.retired_reader = Some(Rc::downgrade(&old));
+                    let extent = self.reader.extent;
+                    crate::marker("native-mesh-ui", format!("event=raster-resize-writer-ack generation={} rasterEpoch={} rasterWidth={} rasterHeight={} evidence=writer-commit visibleProof=false", self.generation, epoch, extent.width, extent.height));
+                    Ok(Some(extent))
+                }
+                -1 => {
+                    if let Some(candidate) = self.resize.take() {
+                        candidate.writer_detached.set(true);
+                    }
+                    crate::marker("native-mesh-ui", format!("event=raster-resize-rejected generation={} rasterEpoch={} oldWriterRetained=true", self.generation, epoch));
+                    Ok(None)
+                }
+                _ => {
+                    self.quarantine_readers();
+                    Err("mesh UI raster switch uncertain; both readers retained and adaptation disabled".into())
+                }
+            }
         }
         pub(crate) unsafe fn acquire(&mut self) -> Option<ImageLease> {
             if self.acquire_quarantined {
@@ -725,8 +1201,11 @@ pub(crate) mod android {
                     || {
                         let mut image = ptr::null_mut();
                         let mut fence = -1;
-                        if AImageReader_acquireNextImageAsync(self.reader, &mut image, &mut fence)
-                            != 0
+                        if AImageReader_acquireNextImageAsync(
+                            self.reader.reader,
+                            &mut image,
+                            &mut fence,
+                        ) != 0
                             || image.is_null()
                         {
                             None
@@ -755,6 +1234,7 @@ pub(crate) mod android {
                     // A bad FD is no longer ours to close/transfer: it could have been reused.
                     // Keep the reader/image alive and stop acquisition; never recycle early.
                     self.acquire_quarantined = true;
+                    self.reader.quarantined.set(true);
                     crate::marker(
                         "native-mesh-ui",
                         "event=acquire-fence-quarantined readerRetained=true".to_string(),
@@ -774,7 +1254,13 @@ pub(crate) mod android {
                 return None;
             }
             match AndroidHardwareBufferHandle::acquire(buffer) {
-                Ok(buffer) => Some(ImageLease { image, buffer }),
+                Ok(buffer) => Some(ImageLease {
+                    image,
+                    buffer,
+                    raster_extent: self.reader.extent,
+                    raster_epoch: self.reader.epoch,
+                    _reader: self.reader.clone(),
+                }),
                 Err(_) => {
                     media::AImage_delete(image);
                     None
@@ -818,7 +1304,12 @@ pub(crate) mod android {
             // If Android UI shutdown has not acknowledged, keep the reader alive rather than
             // destroying a producer resource still referenced by a live VirtualDisplay.
             if result.is_ok() && !self.acquire_quarantined {
-                media::AImageReader_delete(self.reader);
+                self.reader.writer_detached.set(true);
+                if let Some(candidate) = &self.resize {
+                    candidate.writer_detached.set(true);
+                }
+            } else {
+                self.quarantine_readers();
             }
             result
         }
@@ -826,12 +1317,10 @@ pub(crate) mod android {
     impl Producer {
         /// Quiesce Java without recycling images whose Vulkan release failed.
         pub(crate) unsafe fn quiesce(mut self, app: &android_activity::AndroidApp) {
+            // Pending raw images remain owned by the deliberately retained reader closure.
+            // No uncertain FD is closed or retransferred during this fail-safe retention path.
+            self.quarantine_readers();
             deactivate(self.generation);
-            if !self.acquire_quarantined {
-                if let Some(pending) = self.pending.take() {
-                    media::AImage_deleteAsync(pending.image, pending.fence);
-                }
-            }
             let _ = wait_for_writer_retirement(app, self.generation);
         }
     }
@@ -936,6 +1425,235 @@ pub(crate) mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "showcase-vulkan-ui")]
+    #[test]
+    fn showcase_ui_cannot_project_neutral_diagnostic_stimulus_controls() {
+        assert!(!neutral_controls_enabled());
+        assert!(neutral_frame_controls(Some(ControlSnapshot::default())).is_none());
+    }
+    #[test]
+    fn recenter_uses_current_head_preserves_size_and_rejects_stale_generation() {
+        let mut state = ControlSnapshot {
+            generation: 9,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
+        state.pose.width = 1.2;
+        state.pose.height = 0.9;
+        assert!(!recenter(
+            &mut state,
+            8,
+            [2.0, 1.5, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ));
+        assert!(!recenter(
+            &mut state,
+            9,
+            [f32::NAN, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ));
+        assert!(recenter(
+            &mut state,
+            9,
+            [2.0, 1.5, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ));
+        assert_eq!(state.pose.center, [2.0, 1.5, -1.4]);
+        assert_eq!((state.pose.width, state.pose.height), (1.2, 0.9));
+        assert_eq!(state.pose_revision, 1);
+    }
+    #[test]
+    fn recenter_and_original_reset_atomically_release_wrist_attachment() {
+        let mut s = ControlSnapshot {
+            generation: 9,
+            pose_initialized: true,
+            attachment: "WRIST",
+            tracking_valid: false,
+            ..Default::default()
+        };
+        let old = s.pose;
+        assert!(!recenter(&mut s, 8, [0.0; 3], [0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(s.pose, old);
+        assert_eq!(s.attachment, "WRIST");
+        assert!(!s.tracking_valid);
+        assert_eq!(s.revision, 0);
+        assert!(recenter(&mut s, 9, [1.0; 3], [0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(s.attachment, "WORLD");
+        assert!(s.tracking_valid);
+        assert_eq!(s.revision, 1);
+        assert_eq!(s.pose_revision, 1);
+        s.attachment = "WRIST";
+        s.tracking_valid = false;
+        assert!(!panel_action(&mut s, 8, 13));
+        assert_eq!(s.attachment, "WRIST");
+        assert!(!s.tracking_valid);
+        assert!(panel_action(&mut s, 9, 13));
+        assert_eq!(s.pose, s.initial_pose);
+        assert_eq!(s.attachment, "WORLD");
+        assert!(s.tracking_valid);
+        assert_eq!(s.revision, 2);
+        assert_eq!(s.pose_revision, 2);
+    }
+    #[test]
+    fn native_chrome_only_admits_current_generation_presentation_actions() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
+        let initial = state.initial_pose;
+        assert!(!panel_action(&mut state, 6, 7));
+        for code in [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 99] {
+            assert!(!panel_action(&mut state, 7, code));
+        }
+        assert_eq!(state.revision, 0);
+        assert!(panel_action(&mut state, 7, 7));
+        assert_eq!(state.pose.width, 1.2);
+        assert_eq!(state.pose_revision, 1);
+        assert!(panel_action(&mut state, 7, 13));
+        assert_eq!(state.pose.width, initial.width);
+        assert_eq!(state.pose.center, initial.center);
+        assert_eq!(state.pose_revision, 2);
+    }
+
+    #[test]
+    fn original_overlay_is_explicit_and_does_not_enable_scene_depth_or_other_modes() {
+        let original = "solid-black-private-particles";
+        let scene = "native-worldspace-integration";
+        assert!(render_selection(original, true, true, false));
+        assert!(!render_selection(original, true, true, true));
+        assert!(!render_selection(original, false, true, false));
+        assert!(!render_selection(original, true, false, false));
+        assert!(render_selection(scene, true, false, true));
+        assert!(!render_selection(scene, true, false, false));
+        assert!(!render_selection(scene, true, true, true));
+        assert!(!mesh_selection("custom-stereo-projection", true, true));
+        assert!(!mesh_selection("solid-black-hands-and-grafts", true, true));
+    }
+    #[test]
+    fn session_presentation_uses_the_submitted_tuple_not_a_visibility_setter() {
+        let mut state = ControlSnapshot {
+            generation: 91,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
+        let visible = state;
+        assert_eq!(submitted_visibility(state, visible), None);
+        observe_visibility(&mut state, visible);
+        assert_eq!(submitted_visibility(state, visible), Some(true));
+        set_visibility(&mut state, 91, false).unwrap();
+        let hidden = state;
+        // A newer hide request is not evidence that the old visible frame was hidden.
+        assert_eq!(submitted_visibility(state, visible), Some(true));
+        assert_eq!(submitted_visibility(state, hidden), None);
+        observe_visibility(&mut state, hidden);
+        assert_eq!(submitted_visibility(state, hidden), Some(false));
+        assert_eq!(submitted_visibility(state, visible), None);
+    }
+    #[test]
+    fn retired_or_uninitialized_panel_cannot_activate_session_presentation() {
+        let mut state = ControlSnapshot {
+            generation: 92,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
+        set_visibility(&mut state, 92, false).unwrap();
+        let hidden = state;
+        observe_visibility(&mut state, hidden);
+        assert_eq!(submitted_visibility(state, hidden), Some(false));
+        assert_eq!(
+            submitted_visibility(
+                state,
+                ControlSnapshot {
+                    pose_initialized: false,
+                    ..hidden
+                }
+            ),
+            None
+        );
+        state.generation = 93;
+        assert_eq!(submitted_visibility(state, hidden), None);
+        state.generation = 0;
+        assert_eq!(submitted_visibility(state, hidden), None);
+    }
+    #[test]
+    fn original_panel_filters_demo_settings_but_retains_visibility_frame() {
+        let frame = ControlSnapshot {
+            generation: 7,
+            ..ControlSnapshot::default()
+        };
+        let neutral = neutral_frame_controls(Some(frame));
+        assert_eq!(neutral.is_some(), neutral_controls_enabled());
+        assert!(neutral_frame_controls(None).is_none());
+        let mut owner = frame;
+        let revision = set_visibility(&mut owner, 7, false).unwrap();
+        let submitted = owner;
+        assert!(observe_visibility(&mut owner, submitted));
+        assert_eq!(visibility_status(owner, 7, revision), "applied");
+        assert!(!owner.effective_panel_visible);
+        // Filtering the demo snapshot neither changes nor consumes the frame
+        // that establishes effective visibility and dispatches real panel input.
+        assert_eq!(frame.generation, owner.generation);
+        assert_eq!(frame.particle_scale, 0.5);
+    }
+    #[test]
+    fn geometry_requires_current_submitted_pose_and_exact_reference() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        assert_eq!(geometry_readback(state, 7)["status"], "uninitialized");
+        assert!(calibrate(&mut state, 7, [1., 2., 3.], [0., 0., 0., 1.]));
+        assert_eq!(geometry_readback(state, 7)["status"], "pending");
+        assert!(geometry_readback(state, 7).get("center").is_none());
+        let first = state;
+        assert!(!observe_geometry(&mut state, first, 0, "LOCAL_FLOOR"));
+        assert!(observe_geometry(&mut state, first, 0, "LOCAL"));
+        let seen = geometry_readback(state, 7);
+        assert_eq!(seen["status"], "applied");
+        assert_eq!(seen["submitted_frame"], 0);
+        assert_eq!(seen["reference_space"], "LOCAL");
+        assert!((seen["center"][2].as_f64().unwrap() - 1.6).abs() < 0.001);
+        assert!(apply(&mut state, 7, 6, 1.));
+        assert_eq!(geometry_readback(state, 7)["status"], "pending");
+        assert!(geometry_readback(state, 7).get("center").is_none());
+        let moved = state;
+        assert!(observe_geometry(&mut state, moved, 4, "STAGE"));
+        assert!(!observe_geometry(&mut state, first, 3, "LOCAL"));
+        assert_eq!(geometry_readback(state, 7)["reference_space"], "STAGE");
+        assert_eq!(geometry_readback(state, 8)["status"], "unavailable");
+        assert!(geometry_readback(state, 8).get("center").is_none());
+        state.generation = 0;
+        assert!(!observe_geometry(&mut state, moved, 5, "STAGE"));
+        assert_eq!(geometry_readback(state, 7)["status"], "unavailable");
+    }
+
+    #[test]
+    fn widget_pixel_inverse_matches_actual_native_ray_mapping() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert!(calibrate(
+            &mut state,
+            7,
+            [2., 1.65, 3.],
+            [0., half, 0., half]
+        ));
+        for pixels in [[10., 20.], [512., 384.], [1000., 750.]] {
+            let pose = state.pose;
+            let normal = cross(pose.right, pose.up);
+            let target: [f32; 3] = std::array::from_fn(|i| {
+                pose.center[i]
+                    + pose.right[i] * pose.width * (pixels[0] / WIDTH as f32 - 0.5)
+                    + pose.up[i] * pose.height * (0.5 - pixels[1] / HEIGHT as f32)
+            });
+            let origin = std::array::from_fn(|i| target[i] + normal[i] * 0.4);
+            let mapped = ray_pixels(pose, origin, normal.map(|x| -x)).unwrap();
+            assert!((mapped[0] - pixels[0]).abs() < 0.001 && (mapped[1] - pixels[1]).abs() < 0.001);
+        }
+    }
     #[test]
     fn visibility_request_needs_its_submitted_frame_and_preserves_scene_controls() {
         let mut state = ControlSnapshot {
@@ -1047,6 +1765,78 @@ mod tests {
         assert_eq!(capture.update(true, false, pixels), None);
         assert_eq!(capture.update(true, true, pixels), Some((0, [40.0, 20.0])));
         assert_eq!(capture.update(true, false, pixels), Some((2, [40.0, 20.0])));
+    }
+    #[test]
+    fn owner_or_focus_cancellation_requires_valid_open_before_held_reentry() {
+        let mut c = PointerCapture::default();
+        let p = Some([40.0, 20.0]);
+        assert_eq!(c.update(true, true, p), Some((0, [40.0, 20.0])));
+        assert_eq!(c.update(false, false, None), Some((3, [40.0, 20.0])));
+        assert_eq!(c.update(true, true, p), None);
+        assert_eq!(c.update(false, false, None), None);
+        assert_eq!(c.update(true, true, p), None);
+        assert_eq!(c.update(true, false, p), None);
+        assert_eq!(c.update(true, true, p), Some((0, [40.0, 20.0])));
+        assert_eq!(
+            c.update(true, true, Some([2000.0, -10.0])),
+            Some((1, [1023.0, 0.0]))
+        );
+        assert_eq!(c.update(true, false, None), Some((2, [1023.0, 0.0])));
+        assert!(!c.captured());
+    }
+    #[test]
+    fn presentation_setters_validate_and_revision_only_actual_changes() {
+        let mut s = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        assert!(!panel_width(&mut s, 7, 0.96));
+        assert!(calibrate(&mut s, 7, [0.0; 3], [0.0, 0.0, 0.0, 1.0]));
+        let revision = s.revision;
+        for (g, w) in [
+            (0, 0.96),
+            (8, 0.96),
+            (7, f32::NAN),
+            (7, f32::INFINITY),
+            (7, 0.479),
+            (7, 1.441),
+        ] {
+            assert!(!panel_width(&mut s, g, w));
+            assert_eq!(s.revision, revision);
+        }
+        for w in [0.48, 1.44] {
+            assert!(panel_width(&mut s, 7, w));
+            assert_eq!(s.pose.width, w);
+            assert_eq!(s.pose.height, w * 0.75);
+            assert_eq!(s.pose_revision, s.revision);
+            let r = s.revision;
+            assert!(panel_width(&mut s, 7, w));
+            assert_eq!(s.revision, r);
+        }
+        let pose = s.pose;
+        let r = s.revision;
+        for (g, mode) in [(0, "WORLD"), (8, "WORLD"), (7, "INVALID")] {
+            assert!(!attachment_pose(&mut s, g, pose, mode, true));
+            assert_eq!(s.revision, r);
+        }
+        let mut bad = pose;
+        bad.center[0] = f32::NAN;
+        assert!(!attachment_pose(&mut s, 7, bad, "WRIST", true));
+        assert_eq!(s.revision, r);
+        assert!(attachment_pose(&mut s, 7, pose, "WRIST", true));
+        let r = s.revision;
+        assert!(attachment_pose(&mut s, 7, pose, "WRIST", true));
+        assert_eq!(s.revision, r);
+        assert!(attachment_pose(&mut s, 7, pose, "WRIST", false));
+        assert_eq!(s.revision, r + 1);
+        assert_eq!(s.pose, pose);
+        assert!(!s.tracking_valid);
+        assert_eq!(s.pose_revision, s.revision);
+        assert!(attachment_pose(&mut s, 7, pose, "WORLD", true));
+        assert!(s.tracking_valid);
+        s.revision = i64::MAX as u64;
+        assert!(!panel_width(&mut s, 7, 0.96));
+        assert!(!attachment_pose(&mut s, 7, pose, "WORLD", true));
     }
     #[test]
     fn effect_override_is_explicit_and_has_closed_seven_slot_cycle() {
