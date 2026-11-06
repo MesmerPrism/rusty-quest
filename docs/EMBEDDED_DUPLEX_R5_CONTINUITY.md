@@ -686,11 +686,20 @@ hashes and ACK custody are read byte-exact and are never upgraded in place.
 
 ## Bounded decoder-input diagnostic selection
 
-The embedded app retains a 100 ms codec-input bound by default. Debug builds
+The embedded app retains a 100 ms codec-input bound when no app policy is
+declared. An app resource directory can explicitly supply the optional integer
+`rusty_quest_embedded_decoder_input_timeout_ms`, accepting exactly 100, 250,
+500 or 1000 ms. Missing, invalid or unavailable declarations fall back to
+100 ms. Keep an app-owned declaration in its selected resource directory;
+the public main resource tree deliberately does not define a competing entry.
+Resource packaging and hash closure follow the selected app build contract.
+
+Debug builds
 can select exactly 100, 250, 500 or 1000 ms with the construction-time property
 `debug.rustyquest.spatial.packed_decoder.input_timeout_ms`. Missing, unknown or
-unavailable values retain 100 ms. Release builds return that default without
-reading the property. `decoder-input-budget-selected` records the actual bound
+unavailable overrides retain the declared app baseline. Release builds use that
+baseline without reading the property. `decoder-input-budget-selected` records
+the public fallback, declared baseline, selected bound and debug override state
 when constructing the incoming owner; changing the property afterward cannot
 reconfigure that existing owner.
 

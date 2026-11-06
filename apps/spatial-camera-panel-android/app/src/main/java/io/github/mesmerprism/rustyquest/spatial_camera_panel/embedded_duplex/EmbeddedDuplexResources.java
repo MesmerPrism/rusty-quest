@@ -52,12 +52,14 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         if (!"camera2_mediacodec_surface".equals(source.source.getString("source_kind"))) {
             throw new IllegalArgumentException("embedded product requires Camera2 stereo source");
         }
-        int codecInputTimeoutMs = EmbeddedDuplexDecoderInputTimeout.readForCurrentBuild();
+        int declaredInputTimeoutMs = EmbeddedDuplexDecoderInputTimeout.declaredDefault(context);
+        int codecInputTimeoutMs = EmbeddedDuplexDecoderInputTimeout.readForCurrentBuild(declaredInputTimeoutMs);
         try {
             android.util.Log.i("RQSpatialCameraPanel", "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=embedded-duplex "
                     + "status=decoder-input-budget-selected codecInputTimeoutMs=" + codecInputTimeoutMs
                     + " defaultMs=" + EmbeddedDuplexDecoderInputTimeout.DEFAULT_MS
-                    + " diagnosticOverride=" + (codecInputTimeoutMs != EmbeddedDuplexDecoderInputTimeout.DEFAULT_MS));
+                    + " declaredDefaultMs=" + declaredInputTimeoutMs
+                    + " diagnosticOverride=" + (codecInputTimeoutMs != declaredInputTimeoutMs));
         } catch (RuntimeException ignored) { /* Diagnostic logging cannot refuse resource construction. */ }
         incoming = new EmbeddedDuplexReceiver(generation, display,
                 sink.sinkTransportHost, sink.sinkTransportPort, sink.sourceTransportHost,
