@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <provider
+            android:name=".SpatialBackgroundDiagnosticProvider"
+            android:authorities="${applicationId}.spatial-background-diagnostic"
+            android:enabled="true"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            android:permission="android.permission.DUMP" />
+        <provider
             android:name=".DebugHostReceiptProvider"
             android:authorities="${applicationId}.debug-host-receipt"
             android:enabled="true"

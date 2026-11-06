@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.PorterDuff
 import android.os.Bundle
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.util.Log
@@ -124,7 +125,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             diagnosticTextureRoute = immersiveVideoDiagnosticTextureRoute(),
         )
       }
-  private val backgroundImmersiveVideoPanelCoordinator: SpatialImmersiveVideoPanelCoordinator by
+  @Volatile private var backgroundControlResources = SpatialBackgroundControlObservation()
+  @Volatile private var backgroundControlEnabled = false
+  @Volatile private var backgroundControlSceneReady = false
+  @Volatile private var backgroundControlSceneRetired = false
+  private var backgroundControlSceneSetupComplete = false
+  @Volatile private var backgroundControlVrReady = false
+  @Volatile private var backgroundControlVrGeneration = 0L
+  @Volatile private var backgroundControlRevision = 0L
+  private val backgroundImmersiveVideoPanelCoordinatorLazy =
       lazy(LazyThreadSafetyMode.NONE) {
         SpatialImmersiveVideoPanelCoordinator(
             context = this,
@@ -136,8 +145,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             initialBackgroundMode = SpatialBackgroundMode.Black,
             directVideoConsumerInitiallyRequired = false,
             diagnosticTextureRoute = immersiveVideoDiagnosticTextureRoute(),
+            onControlObservationChanged = backgroundControlObservationCallback(),
         )
       }
+  private val backgroundImmersiveVideoPanelCoordinator: SpatialImmersiveVideoPanelCoordinator by
+      backgroundImmersiveVideoPanelCoordinatorLazy
   private val storedProfileAuthority: SpatialCameraPanelProfileLibraryAuthority by
       lazy(LazyThreadSafetyMode.NONE) {
         val internalFile = File(filesDir, SpatialCameraPanelProfileFiles.INTERNAL_FILE_NAME)
@@ -3179,21 +3191,95 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       mode: SpatialBackgroundMode,
       source: String,
   ): SpatialImmersiveVideoSessionSnapshot {
-    val videoVisible = mode == SpatialBackgroundMode.Video
-    backgroundImmersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
-        videoVisible,
-        "$source-world-video-contribution",
-    )
-    val snapshot =
-        if (mode == SpatialBackgroundMode.Black || mode == SpatialBackgroundMode.Video) {
-          backgroundImmersiveVideoPanelCoordinator.setBackgroundMode(mode, source).also {
+    backgroundControlRevision += 1L
+    try {
+      val videoVisible = mode == SpatialBackgroundMode.Video
+      backgroundImmersiveVideoPanelCoordinator.setDirectVideoConsumerRequired(
+          videoVisible,
+          "$source-world-video-contribution",
+      )
+      val snapshot =
+          if (mode == SpatialBackgroundMode.Black || mode == SpatialBackgroundMode.Video) {
+            backgroundImmersiveVideoPanelCoordinator.setBackgroundMode(mode, source).also {
+              applySpatialBackgroundEffects(mode, source)
+            }
+          } else {
             applySpatialBackgroundEffects(mode, source)
+            backgroundImmersiveVideoPanelCoordinator.setBackgroundMode(mode, source)
           }
-        } else {
-          applySpatialBackgroundEffects(mode, source)
-          backgroundImmersiveVideoPanelCoordinator.setBackgroundMode(mode, source)
-        }
-    return snapshot
+      return snapshot
+    } finally {
+      refreshBackgroundControlObservation()
+    }
+  }
+
+  internal fun backgroundControlObservation(): SpatialBackgroundControlObservation {
+    val resources = backgroundControlResources
+    return resources.copy(
+        sceneReady =
+            backgroundControlEnabled && backgroundControlSceneReady &&
+                !backgroundControlSceneRetired && !resources.sceneRetired,
+        sceneRetired = backgroundControlSceneRetired || resources.sceneRetired,
+        vrReady =
+            backgroundControlEnabled && backgroundControlVrReady &&
+                !backgroundControlSceneRetired && !resources.sceneRetired,
+        vrGeneration = backgroundControlVrGeneration,
+        revision = backgroundControlRevision,
+    )
+  }
+
+  internal fun selectBackgroundControlMode(
+      mode: SpatialBackgroundMode,
+  ): SpatialBackgroundControlObservation {
+    check(BuildConfig.DEBUG) { "Background control is debug-only" }
+    check(backgroundControlEnabled) { "Background control is not selected" }
+    check(Looper.myLooper() == Looper.getMainLooper()) { "Background control requires main thread" }
+    check(mode == SpatialBackgroundMode.Black || mode == SpatialBackgroundMode.Video) {
+      "Unsupported background control mode"
+    }
+    val before = backgroundControlObservation()
+    check(before.sceneEpoch > 0L && before.sceneReady && before.vrReady && !before.sceneRetired) {
+      "Background control requires a current ready scene"
+    }
+    check(!privatePanelInputLocked()) { "Background control is input-locked" }
+    setSpatialBackgroundMode(mode, "debug-background-control")
+    return backgroundControlObservation()
+  }
+
+  private fun backgroundControlObservationCallback(): ((SpatialBackgroundControlObservation) -> Unit)? {
+    // Resolved only inside the attached Activity's lazy coordinator construction.
+    backgroundControlEnabled = BuildConfig.DEBUG && runCatching {
+      val id = resources.getIdentifier(
+          "rusty_quest_spatial_background_diagnostic_enabled", "integer", packageName,
+      )
+      id != 0 && resources.getInteger(id) == 1
+    }.getOrDefault(false)
+    return if (backgroundControlEnabled) ({ backgroundControlResources = it }) else null
+  }
+
+  private fun refreshBackgroundControlObservation() {
+    // isInitialized remains false when construction throws; observing must never retry it.
+    if (backgroundControlEnabled && backgroundImmersiveVideoPanelCoordinatorLazy.isInitialized()) {
+      backgroundImmersiveVideoPanelCoordinatorLazy.value.publishBackgroundControlObservation()
+    }
+  }
+
+  private fun invalidateBackgroundControl(retired: Boolean = false) {
+    backgroundControlVrReady = false
+    backgroundControlSceneReady = false
+    if (retired) backgroundControlSceneRetired = true
+  }
+
+  private fun completeBackgroundControlSceneReady() {
+    backgroundControlSceneSetupComplete = true
+  }
+
+  private fun completeBackgroundControlSceneTick() {
+    if (backgroundControlEnabled && backgroundControlSceneSetupComplete && !backgroundControlSceneReady &&
+        !backgroundControlSceneRetired) {
+      refreshBackgroundControlObservation()
+      backgroundControlSceneReady = true
+    }
   }
 
   private fun applySpatialBackgroundEffects(
@@ -3373,9 +3459,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     enforcePrivatePanelInputPolicy()
     attachEmbeddedDuplexDisplayWhenReady()
+    completeBackgroundControlSceneReady()
   }
 
   override fun onVRReady() {
+    backgroundControlVrReady = false
+    backgroundControlVrGeneration += 1L
     super.onVRReady()
     if (directImmersiveVideoPanelRequested()) {
       immersiveVideoPanelCoordinator.resume("vr-ready")
@@ -3399,6 +3488,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       cameraHwbProjectionLaunchCoordinator.runIfRequested("vr-ready")
       cameraHwbProbeCoordinator.runIfRequested("vr-ready")
     }
+    refreshBackgroundControlObservation()
+    backgroundControlVrReady = backgroundControlEnabled && !backgroundControlSceneRetired
+  }
+
+  override fun onVRPause() {
+    invalidateBackgroundControl()
+    super.onVRPause()
   }
 
   override fun onSceneTick() {
@@ -3423,6 +3519,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (appControllerInputsEnabled()) {
       controllerPollingCoordinator.pollNativeInput()
     }
+    completeBackgroundControlSceneTick()
   }
 
   private fun captureStoredProfileControls(): SpatialCameraPanelControlSnapshot {
@@ -3804,6 +3901,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     connectionHubWearerControlClient.refresh()
   }
   override fun onPause() {
+    invalidateBackgroundControl()
     ownResumeActive = false
     ++ownResumeGeneration
     EmbeddedDuplexDiagnosticActivityGate.paused(this)
@@ -3822,6 +3920,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onSpatialShutdown() {
+    invalidateBackgroundControl(retired = true)
     cameraLatencyDiagnosticModule.onSpatialShutdown()
     // VrActivity reaches this before DataModel.destroy, from finishing onStop or
     // onDestroy. The later lifecycle worker may release codecs, but cannot own
@@ -3836,6 +3935,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    invalidateBackgroundControl(retired = true)
     cameraLatencyDiagnosticModule.onSpatialShutdown()
     EmbeddedDuplexDiagnosticActivityGate.paused(this)
     embeddedDuplexActivityDestroying = true

@@ -353,6 +353,10 @@ rectangles, and selection wraparound.
 
 ## Activity scene lifetime
 
+The separate opt-in [closed Background diagnostic](SPATIAL_BACKGROUND_DIAGNOSTIC.md)
+reaches the existing app handler without launching its Activity. Its effective
+mode receipt does not prove playback, XR continuity or GPU lifetime.
+
 Meta Spatial SDK 0.13.2 destroys the Activity's DataModel synchronously during
 finishing `onStop` or `onDestroy`. The Activity therefore retires its video
 scene owners in `onSpatialShutdown`, before that native model is invalidated.

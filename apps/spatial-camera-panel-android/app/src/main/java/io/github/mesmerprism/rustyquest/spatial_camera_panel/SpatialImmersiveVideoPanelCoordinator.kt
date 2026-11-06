@@ -54,7 +54,7 @@ import java.util.concurrent.atomic.AtomicLong
 internal class SpatialImmersiveVideoPanelCoordinator(
     private val context: Context,
     private val resolution: SpatialImmersiveVideoRouteResolution,
-    private val emitMarker: (String) -> Unit,
+    emitMarker: (String) -> Unit,
     private val recenterAfterNewVideoLoad: (String, String) -> Boolean,
     private val layerOwner: SpatialImmersiveVideoLayerOwner =
         SpatialImmersiveVideoLayerOwner.Outer,
@@ -63,13 +63,29 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     initialBackgroundMode: SpatialBackgroundMode = SpatialBackgroundMode.Passthrough,
     directVideoConsumerInitiallyRequired: Boolean = true,
     diagnosticTextureRoute: Int = 0,
+    private val onControlObservationChanged: ((SpatialBackgroundControlObservation) -> Unit)? = null,
 ) {
+  private val emitMarker: (String) -> Unit =
+      if (onControlObservationChanged == null) emitMarker else { text ->
+        publishBackgroundControlObservation()
+        emitMarker(text)
+      }
   private val textureRoute = SpatialImmersiveVideoPanelTextureRoute.fromCode(diagnosticTextureRoute)
   private val sceneEpoch = nextSceneEpoch.incrementAndGet()
   private var videoEntityEpoch = 0L
   private var backingEntityEpoch = 0L
+  private var observedVideoEntityId = 0L
+  private var observedBackingEntityId = 0L
   private var entity: Entity? = null
+    set(value) {
+      field = value
+      observedVideoEntityId = if (onControlObservationChanged != null) value?.id ?: 0L else 0L
+    }
   private var blackBackdropEntity: Entity? = null
+    set(value) {
+      field = value
+      observedBackingEntityId = if (onControlObservationChanged != null) value?.id ?: 0L else 0L
+    }
   private val retainBackingEntities =
       SpatialImmersiveVideoBackingRetentionPolicy.selected(BuildConfig.DEBUG, ::activityReadSystemProperty)
   private val retainedBackdrops by lazy(LazyThreadSafetyMode.NONE) {
@@ -170,6 +186,28 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   fun routePolicyMarker(): String =
       SpatialImmersiveVideoRouteModule.routePolicyMarker(resolution) +
           " videoLayerOwner=${layerOwner.token}"
+
+  /** Cached IDs and owned scalars only: no SDK getter, catalog walk or media operation. */
+  @Synchronized
+  fun backgroundControlObservation(): SpatialBackgroundControlObservation {
+    return SpatialBackgroundControlObservation(
+        sceneEpoch = sceneEpoch,
+        sceneRetired = sceneRetired,
+        mode = backgroundMode.token,
+        backingEntityId = observedBackingEntityId,
+        backingEntityEpoch = backingEntityEpoch,
+        videoEntityId = observedVideoEntityId,
+        videoEntityEpoch = videoEntityEpoch,
+        surfaceIdentity = surface?.let(System::identityHashCode) ?: 0,
+        decoderGeneration = directDecoderGeneration,
+    )
+  }
+
+  /** Serialize capture and the inert scalar assignment so an older publisher cannot win later. */
+  @Synchronized
+  fun publishBackgroundControlObservation() {
+    onControlObservationChanged?.invoke(backgroundControlObservation())
+  }
 
   fun sessionSnapshot(): SpatialImmersiveVideoSessionSnapshot {
     val config = activeConfig

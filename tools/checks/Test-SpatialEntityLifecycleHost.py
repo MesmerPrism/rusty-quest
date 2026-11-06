@@ -51,6 +51,7 @@ registrations = text[text.index('  fun panelRegistrations()'):registration_end].
 extracts.append(dict(source='SpatialImmersiveVideoPanelCoordinator.kt', signature='panelRegistrations', sha256=hashlib.sha256(registrations.encode()).hexdigest()))
 activity = '\n'.join(method('SpatialCameraPanelActivity.kt', s, optional=o) for s, o in [
     ('  override fun onDestroy()', False), ('  override fun onSpatialShutdown()', True),
+    ('  private fun invalidateBackgroundControl(', False),
     ('  private fun scheduleOrderedActivityDestroyCleanup()', False),
 ])
 shutdown = (base / 'SpatialVideoLifecycleShutdownCoordinator.kt').read_text()
@@ -197,6 +198,7 @@ open class ModelSdkActivity(val model:Model) {
  fun finishingStop(){onSpatialShutdown();model.live=false}
 }
 class SpatialCameraPanelActivity(model:Model,room:Boolean=false,skybox:Boolean=false,staged:Boolean=false,carrier:Boolean=false):ModelSdkActivity(model) {
+ var backgroundControlVrReady=true;var backgroundControlSceneReady=true;var backgroundControlSceneRetired=false
  private val cameraLatencyDiagnosticModule=SpatialCameraLatencyDiagnosticModule(SpatialCameraLatencyDiagnosticBindings(
    readSystemProperty={when(it){CAMERA_LATENCY_ENABLED_PROPERTY->"true";CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY->"openxr-locate-views";else->""}},
    applyNative={0L},recordViewerPose={_,_->0L},marker={},
@@ -229,7 +231,7 @@ class SpatialCameraPanelActivity(model:Model,room:Boolean=false,skybox:Boolean=f
 }
 fun main(){
  val model=Model();val a=SpatialCameraPanelActivity(model);a.block()
- a.onDestroy();check(!model.live);a.release.countDown()
+ a.onDestroy();check(!model.live);check(a.backgroundControlSceneRetired&&!a.backgroundControlSceneReady&&!a.backgroundControlVrReady){"destruction retained control readiness"};a.release.countDown()
  val error=a.failure.get(2,TimeUnit.SECONDS)
  check(error==null){"actual queued destroy used retired SDK model: $error"}
  check(a.executor.awaitTermination(2,TimeUnit.SECONDS))

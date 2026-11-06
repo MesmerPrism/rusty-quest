@@ -1,5 +1,11 @@
 # Rusty Quest Validation
 
+The optional closed Background diagnostic has focused contract/custody,
+Android provider typecheck and cached Activity/scene controls. See
+[the diagnostic contract](SPATIAL_BACKGROUND_DIAGNOSTIC.md#validation-and-next-artifact)
+for exact commands and source-versus-artifact/device limits. Existing immersive
+backing retention and Entity scene-lifetime fixtures remain applicable.
+
 The stereo qualification mask-strip unit controls cover v1 compatibility and
 the explicitly versioned primary-texel-center strip. Marker `[77,66,2,255]`
 requires an actual retired final ABI2 frame with primary prefix6, current source
