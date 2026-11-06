@@ -683,3 +683,26 @@ category. No exception message, stack, endpoint or credential is exported.
 This retains safe failure classification, not a complete state-guard diagnosis.
 The outcome stays UNKNOWN/uncertain. Existing terminal failure rows, outcome
 hashes and ACK custody are read byte-exact and are never upgraded in place.
+
+## Bounded decoder-input diagnostic selection
+
+The embedded app retains a 100 ms codec-input bound by default. Debug builds
+can select exactly 100, 250, 500 or 1000 ms with the construction-time property
+`debug.rustyquest.spatial.packed_decoder.input_timeout_ms`. Missing, unknown or
+unavailable values retain 100 ms. Release builds return that default without
+reading the property. `decoder-input-budget-selected` records the actual bound
+when constructing the incoming owner; changing the property afterward cannot
+reconfigure that existing owner.
+
+The existing bound covers both codec input-buffer waiting and pending-identity
+capacity waiting; a comparison must account for both. It does not recreate a codec,
+reconnect a prepared receiver, drop a compressed packet, change frame identity,
+refresh session authority or make timed-out work retryable. Root cause and
+appropriate operating policy still require actual pressure observations and
+device qualification; selecting a larger bound alone proves neither.
+
+Run the actual selector's host checks with
+`tools/checks/Test-EmbeddedDuplexDecoderInputTimeoutHost.py --java-home <JDK> --output-root <fresh-directory>`.
+They cover release read inertness, the four exact debug values and default
+fallback. The Android build and effective construction marker are separate
+checks.
