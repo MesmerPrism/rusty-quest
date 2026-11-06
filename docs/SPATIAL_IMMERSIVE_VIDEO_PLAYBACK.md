@@ -378,6 +378,22 @@ the no-render Surface creation/destruction and native Vulkan receipt call, with
 a per-call `probeGeneration`. These stages establish ordering for diagnosis;
 successful probe completion does not identify a concurrent renderer failure.
 
+Debug builds have one construction-time texture diagnostic property,
+`debug.rustyquest.spatial.immersive_video.texture_route`. Missing/`0` keeps
+the normal Android swapchain layer. `1` sets `forceSceneTexture=true` through
+the supported shape-options modifier for both video and its opaque backing;
+the declared shape/radius, stereo layout, pixel extent and compositor layer
+including its z-index are retained. Other values select `0`; release Activity
+bindings select `0` without reading the property. Restart the Activity/process
+through the normal owner route after changing it, before panel registration.
+This is an explicit diagnostic selection, not an adopted crash fix or a
+performance-equivalent route: the SDK additionally allocates and mirrors a
+SceneTexture while keeping the layer. It still uses the SDK's opaque-layer
+proxy/hole-punch mesh. The pre-creation `panel-texture-route-applied` marker
+reports the actual configured texture/layer/shape/stereo fields separately
+for backing and video. No scene-mesh-only selection is admitted because
+clearing the layer alone does not preserve the compositor ordering contract.
+
 The same pre-model handoff retires the optional virtual-room/skybox and staged
 asset Entity owners and cancels their pending scene adoption. The projection
 panel carrier separates its SDK Entity/SceneObject handles from Native/Surface
@@ -401,6 +417,13 @@ same boundary, including late load/adoption and blocked or failed Native stop.
 explicit path arguments. It compiles the actual interop coordinator with modeled
 SDK/JNI leaves and checks that each entry/completion stage surrounds the owning
 call, generations advance, and scene-ready does not acquire a probe Surface.
+
+`tools/checks/Test-SpatialImmersiveVideoTextureRouteHost.py` takes those same
+path arguments. It compiles the actual texture policy and Activity selection
+method with modeled SDK configuration leaves, checking default/unknown inputs,
+release inertness and retained layer, z-index, geometry, top-bottom stereo,
+opacity and pixel extent. Actual SDK/Android compilation and on-device routing
+remain separate checks.
 
 This check does not establish same-process display reattachment after Whole
 retirement. A later launch still needs its actual scene, carrier and typed

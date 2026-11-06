@@ -36,6 +36,7 @@ import com.meta.spatial.toolkit.Equirect180ShapeOptions
 import com.meta.spatial.toolkit.Equirect360ShapeOptions
 import com.meta.spatial.toolkit.MediaPanelRenderOptions
 import com.meta.spatial.toolkit.MediaPanelSettings
+import com.meta.spatial.toolkit.MediaPanelShapeOptions
 import com.meta.spatial.toolkit.Panel
 import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelRegistration
@@ -61,7 +62,9 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
     initialBackgroundMode: SpatialBackgroundMode = SpatialBackgroundMode.Passthrough,
     directVideoConsumerInitiallyRequired: Boolean = true,
+    diagnosticTextureRoute: Int = 0,
 ) {
+  private val textureRoute = SpatialImmersiveVideoPanelTextureRoute.fromCode(diagnosticTextureRoute)
   private val sceneEpoch = nextSceneEpoch.incrementAndGet()
   private var videoEntityEpoch = 0L
   private var backingEntityEpoch = 0L
@@ -1547,7 +1550,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                 )
         }
     return MediaPanelSettings(
-        shape = shape,
+        shape = textureRouteShape(shape, backing = true),
         display = PixelDisplayOptions(width = BLACK_BACKING_DISPLAY_SIZE_PX, height = BLACK_BACKING_DISPLAY_SIZE_PX),
         rendering =
             MediaPanelRenderOptions(
@@ -1566,7 +1569,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     val presentation =
         SpatialImmersiveVideoSessionPolicy.directPanelPresentation(config, registeredMode)
     return MediaPanelSettings(
-          shape =
+          shape = textureRouteShape(
               when (presentation.shape) {
                 SpatialImmersiveVideoCarrierShape.LegacyQuad,
                 SpatialImmersiveVideoCarrierShape.WorldQuad -> quadShapeOptions(presentation)
@@ -1575,6 +1578,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                 SpatialImmersiveVideoCarrierShape.Equirect360 ->
                     Equirect360ShapeOptions(radius = config.radiusMeters)
               },
+              backing = false,
+          ),
           display =
               PixelDisplayOptions(
                   width = presentation.displayWidthPx,
@@ -1588,6 +1593,23 @@ internal class SpatialImmersiveVideoPanelCoordinator(
           input = PanelInputOptions(0),
       )
   }
+
+  private fun textureRouteShape(
+      declaredShape: MediaPanelShapeOptions,
+      backing: Boolean,
+  ): MediaPanelShapeOptions =
+      textureRoute.wrapShape(declaredShape) { options ->
+        emitResourceMarker(
+            "channel=spatial-immersive-video status=panel-texture-route-applied " +
+                "diagnosticTextureRoute=${textureRoute.code} textureRoute=${textureRoute.token} " +
+                "backing=$backing forceSceneTexture=${options.forceSceneTexture} " +
+                "sdkLayerRetained=${options.layerConfig != null} " +
+                "sdkLayerZIndex=${options.layerConfig?.zIndex ?: 0} " +
+                "sdkPanelShape=${options.panelShapeType} sdkStereoMode=${options.stereoMode} " +
+                "radiusMeters=${options.radiusForCylinderOrSphere} " +
+                "configurationBeforeSurfaceCreation=true " + resourceMarkerFields()
+        )
+      }
 
   private fun quadShapeOptions(
       presentation: SpatialImmersiveVideoDirectPanelPresentation,

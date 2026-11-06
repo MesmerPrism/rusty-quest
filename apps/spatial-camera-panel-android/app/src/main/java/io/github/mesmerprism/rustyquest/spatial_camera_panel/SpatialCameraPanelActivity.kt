@@ -121,6 +121,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             initialPresentationMode = SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
             initialBackgroundMode = SpatialBackgroundMode.Passthrough,
             directVideoConsumerInitiallyRequired = false,
+            diagnosticTextureRoute = immersiveVideoDiagnosticTextureRoute(),
         )
       }
   private val backgroundImmersiveVideoPanelCoordinator: SpatialImmersiveVideoPanelCoordinator by
@@ -134,6 +135,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             initialPresentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored,
             initialBackgroundMode = SpatialBackgroundMode.Black,
             directVideoConsumerInitiallyRequired = false,
+            diagnosticTextureRoute = immersiveVideoDiagnosticTextureRoute(),
         )
       }
   private val storedProfileAuthority: SpatialCameraPanelProfileLibraryAuthority by
@@ -667,6 +669,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         },
         storeLeftPrimary = { _, _ -> false },
     )
+  }
+  private fun immersiveVideoDiagnosticTextureRoute(): Int {
+    return if (BuildConfig.DEBUG) {
+      SpatialImmersiveVideoPanelTextureRoute.parseCode(
+          activityReadSystemProperty(IMMERSIVE_VIDEO_TEXTURE_ROUTE_PROPERTY)
+      )
+    } else {
+      0
+    }
   }
   private val controllerInputRouteCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialControllerInputRouteCoordinator(
