@@ -126,7 +126,7 @@ fn polar_action(runtime: &ExperimentSessionRuntime, operation: &str, id: &str) -
         operation,
         id,
         1,
-        runtime.current_elapsed_realtime_ns().unwrap() + 1_000,
+        test_elapsed_realtime_ns(&runtime) + 1_000,
     ));
     serde_json::from_str(&wait_for(
         runtime,
@@ -141,7 +141,7 @@ fn polar_present(runtime: &ExperimentSessionRuntime, id: &str) {
     runtime.apply_command_json(
         &json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
         "operation":"presentation","operation_id":id,"expected_generation":1,
-        "elapsed_realtime_ns":runtime.current_elapsed_realtime_ns().unwrap() + 1_000,
+        "elapsed_realtime_ns":test_elapsed_realtime_ns(&runtime) + 1_000,
         "presentation":"immersive-active"})
         .to_string(),
     );
@@ -164,7 +164,7 @@ fn polar_operator_resume(runtime: &ExperimentSessionRuntime, id: &str) -> Value 
     let snapshot: Value = serde_json::from_str(&runtime.status_json()).unwrap();
     json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
         "operation":"operator-resume","operation_id":id,"expected_generation":1,
-        "elapsed_realtime_ns":runtime.current_elapsed_realtime_ns().unwrap()+1_000,
+        "elapsed_realtime_ns":test_elapsed_realtime_ns(&runtime)+1_000,
         "operator_origin":"shell-experiment-operator-v1","expected_runtime_epoch":1,
         "expected_session_key":snapshot["readback"]["session_key"],"expected_condition":"condition-a",
         "expected_profile_sha256":"11".repeat(32),
@@ -210,7 +210,7 @@ fn polar_native_and_authenticated_operator_controls_share_freshness_and_manual_r
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     crate::polar_input_health::test_support::age_sample(Duration::from_millis(1250));
-    let current = runtime.current_elapsed_realtime_ns().unwrap() + 1_500_000_000;
+    let current = test_elapsed_realtime_ns(&runtime) + 1_500_000_000;
     *runtime.monotonic_bridge.lock().unwrap() =
         Some((MonotonicNanos::new(current), Instant::now()));
     runtime
@@ -243,6 +243,11 @@ fn polar_native_and_authenticated_operator_controls_share_freshness_and_manual_r
     let ready: Value =
         serde_json::from_str(&wait_for(&runtime, "recovered-awaiting-resume")).unwrap();
     assert_eq!(ready["readback"]["active_time_ms"], frozen);
+    // This fixture has no continuous renderer. Durable controls may outlast
+    // its last heartbeat, so restore the independent presentation prerequisite
+    // before testing an explicitly admitted Polar resume.
+    polar_present(&runtime, "polar-direct-resume-present");
+    polar_sample();
     let resumed = polar_action(&runtime, "resume", "polar-direct-resume");
     assert_eq!(resumed["readback"]["control_state"], "running");
     assert_eq!(resumed["readback"]["polar_input"]["pause_latched"], false);
@@ -273,8 +278,12 @@ fn polar_native_and_authenticated_operator_controls_share_freshness_and_manual_r
         stale["readback"]["last_reason"],
         "operator-owner-fence-mismatch"
     );
-    operator["expected_runtime_epoch"] = json!(1);
-    operator["operation_id"] = json!("polar-authenticated-resume");
+    // The stale-owner negative proves no frame/input freshness for this new
+    // request. Supply current renderer and acquisition witnesses, then bind a
+    // fresh command timestamp rather than reusing the rejected request's time.
+    polar_present(&runtime, "polar-authenticated-resume-present");
+    polar_sample();
+    let operator = polar_operator_resume(&runtime, "polar-authenticated-resume");
     runtime.apply_command_json(&operator.to_string());
     let remote: Value = serde_json::from_str(&wait_for(
         &runtime,

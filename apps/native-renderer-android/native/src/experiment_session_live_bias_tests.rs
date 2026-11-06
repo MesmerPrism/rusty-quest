@@ -6,6 +6,20 @@ fn spawn_guided_test_runtime(root: PathBuf) -> Result<ExperimentSessionRuntime, 
     })
 }
 
+fn test_elapsed_realtime_ns(runtime: &ExperimentSessionRuntime) -> u64 {
+    // Renderer callers may skip a contended read. A command fixture needs a
+    // timestamp, so wait for that nonblocking API to become available instead
+    // of treating temporary worker ownership of the bridge as a missing clock.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(now) = runtime.current_elapsed_realtime_ns() {
+            return now;
+        }
+        assert!(Instant::now() < deadline, "test runtime clock did not become available");
+        thread::yield_now();
+    }
+}
+
 fn guided_inventory() -> TrustedExperimentInventory {
     let mut inventory = trusted_inventory();
     let text = json!({"schema":crate::breath_guidance::BREATH_GUIDANCE_SCHEMA,
@@ -203,7 +217,11 @@ fn guided_arm_configuration_failure_never_prepares_writer_and_does_not_replay() 
     assert_eq!(failed["readback"]["last_operation_status"],"failed");
     assert!(failed["readback"]["last_reason"].as_str().unwrap().starts_with("guided-breath-preparation:"));
     assert_eq!(failed["readback"]["arm_durable_checkpoint"],false);
-    assert_eq!(failed["readback"]["polar_input"]["required"],false);
+    // Operation publication and the refreshed source projection are separate
+    // writes. Observe the reset itself rather than assuming the first failed
+    // receipt already contains that later projection.
+    let reset: Value = serde_json::from_str(&wait_for(&runtime, "\"required\":false")).unwrap();
+    assert_eq!(reset["readback"]["polar_input"]["required"],false);
     assert!(!entered.load(Ordering::Acquire));
     assert!(!root.join(SessionTimestampKey::from_utc(UtcEpochNanos::new(1_725_000_000_000_000_000)).as_str()).exists());
     assert_eq!(apply_and_read(&runtime,&arm)["readback"]["last_operation_status"],"duplicate");
@@ -272,10 +290,10 @@ fn start_guided_live_clock(runtime: &ExperimentSessionRuntime, root: &Path) -> (
     let armed = arm_guided(runtime, root);
     assert!(runtime.note_submitted_frame(1, 1));
     let mut presented: Value = serde_json::from_str(&command("presentation", "live-present", 1,
-        runtime.current_elapsed_realtime_ns().unwrap())).unwrap();
+        test_elapsed_realtime_ns(&runtime))).unwrap();
     presented["presentation"] = json!("immersive-active");
     apply_and_read(runtime, &presented);
-    let started = runtime.current_elapsed_realtime_ns().unwrap();
+    let started = test_elapsed_realtime_ns(&runtime);
     polar_sample();
     let result = apply_and_read(runtime, &serde_json::from_str(&command("official-start", "live-start", 1, started)).unwrap());
     assert_eq!(result["readback"]["control_state"], "running");
@@ -320,15 +338,15 @@ fn blocked_bias_checkpoint_freezes_controller_and_archive_before_queued_pause_or
             Box::new(backend)
         }).unwrap();
         let (armed, started, deadline) = start_guided_live_clock(&runtime, &root);
-        let bias = bias_command(&armed, "blocked-bias", 70, runtime.current_elapsed_realtime_ns().unwrap());
+        let bias = bias_command(&armed, "blocked-bias", 70, test_elapsed_realtime_ns(&runtime));
         runtime.apply_command_json(&bias.to_string());
         for _ in 0..200 {
             if entered.load(Ordering::Acquire) { break; }
             thread::sleep(Duration::from_millis(5));
         }
-        let older = runtime.current_elapsed_realtime_ns().unwrap();
+        let older = test_elapsed_realtime_ns(&runtime);
         thread::sleep(Duration::from_millis(600));
-        let queued_at = if scenario == "older-pause" { older } else { runtime.current_elapsed_realtime_ns().unwrap() };
+        let queued_at = if scenario == "older-pause" { older } else { test_elapsed_realtime_ns(&runtime) };
         let operation = if scenario == "save-and-exit" { scenario } else { "pause" };
         let queued = command(operation, "queued-after-bias", 1, queued_at);
         let receipt = runtime.apply_command_json(&queued);
@@ -346,7 +364,7 @@ fn blocked_bias_checkpoint_freezes_controller_and_archive_before_queued_pause_or
         // This is the authoritative reducer accumulator, not response_json's cap.
         assert_eq!(runtime.projection.read().unwrap().active_time_ns, deadline - started);
         let saved_at = if scenario == "save-and-exit" { queued_at } else {
-            let at = runtime.current_elapsed_realtime_ns().unwrap();
+            let at = test_elapsed_realtime_ns(&runtime);
             apply_and_read(&runtime, &serde_json::from_str(&command("save-and-exit", "final-save", 1, at)).unwrap());
             at
         };
@@ -371,8 +389,12 @@ fn saturated_command_lane_reconciles_stall_before_first_queued_tick() {
     let (resume, resume_rx) = mpsc::channel();
     runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    thread::sleep(Duration::from_millis(600));
-    let at = runtime.current_elapsed_realtime_ns().unwrap();
+    // The acknowledged pause owns the worker scheduling boundary. Advance its
+    // host clock past the last submitted-frame deadline without depending on
+    // wall-clock sleep or machine load to create the stall.
+    *runtime.monotonic_bridge.lock().unwrap() =
+        Some((MonotonicNanos::new(deadline + 1), Instant::now()));
+    let at = test_elapsed_realtime_ns(&runtime);
     for i in 0..COMMAND_QUEUE_CAPACITY {
         assert!(runtime.apply_command_json(&command("tick", &format!("busy-tick-{i}"), 1, at))
             .contains("\"command_status\":\"queued\""));
@@ -381,8 +403,19 @@ fn saturated_command_lane_reconciles_stall_before_first_queued_tick() {
     resume.send(()).unwrap();
     wait_for(&runtime, &format!("\"last_operation_id\":\"busy-tick-{}\"", COMMAND_QUEUE_CAPACITY - 1));
     assert_eq!(runtime.projection.read().unwrap().active_time_ns, deadline - started);
-    let saved_at = runtime.current_elapsed_realtime_ns().unwrap();
-    apply_and_read(&runtime, &serde_json::from_str(&command("save-and-exit", "busy-save", 1, saved_at)).unwrap());
+    // A published receipt precedes the worker's post-command reconciliation.
+    // The runtime clock read is intentionally nonblocking and can return None
+    // during that reconciliation; pause the worker before sampling a command
+    // timestamp, then release it only after the save has been queued.
+    let (entered, entered_rx) = mpsc::sync_channel(1);
+    let (resume, resume_rx) = mpsc::channel();
+    runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let saved_at = test_elapsed_realtime_ns(&runtime);
+    assert!(runtime.apply_command_json(&command("save-and-exit", "busy-save", 1, saved_at))
+        .contains("\"command_status\":\"queued\""));
+    resume.send(()).unwrap();
+    wait_for(&runtime, "\"last_operation_id\":\"busy-save\"");
     wait_for(&runtime, "\"shutdown_status\":\"complete\"");
     runtime.shutdown_for_test().unwrap();
     assert_stall_archive(&root, &armed, started, deadline, saved_at);
