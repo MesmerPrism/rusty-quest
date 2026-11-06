@@ -17,6 +17,7 @@ pub(crate) const PROJECTION_READBACK_TOGGLE: u32 = super::PROJECTION_COMPOSITION
 const SAMPLE_RADIUS_PIXELS: i32 = 64;
 const SAMPLE_COUNT_PER_STRIP: usize = (SAMPLE_RADIUS_PIXELS as usize * 2) + 1;
 const TILE_CENTER_COUNT_PER_EYE: usize = 25;
+const CARRIER_CORNER_COUNT: usize = 8;
 const MAX_STAGING_BYTES: u64 = 16 * 1024 * 1024;
 const SAMPLE_LOG_CHUNK_ENTRIES: usize = 8;
 // `log_camera_hwb_marker` adds its tag/timestamp prefix before Android's
@@ -109,6 +110,7 @@ enum SampleKind {
     LeftCornerSdfNormal,
     TileCenter,
     BlendOracle,
+    CarrierCorner,
 }
 
 impl SampleKind {
@@ -121,6 +123,7 @@ impl SampleKind {
             Self::LeftCornerSdfNormal => "left-corner-sdf-normal",
             Self::TileCenter => "tile-center",
             Self::BlendOracle => "neutral-mask-oracle",
+            Self::CarrierCorner => "carrier-corner",
         }
     }
 }
@@ -190,8 +193,9 @@ impl SamplePlan {
         let left_mid_y = left.1.saturating_add(left.3 / 2).min(height - 1);
         let right_top_mid_x = right.0.saturating_add(right.2 / 2).min(width - 1);
         let right_mid_y = right.1.saturating_add(right.3 / 2).min(height - 1);
-        let mut points =
-            Vec::with_capacity(SAMPLE_COUNT_PER_STRIP * 5 + TILE_CENTER_COUNT_PER_EYE * 2);
+        let mut points = Vec::with_capacity(
+            SAMPLE_COUNT_PER_STRIP * 5 + TILE_CENTER_COUNT_PER_EYE * 2 + CARRIER_CORNER_COUNT,
+        );
         // These are contiguous normal crossings, centered exactly on the
         // rasterized rectangle boundary. They are intentionally not sparse
         // screen-wide rows: a one-pixel dark fringe must have a sample.
@@ -234,6 +238,23 @@ impl SamplePlan {
                         x: interior_coordinate(x, rect_width, column, 5, width),
                         y: interior_coordinate(y, rect_height, row, 5, height),
                         kind: SampleKind::TileCenter,
+                    });
+                }
+            }
+        }
+        // Observe the far carrier independently of the camera footprint and its
+        // edge crossings. These are actual final-image copies, including alpha;
+        // a consumer joins their coordinates with the selected region geometry.
+        // Tiny extents intentionally coalesce coordinates while staying in bounds.
+        for (start, end) in [(0, width / 2), (width / 2, width)] {
+            let left = start.saturating_add(1).min(width - 1);
+            let right = end.saturating_sub(2).max(start).min(width - 1);
+            for y in [1.min(height - 1), height.saturating_sub(2)] {
+                for x in [left, right] {
+                    points.push(SamplePoint {
+                        x,
+                        y,
+                        kind: SampleKind::CarrierCorner,
                     });
                 }
             }
@@ -884,6 +905,7 @@ fn emit_samples(
         Vec::new(),
         Vec::new(),
         Vec::new(),
+        Vec::new(),
     ];
     for (index, point) in plan.points.iter().enumerate() {
         let offset = index * 4;
@@ -903,6 +925,7 @@ fn emit_samples(
             SampleKind::LeftCornerSdfNormal => 4,
             SampleKind::TileCenter => 5,
             SampleKind::BlendOracle => 6,
+            SampleKind::CarrierCorner => 7,
         };
         groups[group].push(entry);
     }
@@ -920,7 +943,8 @@ fn emit_samples(
                 3 => SampleKind::RightEdgeNormal,
                 4 => SampleKind::LeftCornerSdfNormal,
                 5 => SampleKind::TileCenter,
-                _ => SampleKind::BlendOracle,
+                6 => SampleKind::BlendOracle,
+                _ => SampleKind::CarrierCorner,
             };
             log_marker(format_sample_chunk_line(
                 identity.serial,
@@ -935,7 +959,7 @@ fn emit_samples(
         }
     }
     log_marker(format!(
-        "status=projection-producer-readback-complete serial={} frameId={} surfaceGeneration={} exactCapturedFlags=0x{:x} originallyRequestedFlags=0x{:x} regionContract=v{} format={} colorSpace={:?} compositeAlpha={:?} viewport={}x{} coreRects={:.6};{:.6};{:.6};{:.6}|{:.6};{:.6};{:.6};{:.6} coverageMode={} centerCornerRadiusUv={:.6} innerWidthUv={:.6} innerCurve={:.6} outerWidthUv={:.6} outerCurve={:.6} storedBytes=no-gamma-reinterpretation sampleGeometry=dense-129px-normal-crossings-plus-5x5-centers-per-eye cornerNormal=target-local-rounded-sdf-approximation pixelPhaseUncertainty=half-pixel runtimeCrash=false",
+        "status=projection-producer-readback-complete serial={} frameId={} surfaceGeneration={} exactCapturedFlags=0x{:x} originallyRequestedFlags=0x{:x} regionContract=v{} format={} colorSpace={:?} compositeAlpha={:?} viewport={}x{} coreRects={:.6};{:.6};{:.6};{:.6}|{:.6};{:.6};{:.6};{:.6} coverageMode={} centerCornerRadiusUv={:.6} innerWidthUv={:.6} innerCurve={:.6} outerWidthUv={:.6} outerCurve={:.6} storedBytes=no-gamma-reinterpretation sampleGeometry=dense-129px-normal-crossings-plus-5x5-centers-per-eye-plus-8-carrier-corners cornerNormal=target-local-rounded-sdf-approximation pixelPhaseUncertainty=half-pixel runtimeCrash=false",
         identity.serial, identity.frame_id, identity.surface_generation, identity.recorded_flags,
         identity.requested_flags, identity.region_contract_version, format.token(), color_space, composite_alpha,
         width, height, identity.core_rects[0][0], identity.core_rects[0][1], identity.core_rects[0][2], identity.core_rects[0][3],
@@ -954,6 +978,32 @@ mod tests {
     }
 
     #[test]
+    fn actual_copy_plan_covers_both_carriers_far_outside_the_camera() {
+        let plan = SamplePlan::from_target_rects(
+            1920,
+            1080,
+            [rect(0.1, 0.2, 0.3, 0.4), rect(0.6, 0.2, 0.3, 0.4)],
+            0.08,
+        );
+        assert_eq!(plan.points.len(), 703);
+        for (x, y) in [
+            (1, 1),
+            (958, 1),
+            (1, 1078),
+            (958, 1078),
+            (961, 1),
+            (1918, 1),
+            (961, 1078),
+            (1918, 1078),
+        ] {
+            assert!(
+                plan.points.iter().any(|point| (point.x, point.y) == (x, y)),
+                "missing final carrier sample at {x},{y}"
+            );
+        }
+    }
+
+    #[test]
     fn sample_plan_is_bounded_and_coordinates_stay_inside_the_selected_image() {
         let plan = SamplePlan::from_target_rects(
             1920,
@@ -963,7 +1013,7 @@ mod tests {
         );
         assert_eq!(
             plan.points.len(),
-            SAMPLE_COUNT_PER_STRIP * 5 + TILE_CENTER_COUNT_PER_EYE * 2
+            SAMPLE_COUNT_PER_STRIP * 5 + TILE_CENTER_COUNT_PER_EYE * 2 + CARRIER_CORNER_COUNT
         );
         assert!(plan.bytes() < MAX_STAGING_BYTES);
         assert!(plan

@@ -4,7 +4,10 @@ use std::sync::{
     Mutex,
 };
 
-use super::{begin_guide_pass, create_fullscreen_fragment_pipeline, SpatialPublicGuideTarget};
+use super::{
+    begin_guide_pass, create_fullscreen_fragment_pipeline, create_guide_render_pass,
+    SpatialPublicGuideTarget,
+};
 use crate::camera_hwb_wsi::create_color_render_pass;
 
 include!(concat!(env!("OUT_DIR"), "/spatial_optional_color_build.rs"));
@@ -40,12 +43,12 @@ static CONTROL: Mutex<Control> = Mutex::new(Control {
 });
 
 pub(crate) fn set_optional_color_pass(placement: i32, words: Words) -> bool {
-    let supported = match placement {
-        0 => true,
-        1 | 2 => SOURCE_COLOR_DEVICE_ACTIVE.load(Ordering::Acquire),
-        COMBINED => OPTIONAL_COLOR_SHADER_COMPILED,
-        _ => false,
-    };
+    let supported = crate::spatial_optional_color_policy::placement_supported(
+        placement,
+        SOURCE_COLOR_DEVICE_ACTIVE.load(Ordering::Acquire),
+        OPTIONAL_COLOR_SHADER_COMPILED,
+        CAMERA_COLOR_ABI,
+    );
     if !supported {
         return false;
     }
@@ -147,6 +150,8 @@ pub(crate) struct OptionalColorPass {
     device: ash::Device,
     render_pass: vk::RenderPass,
     input: Option<SpatialPublicGuideTarget>,
+    output_render_pass: vk::RenderPass,
+    output: Option<SpatialPublicGuideTarget>,
     eyes: Vec<SpatialPublicGuideTarget>,
     sampler: vk::Sampler,
     layout: vk::DescriptorSetLayout,
@@ -184,6 +189,8 @@ impl OptionalColorPass {
             device: device.clone(),
             render_pass: vk::RenderPass::null(),
             input: None,
+            output_render_pass: vk::RenderPass::null(),
+            output: None,
             eyes: Vec::with_capacity(2),
             sampler: vk::Sampler::null(),
             layout: vk::DescriptorSetLayout::null(),
@@ -206,6 +213,15 @@ impl OptionalColorPass {
                 extent,
                 format,
                 "optional-color-input",
+            )?);
+            pass.output_render_pass = create_guide_render_pass(device, format)?;
+            pass.output = Some(SpatialPublicGuideTarget::create(
+                device,
+                memory,
+                pass.output_render_pass,
+                extent,
+                format,
+                "optional-camera-color-display",
             )?);
             pass.render_pass
         } else {
@@ -291,7 +307,11 @@ impl OptionalColorPass {
             .map_err(|error| format!("optional-color-pipeline-layout-{error:?}"))?;
         pass.pipeline = create_fullscreen_fragment_pipeline(
             device,
-            output_pass,
+            if capture_presentation {
+                pass.output_render_pass
+            } else {
+                output_pass
+            },
             pass.pipeline_layout,
             include_bytes!(concat!(env!("OUT_DIR"), "/spatial_optional_color.frag.spv")),
             "optional-color",
@@ -309,6 +329,58 @@ impl OptionalColorPass {
 
     pub(crate) fn target(&self) -> (vk::RenderPass, vk::Framebuffer) {
         (self.render_pass, self.input.as_ref().unwrap().framebuffer)
+    }
+
+    pub(crate) unsafe fn begin_capture(&self, command: vk::CommandBuffer) {
+        let (render_pass, framebuffer) = self.target();
+        begin_guide_pass(&self.device, command, render_pass, framebuffer, self.extent);
+    }
+
+    pub(crate) fn display_view(&self) -> vk::ImageView {
+        self.output
+            .as_ref()
+            .expect("camera color output")
+            .image_view
+    }
+
+    /// Initialize the bound optional sampler before the capture draw. The capture
+    /// branch cannot sample it; a real clear still gives every binding a legal
+    /// shader-readable layout on the first frame and after interrupted recording.
+    pub(crate) unsafe fn clear_display(&self, command: vk::CommandBuffer) {
+        begin_guide_pass(
+            &self.device,
+            command,
+            self.output_render_pass,
+            self.output
+                .as_ref()
+                .expect("camera color output")
+                .framebuffer,
+            self.extent,
+        );
+        self.device.cmd_end_render_pass(command);
+    }
+
+    /// Only camera content enters this pass. Background and region composition
+    /// happen afterwards in the normal projection draw.
+    pub(crate) unsafe fn record_display(
+        &self,
+        command: vk::CommandBuffer,
+        words: Words,
+        elapsed: f32,
+    ) {
+        self.prepare_eyes(command);
+        begin_guide_pass(
+            &self.device,
+            command,
+            self.output_render_pass,
+            self.output
+                .as_ref()
+                .expect("camera color output")
+                .framebuffer,
+            self.extent,
+        );
+        self.draw(command, words, elapsed);
+        self.device.cmd_end_render_pass(command);
     }
 
     // The input was just drawn. Each eye is copied to its own clamped texture.
@@ -495,6 +567,10 @@ impl Drop for OptionalColorPass {
             if let Some(target) = self.input.take() {
                 target.destroy(device);
             }
+            if let Some(target) = self.output.take() {
+                target.destroy(device);
+            }
+            device.destroy_render_pass(self.output_render_pass, None);
             device.destroy_render_pass(self.render_pass, None);
         }
     }

@@ -30,6 +30,15 @@ pub(crate) fn final_guide_bindings() -> [ash::vk::DescriptorSetLayoutBinding<'st
     })
 }
 pub(crate) const DISPLAY_BINDING: u32 = 9;
+pub(crate) const CAMERA_COLOR_BINDING: u32 = 10;
+
+pub(crate) fn final_camera_color_binding() -> ash::vk::DescriptorSetLayoutBinding<'static> {
+    ash::vk::DescriptorSetLayoutBinding::default()
+        .binding(CAMERA_COLOR_BINDING)
+        .descriptor_type(ash::vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(ash::vk::ShaderStageFlags::FRAGMENT)
+}
 
 pub(crate) fn final_display_binding() -> ash::vk::DescriptorSetLayoutBinding<'static> {
     ash::vk::DescriptorSetLayoutBinding::default()

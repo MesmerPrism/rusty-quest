@@ -2111,6 +2111,7 @@ foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER'
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_CAMERA_COLOR_ABI',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES',
@@ -2181,6 +2182,7 @@ try {
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI';path=$sourceBankBuildInputs.final_abi_version},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.primary_input_shader) { $sourceBankBuildInputs.primary_input_shader.path } else { $null })},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.optional_color_shader) { $sourceBankBuildInputs.optional_color_shader.path } else { $null })},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_CAMERA_COLOR_ABI';path=$sourceBankBuildInputs.optional_camera_color_abi_version},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS';path=$sourceBankBuildInputs.own_capture_hold_limits.slots},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES';path=$sourceBankBuildInputs.own_capture_hold_limits.bytes},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES';path=$sourceBankBuildInputs.own_capture_hold_limits.gpu_uses})) {
