@@ -78,8 +78,8 @@ mod spatial_guide_processing;
 mod spatial_multimodal_input;
 #[cfg(target_os = "android")]
 mod spatial_native_passthrough;
-mod spatial_presentation_policy;
 mod spatial_optional_color_policy;
+mod spatial_presentation_policy;
 #[cfg(any(target_os = "android", test))]
 mod spatial_projection_background;
 mod spatial_public_multistack;
