@@ -98,6 +98,11 @@ or supply performance or qualification authority.
 
 Run the bounded host and source checks before Android compilation:
 
+Optional [receiver Android Trace sections](RECEIVER_TRACE_SECTIONS.md) expose
+fixed call boundaries during an explicitly enabled external app-trace session.
+Their focused host gate checks production method placement and failure behavior;
+trace spans and packet-progress counters remain observations, not acceptance.
+
 ```powershell
 cargo test --locked -p rusty-quest-media-stream -p rusty-quest-broker-authority -p rusty-quest-manifold-broker-authority-native -p rusty-quest-media-stream-android
 pwsh -NoProfile -File ./tools/checks/Test-RustyQuestMediaStreamAndroid.ps1 -RepoRoot .

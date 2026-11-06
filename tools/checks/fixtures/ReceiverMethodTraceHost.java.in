@@ -1,0 +1,201 @@
+package io.github.mesmerprism.rustyquest.media;
+
+import android.os.Trace;
+import android.os.SystemClock;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicLong;
+
+/** Exact production methods below; codec/identity/clock/native leaves are host models. */
+public final class ReceiverMethodTraceHost {
+    static boolean requireSections = true;
+    final Object lock = new Object();
+    final Bounds bounds = new Bounds();
+    final long generation = 1L;
+    volatile boolean stopRequested;
+    boolean liveRequested = true;
+    String state = "receiver_armed", connectionState, failure = "", transportStage;
+    final AtomicLong revision = new AtomicLong();
+    final ReceiverStageTrace stageTrace = new ReceiverStageTrace();
+    final Map<Long, PendingFrame> pendingFrames = new LinkedHashMap<>(), retiredRenderFrames = new LinkedHashMap<>();
+    MediaCodec decoder = new MediaCodec();
+    SurfaceAcquisitionProbe acquisitionProbe;
+    FrameLifecycleListener lifecycleListener;
+    CountDownLatch ready;
+    long receivedPackets, inputsQueued, outputsDequeued, outputsReleasedForRender, preRenderRejected;
+    long identityWindowOverflows, maxQueuedWindow, maxRenderWindow, acquisitionFeedbackRejected;
+    long lastAcquiredReleaseOrdinal, nextReleaseOrdinal, acquiredFrames, acquiredSuperseded;
+    static final class Bounds { int codecInputTimeoutMs = 50, maxPendingFrames = 4; }
+    static final class ReceiverStageTrace {
+        static final int PACKET = 0, INPUT = 1, OUTPUT = 2, RELEASE = 3, ACQUIRED = 4;
+        final int[] counts = new int[5];
+        void progress(int stage, long connection, long now, long pts, long pair) { counts[stage]++; }
+    }
+    static final class RmanvidPacketReader {
+        static final int FLAG_CODEC_CONFIG = 2, FLAG_KEY_FRAME = 1;
+        Packet next;
+        IOException error;
+        Packet readPacket() throws IOException {
+            if (requireSections) check("rusty.media.receiver.read_packet".equals(Trace.current(Thread.currentThread())), "full packet read section missing");
+            if (error != null) throw error;
+            return next;
+        }
+        static final class Pair { long pairId = 3; }
+        static final class Packet {
+            final long ptsUs;
+            final int flags;
+            final byte[] payload = {1,2};
+            final Pair pair = new Pair();
+            Packet(long pts, int flags) { ptsUs = pts; this.flags = flags; }
+        }
+    }
+    static final class FrameIdentity {
+        final long pairId, presentationTimeUs;
+        FrameIdentity(long pair, long pts) { pairId = pair; presentationTimeUs = pts; }
+        static FrameIdentity from(RmanvidPacketReader.Packet packet) { return new FrameIdentity(packet.pair.pairId, packet.ptsUs); }
+    }
+    static final class PendingFrame {
+        final long connectionGeneration;
+        final FrameIdentity identity;
+        boolean readyForRender;
+        long presentationTimeNs, releaseOrdinal;
+        PendingFrame(long connection, FrameIdentity identity) { connectionGeneration = connection; this.identity = identity; }
+    }
+    static final class AcquiredFrame {
+        long receiverGeneration = 1, connectionGeneration = 1, presentationTimeNs;
+        boolean matches(FrameIdentity identity) { return identity.pairId == 3; }
+    }
+    interface SurfaceAcquisitionProbe { AcquiredFrame latestAcquired(long receiver, long connection); }
+    interface FrameLifecycleListener { boolean onFrameReadyForRender(long receiver, long connection, long pts, FrameIdentity identity); }
+    static final class MediaCodec {
+        static final int INFO_OUTPUT_FORMAT_CHANGED = -2, BUFFER_FLAG_CODEC_CONFIG = 2,
+                BUFFER_FLAG_END_OF_STREAM = 4, BUFFER_FLAG_KEY_FRAME = 1;
+        static final class BufferInfo { int flags, size; long presentationTimeUs; }
+        static final class Output {
+            final int flags; final long pts;
+            Output(long pts, int flags) { this.pts = pts; this.flags = flags; }
+        }
+        final ArrayDeque<Output> outputs = new ArrayDeque<>();
+        final ByteBuffer input = ByteBuffer.allocate(128);
+        int queueCalls, releaseCalls, flagsForwarded;
+        boolean render;
+        RuntimeException queueFailure, releaseFailure, drainFailure;
+        int dequeueInputBuffer(long timeoutUs) { return 0; }
+        ByteBuffer getInputBuffer(int index) { return input; }
+        void queueInputBuffer(int index, int offset, int size, long pts, int flags) {
+            if (requireSections) check("rusty.media.receiver.queue_packet".equals(Trace.current(Thread.currentThread())), "queue section missing");
+            queueCalls++; flagsForwarded = flags;
+            if (queueFailure != null) throw queueFailure;
+        }
+        int dequeueOutputBuffer(BufferInfo info, long timeoutUs) {
+            if (requireSections) check("rusty.media.receiver.drain".equals(Trace.current(Thread.currentThread())), "drain section missing");
+            if (drainFailure != null) throw drainFailure;
+            if (outputs.isEmpty()) return -1;
+            Output item = outputs.removeFirst(); info.size = 2; info.flags = item.flags; info.presentationTimeUs = item.pts;
+            return 0;
+        }
+        void releaseOutputBuffer(int index, boolean render) {
+            if (requireSections) check("rusty.media.receiver.release_output".equals(Trace.current(Thread.currentThread())), "release section missing");
+            releaseCalls++; this.render = render;
+            if (releaseFailure != null) throw releaseFailure;
+        }
+    }
+    static void check(boolean okay, String label) { if (!okay) throw new AssertionError(label); }
+    static IOException closed(String code, Throwable cause) { return new IOException(code, cause); }
+    static String safeMessage(Throwable error) { return error.getMessage(); }
+    static long saturatedIncrement(long count) { return count == Long.MAX_VALUE ? count : count + 1L; }
+    int queuedWindowLocked() { return pendingFrames.size(); }
+    int renderWindowLocked() { return 0; }
+    int retireEarlierReleasedLocked(long connection, long ordinal) { return 0; }
+    PRODUCTION_CODEC_FLAGS
+    PRODUCTION_QUEUE
+    PRODUCTION_CAPACITY
+    PRODUCTION_DRAIN
+    PRODUCTION_ACQUIRE
+    PRODUCTION_RELEASE
+    private RmanvidPacketReader.Packet readPacket(RmanvidPacketReader reader) throws IOException {
+        PRODUCTION_READ_FRAGMENT
+        return packet;
+    }
+    static void balanced(String label) { check(Trace.current(Thread.currentThread()) == null, label); }
+    public static void main(String[] args) throws Exception {
+        Trace.reset(); Trace.enabled = true;
+        ReceiverMethodTraceHost host = new ReceiverMethodTraceHost();
+        RmanvidPacketReader.Packet packet = new RmanvidPacketReader.Packet(100L, 1);
+        host.queuePacket(host.decoder, 1L, packet);
+        check(host.inputsQueued == 1 && host.receivedPackets == 1 && host.decoder.queueCalls == 1
+                && host.pendingFrames.size() == 1 && host.stageTrace.counts[1] == 1, "queue counters/identity unchanged");
+        check(host.decoder.flagsForwarded == MediaCodec.BUFFER_FLAG_KEY_FRAME, "codec flags unchanged");
+        balanced("queue section closes");
+        host.lifecycleListener = (receiver, connection, pts, identity) -> {
+            check("rusty.media.receiver.pre_render".equals(Trace.current(Thread.currentThread())), "pre-render section missing");
+            return true;
+        };
+        host.decoder.outputs.add(new MediaCodec.Output(100L, 0)); host.drain(host.decoder, 1L);
+        check(host.outputsDequeued == 1 && host.outputsReleasedForRender == 1 && host.decoder.releaseCalls == 1
+                && host.decoder.render && host.stageTrace.counts[2] == 1 && host.stageTrace.counts[3] == 1,
+                "output release and counters preserved");
+        host.acquisitionProbe = (receiver, connection) -> {
+            check("rusty.media.receiver.acquire_probe".equals(Trace.current(Thread.currentThread())), "acquisition section missing");
+            AcquiredFrame acquired = new AcquiredFrame(); acquired.presentationTimeNs = 100_000L; return acquired;
+        };
+        host.pollSurfaceAcquisition(host.decoder, 1L);
+        check(host.acquiredFrames == 1 && host.stageTrace.counts[4] == 1, "acquisition path preserved");
+        balanced("nested drain/acquisition sections close");
+        RmanvidPacketReader reader = new RmanvidPacketReader(); reader.next = packet;
+        check(host.readPacket(reader) == packet, "full-read object identity unchanged");
+        IOException io = new IOException("packet failure"); reader.error = io;
+        try { host.readPacket(reader); throw new AssertionError("missing reader failure"); }
+        catch (IOException observed) { check(observed == io, "packet exception identity preserved"); }
+        balanced("read exception closes section");
+        RuntimeException failure = new IllegalStateException("queue failure"); host.decoder.queueFailure = failure;
+        try { host.queuePacket(host.decoder, 1L, new RmanvidPacketReader.Packet(200L, 0)); throw new AssertionError("missing queue failure"); }
+        catch (RuntimeException observed) { check(observed == failure, "queue exception identity preserved"); }
+        balanced("queue exception closes section");
+        host.decoder.drainFailure = failure;
+        try { host.drain(host.decoder, 1L); throw new AssertionError("missing drain failure"); }
+        catch (RuntimeException observed) { check(observed == failure, "drain exception identity preserved"); }
+        balanced("drain exception closes section"); host.decoder.drainFailure = null;
+        host.acquisitionProbe = (receiver, connection) -> { throw failure; };
+        try { host.pollSurfaceAcquisition(host.decoder, 1L); throw new AssertionError("missing probe failure"); }
+        catch (RuntimeException observed) { check(observed == failure, "probe exception identity preserved"); }
+        balanced("probe exception closes section");
+        ReceiverMethodTraceHost rejected = new ReceiverMethodTraceHost();
+        rejected.queuePacket(rejected.decoder, 1L, packet);
+        rejected.lifecycleListener = (receiver, connection, pts, identity) -> { throw failure; };
+        rejected.decoder.outputs.add(new MediaCodec.Output(100L, 0));
+        try { rejected.drain(rejected.decoder, 1L); throw new AssertionError("missing pre-render rejection"); }
+        catch (IOException expected) { check(expected.getMessage().equals("PRE_RENDER_IDENTITY_REJECTED"), "original rejection retained"); }
+        check(rejected.preRenderRejected == 1 && rejected.decoder.releaseCalls == 1 && !rejected.decoder.render,
+                "rejected frame released once without rendering");
+        balanced("rejected callback/release balanced");
+        ReceiverMethodTraceHost release = new ReceiverMethodTraceHost();
+        release.decoder.outputs.add(new MediaCodec.Output(0L, MediaCodec.BUFFER_FLAG_CODEC_CONFIG));
+        release.decoder.releaseFailure = failure;
+        try { release.drain(release.decoder, 1L); throw new AssertionError("missing release failure"); }
+        catch (RuntimeException observed) { check(observed == failure, "release exception identity preserved"); }
+        check(release.decoder.releaseCalls == 1, "failed release attempted exactly once");
+        balanced("release failure balanced");
+        Trace.reset();
+        requireSections = false;
+        ReceiverMethodTraceHost off = new ReceiverMethodTraceHost();
+        off.queuePacket(off.decoder, 1L, packet);
+        off.decoder.outputs.add(new MediaCodec.Output(100L, 0)); off.drain(off.decoder, 1L);
+        final int[] probes = {0}; off.acquisitionProbe = (receiver, connection) -> { probes[0]++; return null; };
+        off.pollSurfaceAcquisition(off.decoder, 1L);
+        RmanvidPacketReader disabledReader = new RmanvidPacketReader(); disabledReader.next = packet;
+        check(off.readPacket(disabledReader) == packet && off.inputsQueued == 1 && off.outputsReleasedForRender == 1
+                && off.decoder.releaseCalls == 1 && probes[0] == 1 && Trace.events.isEmpty(),
+                "disabled tracing preserves complete receiver behavior without sections");
+        // Ending is paired with entry, even if the platform enable bit changes inside a call.
+        Trace.enabled = true;
+        boolean entry = ReceiverTraceSections.begin(ReceiverTraceSections.DRAIN);
+        Trace.enabled = false; ReceiverTraceSections.end(entry);
+        balanced("enable transition cannot skip attempted end");
+        System.out.println("receiver-method-trace:pass");
+    }
+}
