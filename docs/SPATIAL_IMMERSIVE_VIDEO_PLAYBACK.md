@@ -394,6 +394,48 @@ reports the actual configured texture/layer/shape/stereo fields separately
 for backing and video. No scene-mesh-only selection is admitted because
 clearing the layer alone does not preserve the compositor ordering contract.
 
+A separate construction-time diagnostic property,
+`debug.rustyquest.spatial.immersive_video.retain_backings`, tests backing Panel
+lifetime without changing video decoders, shaders, shape, stereo or layer order.
+Only the exact value `1` in a debug build enables it. Missing, `0`, whitespace,
+and other values keep the existing destroy/recreate behavior; release builds
+select off without reading the property. The selection is fixed when each
+coordinator is constructed, so use the normal owner restart route before an A/B.
+This is a diagnostic hypothesis, not an adopted crash fix or an event default.
+
+When selected, one opaque backing Entity is retained per fixed catalog and
+presentation registration. Passthrough hides the active backing; returning
+updates its pose/visibility and reuses its Entity and creation epoch. Switching
+registrations hides the previous backing and retains it for later reuse. The
+registry cannot grow beyond the fixed registration set. Delayed callbacks for
+an owned hidden backing remain valid; foreign or retired callbacks are rejected
+without dereferencing their SDK Surface. Scene retirement takes all retained
+handles before callbacks and destroys each exactly once, including hidden
+entries; repeated or reentrant cleanup cannot release them again. If creation
+reenters retirement before the new Entity is registered, it is released once
+and acquisition is refused; it cannot be published into the retired registry.
+The selected-only `black-backing-retained-create-aborted` marker identifies
+that ownership path. This generic reentry control is not an observed crash cause.
+
+This diagnostic requires a fixed backing geometry. A catalog refresh that
+would change or remove geometry for any retained registration is rejected with
+`catalog-refresh-retention-rejected`, keeping the prior catalog and selection
+and marking `freshSceneRequired=true`. Geometry-preserving refreshes retain the
+normal path. The off/default path keeps its existing refresh behavior.
+Selected-only `backing-lifetime-policy-selected`,
+`black-backing-retained-hidden`, `black-backing-retained-reused`, and
+`black-backing-retained-release-begin/end` markers expose ownership transitions;
+ready callbacks identify their retained creation epoch and visibility.
+
+`tools/checks/Test-SpatialImmersiveVideoBackingLifetimeHost.py` uses the same
+explicit host arguments as the lifecycle fixture below. It compiles the real
+registry, actual property-binding initializer and selected coordinator methods,
+with SDK/Android leaves modeled. Controls cover strict debug selection and
+release inertness, default destroy/recreate, stable hide/reuse and callbacks,
+fixed registration bounds, geometry refresh rejection, and reentrant or failing
+release. These host checks do not establish SDK/GPU lifetime correctness or
+on-device crash resolution.
+
 The same pre-model handoff retires the optional virtual-room/skybox and staged
 asset Entity owners and cancels their pending scene adoption. The projection
 panel carrier separates its SDK Entity/SceneObject handles from Native/Surface

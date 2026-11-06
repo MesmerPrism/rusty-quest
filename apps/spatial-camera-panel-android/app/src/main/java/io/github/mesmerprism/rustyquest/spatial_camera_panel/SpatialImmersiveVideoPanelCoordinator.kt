@@ -70,6 +70,13 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private var backingEntityEpoch = 0L
   private var entity: Entity? = null
   private var blackBackdropEntity: Entity? = null
+  private val retainBackingEntities =
+      SpatialImmersiveVideoBackingRetentionPolicy.selected(BuildConfig.DEBUG, ::activityReadSystemProperty)
+  private val retainedBackdrops by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialImmersiveVideoBackingRegistry<Int, Entity>(
+        blackBackdropRegistrationIds.values.flatten().toSet()
+    )
+  }
   private var panelSceneObject: PanelSceneObject? = null
   @Volatile private var sceneRetired = false
   private var destroyed = false
@@ -122,6 +129,17 @@ internal class SpatialImmersiveVideoPanelCoordinator(
           List(MAX_SESSION_PACKS) { View.generateViewId() }
         }
       }
+
+  init {
+    if (retainBackingEntities) {
+      emitResourceMarker(
+          "channel=spatial-immersive-video status=backing-lifetime-policy-selected " +
+              "backingRetentionDiagnostic=true backingLifetimePolicy=retain-until-scene-retirement " +
+              "constructionTimeSelection=true fixedRegistrationBound=" +
+              "${MAX_SESSION_PACKS * SpatialImmersiveVideoPresentationMode.entries.size}"
+      )
+    }
+  }
 
   val requested: Boolean
     get() = resolution.requested
@@ -506,18 +524,45 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             )
           },
           panelSetupWithComposeView = { _, panel, callbackEntity ->
-            val config = catalog.getOrNull(index) ?: return@ComposeViewPanelRegistration
-            emitMarker(
-                "channel=spatial-immersive-video status=black-backing-panel-ready " +
-                    "backingOpaque=true backingColor=black " +
-                    "backingShape=${SpatialImmersiveVideoBlackBackingPolicy.shapeToken(config, registeredMode)} " +
-                    "backgroundMode=${backgroundMode.token} " +
-                    "backingRegistrationImmutable=true " +
-                    "uncoveredVideoPixelsRevealPassthrough=false " +
-                    "panelHandle=${panel.handle} " + resourceMarkerFields(callbackEntity, panel.surface)
-            )
+            acceptBlackBackdropPanel(index, registeredMode, callbackEntity, panel)
           },
       )
+
+  @Synchronized
+  private fun acceptBlackBackdropPanel(
+      index: Int,
+      registeredMode: SpatialImmersiveVideoPresentationMode,
+      callbackEntity: Entity,
+      panel: PanelSceneObject,
+  ) {
+    val registrationId = blackBackdropRegistrationIds[registeredMode]?.getOrNull(index)
+    val retained = if (retainBackingEntities && registrationId != null) {
+      retainedBackdrops.find(registrationId, callbackEntity)
+    } else null
+    if (retainBackingEntities && (sceneRetired || retained == null)) {
+      emitResourceMarker(
+          "channel=spatial-immersive-video status=black-backing-callback-rejected " +
+              "backingRetentionDiagnostic=true " + resourceMarkerFields(callbackEntity, null)
+      )
+      return
+    }
+    val config = catalog.getOrNull(index) ?: return
+    emitMarker(
+        "channel=spatial-immersive-video status=black-backing-panel-ready " +
+            "backingOpaque=true backingColor=black " +
+            "backingShape=${SpatialImmersiveVideoBlackBackingPolicy.shapeToken(config, registeredMode)} " +
+            "backgroundMode=${backgroundMode.token} " +
+            "backingRegistrationImmutable=true " +
+            (if (retainBackingEntities) {
+              "uncoveredVideoPixelsRevealPassthrough=${!backgroundMode.usesOpaqueVideoBacking()} "
+            } else "uncoveredVideoPixelsRevealPassthrough=false ") +
+            (retained?.let {
+              "retainedBackingCallbackOwned=true callbackBackingCreationEpoch=${it.creationEpoch} " +
+                  "callbackBackingVisible=${blackBackdropEntity == callbackEntity} "
+            } ?: "") +
+            "panelHandle=${panel.handle} " + resourceMarkerFields(callbackEntity, panel.surface)
+    )
+  }
 
   /** Runs the document/provider portion on the caller's background worker. */
   fun discoverCatalogForRefresh(): List<SpatialImmersiveVideoConfig> = loadCompatibleCatalog()
@@ -535,6 +580,15 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   ): SpatialImmersiveVideoSessionSnapshot {
     if (sceneRetired) return sessionSnapshot()
     val bounded = refreshedCatalog.take(MAX_SESSION_PACKS)
+    if (retainBackingEntities && retainedBackingGeometryConflict(bounded)) {
+      emitResourceMarker(
+          "channel=spatial-immersive-video status=catalog-refresh-retention-rejected " +
+              "source=${activityMarkerToken(source)} backingRetentionDiagnostic=true " +
+              "reason=retained-registration-geometry-change freshSceneRequired=true " +
+              "previousCatalogRetained=true previousActiveSelectionRetained=true " + resourceMarkerFields()
+      )
+      return sessionSnapshot()
+    }
     val previousConfig = activeConfig
     val previousIdentity = previousConfig?.let(::catalogIdentity)
     val previousIndex = activeIndex
@@ -716,8 +770,16 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             "retiringVideoEntityId=${video?.id ?: 0L} retiringBackingEntityId=${backdrop?.id ?: 0L} " +
             resourceMarkerFields()
     )
-    video?.destroy()
-    backdrop?.destroy()
+    if (retainBackingEntities) {
+      try {
+        video?.destroy()
+      } finally {
+        if (sceneRetired) releaseRetainedBackdrops() else hideRetainedBackdrop()
+      }
+    } else {
+      video?.destroy()
+      backdrop?.destroy()
+    }
     emitResourceMarker("channel=spatial-immersive-video status=scene-entities-destroy-end " + resourceMarkerFields())
   }
 
@@ -735,6 +797,10 @@ internal class SpatialImmersiveVideoPanelCoordinator(
 
   @Synchronized
   private fun destroyBackdropEntity() {
+    if (retainBackingEntities) {
+      hideRetainedBackdrop()
+      return
+    }
     val backdrop = blackBackdropEntity
     blackBackdropEntity = null
     emitResourceMarker(
@@ -743,6 +809,45 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     )
     backdrop?.destroy()
     emitResourceMarker("channel=spatial-immersive-video status=black-backing-destroy-end " + resourceMarkerFields())
+  }
+
+  @Synchronized
+  private fun hideRetainedBackdrop() {
+    retainedBackdrops.hideActive(::hideRetainedBackdropEntry)
+  }
+
+  private fun hideRetainedBackdropEntry(
+      entry: SpatialImmersiveVideoBackingRegistry.Entry<Int, Entity>,
+  ) {
+    if (blackBackdropEntity == entry.value) blackBackdropEntity = null
+    entry.value.setComponent(Visible(false))
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=black-backing-retained-hidden " +
+            "retainedBackingEntityId=${entry.value.id} retainedBackingCreationEpoch=${entry.creationEpoch} " +
+            "retainedBackingCount=${retainedBackdrops.size} retainedBackingRegistrationId=${entry.key} " +
+            "entityDestroyed=false " + resourceMarkerFields()
+    )
+  }
+
+  @Synchronized
+  private fun releaseRetainedBackdrops() {
+    retainedBackdrops.retire(::releaseRetainedBackdropEntry)
+  }
+
+  private fun releaseRetainedBackdropEntry(
+      entry: SpatialImmersiveVideoBackingRegistry.Entry<Int, Entity>,
+  ) {
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=black-backing-retained-release-begin " +
+            "retiringBackingEntityId=${entry.value.id} retainedBackingCreationEpoch=${entry.creationEpoch} " +
+            "retainedBackingRegistrationId=${entry.key} " + resourceMarkerFields()
+    )
+    entry.value.destroy()
+    emitResourceMarker(
+        "channel=spatial-immersive-video status=black-backing-retained-release-end " +
+            "retiredBackingEntityId=${entry.value.id} retainedBackingCreationEpoch=${entry.creationEpoch} " +
+            resourceMarkerFields()
+    )
   }
 
   @Synchronized
@@ -1103,16 +1208,50 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         }
     val registrationId =
         blackBackdropRegistrationIds[presentationMode]?.getOrNull(activeIndex) ?: return
-    val previousBackdrop = blackBackdropEntity
-    backingEntityEpoch += 1L
-    emitResourceMarker("channel=spatial-immersive-video status=black-backing-create-begin " + resourceMarkerFields())
-    blackBackdropEntity =
-        Entity.create(
-            Panel(registrationId),
-            Transform(entityPose),
-            Visible(true),
+    if (retainBackingEntities) {
+      val acquisition = retainedBackdrops.acquire(
+          registrationId,
+          backingGeometryKey(config, presentationMode),
+          hide = ::hideRetainedBackdropEntry,
+          releaseAborted = { entry ->
+            emitResourceMarker(
+                "channel=spatial-immersive-video status=black-backing-retained-create-aborted " +
+                    "retiringBackingEntityId=${entry.value.id} retainedBackingCreationEpoch=${entry.creationEpoch} " +
+                    "retiredDuringCreate=true entityAdopted=false " + resourceMarkerFields()
+            )
+            releaseRetainedBackdropEntry(entry)
+          },
+      ) { epoch ->
+        backingEntityEpoch = epoch
+        emitResourceMarker("channel=spatial-immersive-video status=black-backing-create-begin " + resourceMarkerFields())
+        Entity.create(Panel(registrationId), Transform(entityPose), Visible(true))
+      }
+      val retained = acquisition.entry
+      blackBackdropEntity = retained.value
+      backingEntityEpoch = retained.creationEpoch
+      if (acquisition.reused) {
+        retained.value.setComponent(Transform(entityPose))
+        retained.value.setComponent(Visible(true))
+        emitResourceMarker(
+            "channel=spatial-immersive-video status=black-backing-retained-reused " +
+                "reason=${activityMarkerToken(reason)} registrationOrdinal=${activeIndex + 1} " +
+                "registeredMode=${presentationMode.token} retainedBackingCount=${retainedBackdrops.size} " +
+                "creationEpochRetained=true " + resourceMarkerFields()
         )
-    previousBackdrop?.destroy()
+        return
+      }
+    } else {
+      val previousBackdrop = blackBackdropEntity
+      backingEntityEpoch += 1L
+      emitResourceMarker("channel=spatial-immersive-video status=black-backing-create-begin " + resourceMarkerFields())
+      blackBackdropEntity =
+          Entity.create(
+              Panel(registrationId),
+              Transform(entityPose),
+              Visible(true),
+          )
+      previousBackdrop?.destroy()
+    }
     emitMarker(
         "channel=spatial-immersive-video status=black-backing-spawned " +
             "reason=${activityMarkerToken(reason)} backgroundMode=${backgroundMode.token} " +
@@ -1120,6 +1259,31 @@ internal class SpatialImmersiveVideoPanelCoordinator(
             "backingShape=${SpatialImmersiveVideoBlackBackingPolicy.shapeToken(config, presentationMode)} " +
             resourceMarkerFields()
     )
+  }
+
+  private fun backingGeometryKey(
+      config: SpatialImmersiveVideoConfig,
+      registeredMode: SpatialImmersiveVideoPresentationMode,
+  ): String {
+    return when (SpatialImmersiveVideoBlackBackingPolicy.shape(config, registeredMode)) {
+      SpatialImmersiveVideoBlackBackingShape.Quad -> {
+        val quad = requireNotNull(
+            SpatialImmersiveVideoSessionPolicy.directPanelPresentation(config, registeredMode).quadGeometry
+        )
+        "quad:${quad.widthMeters.toRawBits()}:${quad.heightMeters.toRawBits()}"
+      }
+      SpatialImmersiveVideoBlackBackingShape.Equirect360 ->
+          "equirect-360:${SpatialImmersiveVideoBlackBackingPolicy.radiusMeters(config).toRawBits()}"
+    }
+  }
+
+  private fun retainedBackingGeometryConflict(proposed: List<SpatialImmersiveVideoConfig>): Boolean {
+    val geometryByRegistration = blackBackdropRegistrationIds.flatMap { (mode, ids) ->
+      ids.mapIndexedNotNull { index, id ->
+        proposed.getOrNull(index)?.let { id to backingGeometryKey(it, mode) }
+      }
+    }.toMap()
+    return retainedBackdrops.hasGeometryConflict(geometryByRegistration)
   }
 
   private fun headFixedPose(viewerPose: Pose): Pose =

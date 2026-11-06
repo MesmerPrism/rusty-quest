@@ -36,6 +36,8 @@ coordinator = '\n'.join(method('SpatialImmersiveVideoPanelCoordinator.kt', s, op
     ('  fun destroy(', False), ('  fun retireScene(', True),
     ('  private fun destroySceneEntities(', True),
     ('  private fun destroyVideoEntity(', True), ('  private fun destroyBackdropEntity(', True),
+    ('  private fun hideRetainedBackdrop(', False), ('  private fun hideRetainedBackdropEntry(', False),
+    ('  private fun releaseRetainedBackdrops(', False), ('  private fun releaseRetainedBackdropEntry(', False),
     ('  private fun emitResourceMarker(', False), ('  private fun resourceMarkerFields(', False), ('  private fun acceptVideoSurface(', True), ('  private fun acceptVideoPanel(', True),
     ('  fun spawnAtViewer(', False), ('  fun updateFromViewer(', False),
     ('  private fun dispatchPendingVideoLoadRecenter(', False),
@@ -68,6 +70,7 @@ carrier_end=carrier_text.index('  fun run(')
 if '  private fun adoptSurface(' in carrier_text:
     carrier_end=carrier_text.rfind('  @Synchronized',0,carrier_text.index('  private fun adoptSurface('))
 carrier_callbacks=carrier_text[carrier_text.index('  fun videoPanelBindings()'):carrier_end]
+(out / 'BackingRegistry.kt').write_bytes((base / 'SpatialImmersiveVideoBackingRegistry.kt').read_bytes())
 (out / 'Shutdown.kt').write_text(shutdown)
 (out / 'Latency.kt').write_text((base / 'SpatialCameraLatencyDiagnosticModule.kt').read_text())
 (out / 'Clock.kt').write_text('''package android.os
@@ -132,6 +135,8 @@ class Handler { var removed=false;fun removeCallbacksAndMessages(x:Any?){removed
 fun activityMarkerToken(x:String)=x
 class Owner{val token="fixture"}
 class SpatialImmersiveVideoPanelCoordinator(val model:Model) {
+ val retainBackingEntities=false
+ private val retainedBackdrops=SpatialImmersiveVideoBackingRegistry<Int,Entity>(setOf(1))
  val layerOwner=Owner();val sceneEpoch=1L;var videoEntityEpoch=1L;var backingEntityEpoch=1L;var directDecoderGeneration=0L
  var entity:Entity?=Entity(model);var blackBackdropEntity:Entity?=Entity(model)
  var panelSceneObject:PanelSceneObject?=PanelSceneObject();var surface:Surface?=Surface()
