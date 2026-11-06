@@ -333,14 +333,27 @@ fn validate_manifest_value(
         .map(|identity| ExperimentIdentity::parse_encoded(identity, &condition))
         .transpose()
         .map_err(str::to_owned)?;
-    let breath_tracking_configuration = value.get("breath_tracking_configuration").filter(|v| !v.is_null()).cloned();
+    let breath_tracking_configuration = value
+        .get("breath_tracking_configuration")
+        .filter(|v| !v.is_null())
+        .cloned();
     if let Some(configuration) = &breath_tracking_configuration {
-        crate::breath_composition_runtime::validate_tracking_configuration(configuration).map_err(str::to_owned)?;
-        if value["clock_anchor"]["monotonic_ns"].as_u64().is_none_or(|arm_at|
-            configuration["prepared_monotonic_ns"].as_u64().is_none_or(|prepared| prepared < arm_at)) {
+        crate::breath_composition_runtime::validate_tracking_configuration(configuration)
+            .map_err(str::to_owned)?;
+        if value["clock_anchor"]["monotonic_ns"]
+            .as_u64()
+            .is_none_or(|arm_at| {
+                configuration["prepared_monotonic_ns"]
+                    .as_u64()
+                    .is_none_or(|prepared| prepared < arm_at)
+            })
+        {
             return Err("recording-tracking-prepared-time-invalid".to_owned());
         }
-        if experiment_identity.as_ref().is_none_or(|identity| identity.breath_guidance.is_none()) {
+        if experiment_identity
+            .as_ref()
+            .is_none_or(|identity| identity.breath_guidance.is_none())
+        {
             return Err("recording-tracking-configuration-without-guidance".to_owned());
         }
     }
@@ -416,8 +429,12 @@ pub(crate) trait RecordingFiles {
 /// The native inventory predicate: regular entries with UTF-8 JSONL names.
 /// Export and ordinary recovery share this filename/type interpretation.
 pub(crate) fn recording_stream_name(name: &std::ffi::OsStr, regular: bool) -> Option<String> {
-    if !regular { return None; }
-    name.to_str().filter(|name| name.ends_with(".jsonl")).map(str::to_owned)
+    if !regular {
+        return None;
+    }
+    name.to_str()
+        .filter(|name| name.ends_with(".jsonl"))
+        .map(str::to_owned)
 }
 
 struct DirectoryFiles<'a>(&'a Path);
@@ -427,9 +444,10 @@ impl RecordingFiles for DirectoryFiles<'_> {
             .map_err(|error| format!("recording-directory-read:{error}"))?
             .filter_map(Result::ok)
             .filter_map(|entry| {
-                entry.file_type().ok().and_then(|kind| {
-                    recording_stream_name(&entry.file_name(), kind.is_file())
-                })
+                entry
+                    .file_type()
+                    .ok()
+                    .and_then(|kind| recording_stream_name(&entry.file_name(), kind.is_file()))
             })
             .collect())
     }
@@ -526,13 +544,24 @@ fn validate_terminal_value(
     manifest: &ValidatedManifest,
     directory: &Path,
 ) -> Result<(bool, BTreeMap<String, u64>, Option<String>), String> {
-    validate_terminal_files(value,schema,started_at,manifest,&mut DirectoryFiles(directory),false)
+    validate_terminal_files(
+        value,
+        schema,
+        started_at,
+        manifest,
+        &mut DirectoryFiles(directory),
+        false,
+    )
 }
 
 fn validate_terminal_files(
-    value: &Value, schema: &str, started_at: &SessionTimestampKey,
-    manifest: &ValidatedManifest, files: &mut impl RecordingFiles, exact_lengths: bool,
-) -> Result<(bool, BTreeMap<String,u64>,Option<String>),String> {
+    value: &Value,
+    schema: &str,
+    started_at: &SessionTimestampKey,
+    manifest: &ValidatedManifest,
+    files: &mut impl RecordingFiles,
+    exact_lengths: bool,
+) -> Result<(bool, BTreeMap<String, u64>, Option<String>), String> {
     if value.get("schema").and_then(Value::as_str) != Some(schema) {
         return Err("recording-terminal-schema-invalid".to_owned());
     }
@@ -585,20 +614,40 @@ fn validate_terminal_files(
         return Err("recording-directory-stream-set-invalid".to_owned());
     }
     let mut lifecycle = LifecycleEvidence::default();
-    if value.get("breath_tracking_configuration").filter(|v| !v.is_null()) != manifest.breath_tracking_configuration.as_ref() {
+    if value
+        .get("breath_tracking_configuration")
+        .filter(|v| !v.is_null())
+        != manifest.breath_tracking_configuration.as_ref()
+    {
         return Err("recording-tracking-terminal-mismatch".to_owned());
     }
-    let initial_bias = manifest.experiment_identity.as_ref().map_or(0, |i| i.breath_guidance_bias_percent);
+    let initial_bias = manifest
+        .experiment_identity
+        .as_ref()
+        .map_or(0, |i| i.breath_guidance_bias_percent);
     let mut bias_history = BiasHistory {
         breath_tracking_configuration: manifest.breath_tracking_configuration.clone(),
-        guidance_bound: manifest.experiment_identity.as_ref().is_some_and(|i| i.breath_guidance.is_some()),
+        guidance_bound: manifest
+            .experiment_identity
+            .as_ref()
+            .is_some_and(|i| i.breath_guidance.is_some()),
         revisions: vec![(initial_bias, 0)],
-        generation: manifest.breath_tracking_configuration.as_ref().and_then(|v|v["experiment_generation"].as_u64()),
+        generation: manifest
+            .breath_tracking_configuration
+            .as_ref()
+            .and_then(|v| v["experiment_generation"].as_u64()),
         operation_ids: BTreeSet::new(),
     };
     // Establish the committed decision chain before validating references in breath rows.
-    for (name, expected_length) in lengths.iter().filter(|(name, _)| name.as_str() == "events.jsonl")
-        .chain(lengths.iter().filter(|(name, _)| name.as_str() != "events.jsonl")) {
+    for (name, expected_length) in lengths
+        .iter()
+        .filter(|(name, _)| name.as_str() == "events.jsonl")
+        .chain(
+            lengths
+                .iter()
+                .filter(|(name, _)| name.as_str() != "events.jsonl"),
+        )
+    {
         let actual_length = files.len(name)?;
         if actual_length < *expected_length {
             return Err("recording-stream-shorter-than-durable-prefix".to_owned());
@@ -606,11 +655,20 @@ fn validate_terminal_files(
         if exact_lengths && actual_length != *expected_length {
             return Err("recording-stream-length-not-exact".to_owned());
         }
-        let evidence = if *expected_length==0 {LifecycleEvidence::default()} else {
-            validate_stream_prefix(files.reader(name)?,name,*expected_length,started_at,
-                &manifest.condition,manifest.experiment_identity.is_some(),&mut bias_history)?
+        let evidence = if *expected_length == 0 {
+            LifecycleEvidence::default()
+        } else {
+            validate_stream_prefix(
+                files.reader(name)?,
+                name,
+                *expected_length,
+                started_at,
+                &manifest.condition,
+                manifest.experiment_identity.is_some(),
+                &mut bias_history,
+            )?
         };
-        if exact_lengths && files.len(name)?!=actual_length {
+        if exact_lengths && files.len(name)? != actual_length {
             return Err("recording-stream-length-changed".into());
         }
         if name == "events.jsonl" {
@@ -625,7 +683,8 @@ fn validate_terminal_files(
         if state.as_object().is_none_or(|o| o.len() != 3)
             || state["bias_percent"].as_u64() != Some(u64::from(*percent))
             || state["bias_revision"].as_u64() != Some((bias_history.revisions.len() - 1) as u64)
-            || state["decision_status"].as_str() != Some("committed-before-application") {
+            || state["decision_status"].as_str() != Some("committed-before-application")
+        {
             return Err("recording-bias-terminal-state-invalid".to_owned());
         }
     } else if bias_history.revisions.len() > 1 {
@@ -749,7 +808,8 @@ struct BiasHistory {
 
 impl BiasHistory {
     fn observe(&mut self, row: &Value, stream: &str) -> Result<(), String> {
-        if stream == "events.jsonl" && row["event"].as_str() == Some("breath-guidance-bias-changed") {
+        if stream == "events.jsonl" && row["event"].as_str() == Some("breath-guidance-bias-changed")
+        {
             let revision = row["bias_revision"].as_u64().unwrap_or(0);
             let generation = row["generation"].as_u64().unwrap_or(0);
             let old = row["old_bias_percent"].as_u64().unwrap_or(101);
@@ -757,26 +817,36 @@ impl BiasHistory {
             let at = row["observed_monotonic_ns"].as_u64().unwrap_or(0);
             let (previous, previous_at) = self.revisions.last().expect("initial revision");
             let operation = row["operation_id"].as_str().unwrap_or("");
-            if !self.guidance_bound || revision != self.revisions.len() as u64
-                || generation == 0 || self.generation.is_some_and(|g| g != generation)
-                || old != u64::from(*previous) || new > 100 || at < *previous_at
-                || operation.is_empty() || !self.operation_ids.insert(operation.to_owned()) {
+            if !self.guidance_bound
+                || revision != self.revisions.len() as u64
+                || generation == 0
+                || self.generation.is_some_and(|g| g != generation)
+                || old != u64::from(*previous)
+                || new > 100
+                || at < *previous_at
+                || operation.is_empty()
+                || !self.operation_ids.insert(operation.to_owned())
+            {
                 return Err("recording-bias-history-invalid".to_owned());
             }
             self.generation = Some(generation);
             self.revisions.push((new as u8, at));
         } else if stream == "breath.jsonl" {
             let revision = match row.get("guidance_bias_revision") {
-                Some(value) => value.as_u64().ok_or_else(|| "recording-breath-bias-revision-invalid".to_owned())?,
+                Some(value) => value
+                    .as_u64()
+                    .ok_or_else(|| "recording-breath-bias-revision-invalid".to_owned())?,
                 None if self.revisions.len() == 1 => return Ok(()), // Historical immutable rows.
                 None => return Err("recording-breath-bias-revision-missing".to_owned()),
             };
-            let (percent, committed_at) = usize::try_from(revision).ok()
+            let (percent, committed_at) = usize::try_from(revision)
+                .ok()
                 .and_then(|index| self.revisions.get(index))
                 .ok_or_else(|| "recording-breath-bias-revision-unknown".to_owned())?;
             let applied = row["guidance_bias_percent"].as_u64().unwrap_or(0);
             if (applied != 0 && applied != u64::from(*percent))
-                || row["observed_monotonic_ns"].as_u64().unwrap_or(0) < *committed_at {
+                || row["observed_monotonic_ns"].as_u64().unwrap_or(0) < *committed_at
+            {
                 return Err("recording-breath-bias-decision-mismatch".to_owned());
             }
         }
@@ -823,11 +893,15 @@ fn validate_stream_prefix(
         )? {
             RowLifecycle::None => {}
             RowLifecycle::Started => {
-                if row.get("breath_tracking_configuration").filter(|v| !v.is_null()) != bias_history.breath_tracking_configuration.as_ref() {
+                if row
+                    .get("breath_tracking_configuration")
+                    .filter(|v| !v.is_null())
+                    != bias_history.breath_tracking_configuration.as_ref()
+                {
                     return Err("recording-tracking-started-mismatch".to_owned());
                 }
                 lifecycle.started = lifecycle.started.saturating_add(1);
-            },
+            }
             RowLifecycle::Completed => lifecycle.completed = lifecycle.completed.saturating_add(1),
         }
         bias_history.observe(&row, stream_name)?;
@@ -896,11 +970,33 @@ fn validate_row(
                 .ok_or_else(|| "recording-stream-row-field-invalid:event".to_owned())?;
             match event {
                 SessionEventKind::BiasChanged => {
-                    for field in ["generation", "old_bias_percent", "new_bias_percent", "bias_revision"] { require_u64(object, field)?; }
-                    if object.get("decision_status").and_then(Value::as_str) != Some("committed-before-application")
-                        || object.get("operation_id").and_then(Value::as_str).is_none_or(|s| s.is_empty() || s.len() > 96
-                            || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-/".contains(&b)))
-                        || !matches!(object.get("operator_origin").and_then(Value::as_str), Some("shell-experiment-operator-v1" | "ble-session-v2" | "ui-session-v2")) {
+                    for field in [
+                        "generation",
+                        "old_bias_percent",
+                        "new_bias_percent",
+                        "bias_revision",
+                    ] {
+                        require_u64(object, field)?;
+                    }
+                    if object.get("decision_status").and_then(Value::as_str)
+                        != Some("committed-before-application")
+                        || object
+                            .get("operation_id")
+                            .and_then(Value::as_str)
+                            .is_none_or(|s| {
+                                s.is_empty()
+                                    || s.len() > 96
+                                    || !s
+                                        .bytes()
+                                        .all(|b| b.is_ascii_alphanumeric() || b"._-/".contains(&b))
+                            })
+                        || !matches!(
+                            object.get("operator_origin").and_then(Value::as_str),
+                            Some(
+                                "shell-experiment-operator-v1" | "ble-session-v2" | "ui-session-v2"
+                            )
+                        )
+                    {
                         return Err("recording-bias-event-invalid".to_owned());
                     }
                     RowLifecycle::None
@@ -965,24 +1061,50 @@ fn validate_row(
         }
         "breath" => {
             if object.contains_key("assessment_source") {
-                require_enum(object,"assessment_source", &["controller","polar-acc"])?;
-                require_enum(object,"tracking_status", &["disabled","calibrating","valid","missing","stale","malformed","out-of-order","rejected-motion","rejected-rotation"])?;
+                require_enum(object, "assessment_source", &["controller", "polar-acc"])?;
+                require_enum(
+                    object,
+                    "tracking_status",
+                    &[
+                        "disabled",
+                        "calibrating",
+                        "valid",
+                        "missing",
+                        "stale",
+                        "malformed",
+                        "out-of-order",
+                        "rejected-motion",
+                        "rejected-rotation",
+                    ],
+                )?;
                 if row["sampled_clock"] != SourceClock::OpenXrTime.as_str()
-                    || row["observed_source_clock"] != SourceClock::OpenXrTime.as_str() {
+                    || row["observed_source_clock"] != SourceClock::OpenXrTime.as_str()
+                {
                     return Err("recording-assessment-source-clock-mismatch".to_owned());
                 }
-                if row["assessment_source"] == "polar-acc" && row["tracking_status"] == "valid"
-                    && !object.contains_key("polar_source_provenance") {
+                if row["assessment_source"] == "polar-acc"
+                    && row["tracking_status"] == "valid"
+                    && !object.contains_key("polar_source_provenance")
+                {
                     return Err("recording-valid-polar-provenance-missing".to_owned());
                 }
             } else if object.contains_key("tracking_status") {
                 return Err("recording-tracking-status-source-missing".to_owned());
             }
-            if let Some(provenance)=object.get("polar_source_provenance") {
-                if row["assessment_source"] != "polar-acc" { return Err("recording-polar-provenance-source-mismatch".to_owned()); }
-                crate::session_recording_contract::validate_breath_polar_provenance(provenance,
-                    row["sampled_time_ns"].as_u64().ok_or("recording-polar-sampled-time-invalid")?,
-                    row["observed_source_time_ns"].as_u64().ok_or("recording-polar-observed-time-invalid")?).map_err(str::to_owned)?;
+            if let Some(provenance) = object.get("polar_source_provenance") {
+                if row["assessment_source"] != "polar-acc" {
+                    return Err("recording-polar-provenance-source-mismatch".to_owned());
+                }
+                crate::session_recording_contract::validate_breath_polar_provenance(
+                    provenance,
+                    row["sampled_time_ns"]
+                        .as_u64()
+                        .ok_or("recording-polar-sampled-time-invalid")?,
+                    row["observed_source_time_ns"]
+                        .as_u64()
+                        .ok_or("recording-polar-observed-time-invalid")?,
+                )
+                .map_err(str::to_owned)?;
             }
             for field in ["source_sequence", "sampled_time_ns", "settings_revision"] {
                 require_u64(object, field)?;

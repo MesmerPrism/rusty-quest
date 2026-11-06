@@ -44,6 +44,10 @@ internal interface SpatialPrivatePanelExtension {
   fun lockedInputEnabled(): Boolean = false
   fun handleLockedInput(input: SpatialPrivatePanelLockedInput): Boolean = false
   fun connectionHubSurfaceTarget(): ConnectionHubSurfaceTarget? = null
+  fun applyDevelopmentObservationModule(directive: SpatialDevelopmentModuleDirective,
+      profileSha256: String): java.util.concurrent.CompletableFuture<String>? = null
+  fun applyDevelopmentScissorModule(directive: SpatialDevelopmentModuleDirective,
+      profileSha256: String): java.util.concurrent.CompletableFuture<String>? = null
   fun handleLaunchOption(optionPresent: Boolean, optionId: String?, source: String):
       SpatialPrivatePanelLaunchResult
   fun tick(sceneReady: Boolean)

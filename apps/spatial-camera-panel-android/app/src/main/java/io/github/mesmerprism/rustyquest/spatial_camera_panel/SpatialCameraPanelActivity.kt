@@ -99,6 +99,10 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun embeddedDuplexStartNeedsScenePermission(depthOwner: String, layerOverride: Float): Boolean =
+    SpatialEnvironmentDepthOwner.parse(depthOwner) != SpatialEnvironmentDepthOwner.Disabled &&
+        PrivateLayerControls.environmentDepthConsumerRequired(layerOverride)
+
 class SpatialCameraPanelActivity : AppSystemActivity() {
   private val productPolicy = SpatialProductBuildPolicy.current
   private val presentationPolicy = SpatialPresentationBuildPolicy.current
@@ -503,6 +507,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             applyProfile = ::applyControlProfile,
             marker = ::marker,
+            validateCandidate = { raw -> io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.validateControlProfileAddons(this, raw) },
+            effectiveInputObservation = { io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.effectiveInputObservation() },
+            applyObservationModule = { directive, sha -> privatePanelExtension?.applyDevelopmentObservationModule(directive, sha) },
+            applyScissorModule = { directive, sha -> privatePanelExtension?.applyDevelopmentScissorModule(directive, sha) },
         )
       }
   private val spatialPassthroughLutCoordinator: SpatialPassthroughLutCoordinator by
@@ -1337,7 +1345,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private val cameraLatencyDiagnosticModule by lazy(LazyThreadSafetyMode.NONE) {
+  private val cameraLatencyDiagnosticModule =
     SpatialCameraLatencyDiagnosticModule(
         SpatialCameraLatencyDiagnosticBindings(
             readSystemProperty = ::activityReadSystemProperty,
@@ -1398,9 +1406,40 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
             },
             marker = ::marker,
+            configureOpenXr = { ownerId ->
+              if (!nativeInteropCoordinator.receiptLibraryLoaded) {
+                0L
+              } else {
+                check(spatialSceneReady) { "Camera latency OpenXR configuration requires a live Scene" }
+                val openXrProbe = SpatialNativeInteropProbe.capture(scene)
+                val timingMask =
+                    nativeConfigureCameraLatencyOpenXrHandles(
+                        ownerId,
+                        openXrProbe.openXrInstanceHandle,
+                        openXrProbe.openXrSessionHandle,
+                        openXrProbe.openXrGetInstanceProcAddrHandle,
+                    )
+                marker(
+                    "channel=camera-latency-diagnostic status=openxr-handles-configured " +
+                        "nativeUpdateMask=$timingMask openXrInstanceHandleNonZero=" +
+                        "${openXrProbe.openXrInstanceHandle != 0L} openXrSessionHandleNonZero=" +
+                        "${openXrProbe.openXrSessionHandle != 0L} " +
+                        "openXrGetInstanceProcAddrHandleNonZero=" +
+                        "${openXrProbe.openXrGetInstanceProcAddrHandle != 0L} " +
+                        "frameLoopAuthority=spatial-sdk sidecarWaitFrame=false"
+                )
+                timingMask
+              }
+            },
+            releaseOpenXr = { ownerId, retiring ->
+              if (!nativeInteropCoordinator.receiptLibraryLoaded) {
+                0L
+              } else {
+                nativeReleaseCameraLatencyOpenXrHandles(ownerId, retiring)
+              }
+            },
         )
     )
-  }
   private val spatialVideoProjectionProbeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialVideoProjectionProbeCoordinator(
         SpatialVideoProjectionProbeBindings(
@@ -1610,6 +1649,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         restartLocal = cameraHwbProjectionRawCarrierCoordinator::restartLocalAcquisition,
         startOwn = cameraHwbProjectionRawCarrierCoordinator::startOwnSourceSetCommonGraph,
         stopWholeProjection = { stopCameraHwbProjectionPanel("concurrent-qualification-whole-app-close"); Unit },
+        prepareRenderer = cameraHwbProjectionRawCarrierCoordinator::prepareDormantPeerRenderer,
+        readPreparedRenderer = cameraHwbProjectionRawCarrierCoordinator::readDormantPeerRenderer,
+        abortPreparedRenderer = cameraHwbProjectionRawCarrierCoordinator::abortDormantPeerRenderer,
     )
   }
   @Volatile private var embeddedDuplexAttachmentGeneration = 0L
@@ -1619,15 +1661,31 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @Volatile private var embeddedDuplexRuntimeFuture: CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus>? = null
   private var embeddedDuplexAttachmentFailureReported = false
 
+  /** Current app-owned facts; every effect evaluates its guard again. */
+  fun embeddedDuplexBootstrapReadiness(observeAttachment: Boolean = true): io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.Snapshot {
+    val inputs = BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED
+    val destroying = embeddedDuplexActivityDestroying
+    val finished = embeddedDuplexDiagnosticFinished
+    if (!observeAttachment) return io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.bootstrapOnly(
+        inputs, destroying, finished, embeddedDuplexAttachmentGeneration, spatialSceneReady,
+        embeddedDuplexDiagnosticFuture, embeddedDuplexRuntimeFuture)
+    val route: Boolean? = if (inputs && !destroying && !finished)
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected() else null
+    val carrier = cameraHwbProjectionRawCarrierCoordinator.sourceCarrierReadiness()
+    return io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.activity(
+        inputs, destroying, finished, route, embeddedDuplexAttachmentGeneration, spatialSceneReady,
+        carrier.fencePresent, carrier.surfaceValid, embeddedDuplexDiagnosticFuture, embeddedDuplexRuntimeFuture)
+  }
+
   private fun attachEmbeddedDuplexDisplayWhenReady() {
     if (!BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED || embeddedDuplexActivityDestroying ||
-        embeddedDuplexDiagnosticFinished ||
-        !io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected() ||
-        embeddedDuplexAttachmentGeneration != 0L || !spatialSceneReady ||
-        cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == null) return
+        embeddedDuplexDiagnosticFinished) return
+    if (!embeddedDuplexBootstrapReadiness().attachmentGateOpen) return
+    val activity = java.lang.ref.WeakReference(this)
     runCatching {
           io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
-              .EmbeddedDuplexActivityAttachment.attach(this, embeddedDuplexDisplay)
+              .EmbeddedDuplexActivityAttachment.attach(this, embeddedDuplexDisplay,
+                  java.util.function.Consumer { proof -> activity.get()?.onEmbeddedDuplexWholeCloseVerified(proof) })
         }
         .onSuccess { generation ->
           embeddedDuplexAttachmentGeneration = generation
@@ -1648,6 +1706,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   /** Invoked only by the private panel after a reviewed local fixture was installed. */
   fun embeddedDuplexLocalDiagnosticReady(): Boolean =
       embeddedDuplexAttachmentGeneration != 0L && !embeddedDuplexActivityDestroying &&
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.selectedRunId(this) == null &&
           !embeddedDuplexDiagnosticFinished && embeddedDuplexDiagnosticFuture == null
 
   fun runEmbeddedDuplexLocalDiagnostic(): CompletableFuture<String> {
@@ -1678,15 +1737,59 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return result
   }
 
+  /** Successful selection retires only the exact outgoing completed UI cache, never a later B cache. */
+  fun captureEmbeddedDuplexRunSelectionReconciliation(): java.util.function.LongConsumer {
+    val runtime = embeddedDuplexRuntimeFuture
+    val diagnostic = embeddedDuplexDiagnosticFuture
+    val attachment = embeddedDuplexAttachmentGeneration
+    val oldStatus = if (runtime != null && runtime.isDone && !runtime.isCompletedExceptionally && !runtime.isCancelled) runtime.getNow(null) else null
+    return java.util.function.LongConsumer { selectedAttachment ->
+      val delivered = java.util.concurrent.CompletableFuture.allOf(*listOfNotNull(runtime, diagnostic).toTypedArray())
+      delivered.whenComplete { _, _ -> runOnUiThread {
+        if (embeddedDuplexActivityDestroying ||
+            !io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(
+                runtime, embeddedDuplexRuntimeFuture, attachment, embeddedDuplexAttachmentGeneration, selectedAttachment) ||
+            !io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(
+                diagnostic, embeddedDuplexDiagnosticFuture, attachment, embeddedDuplexAttachmentGeneration, selectedAttachment)) return@runOnUiThread
+        if (oldStatus != null) {
+          val current = runtime?.getNow(null) ?: return@runOnUiThread
+          if (current.runtimeConfigSha256 != oldStatus.runtimeConfigSha256 ||
+              current.enrollmentRecordSha256 != oldStatus.enrollmentRecordSha256) return@runOnUiThread
+        }
+        embeddedDuplexRuntimeFuture = null
+        embeddedDuplexDiagnosticFuture = null
+        embeddedDuplexDiagnosticFinished = false
+        embeddedDuplexAttachmentGeneration = selectedAttachment
+      } }
+    }
+  }
+
+  private fun onEmbeddedDuplexWholeCloseVerified(
+      proof: io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover,
+  ) {
+    val completed = embeddedDuplexRuntimeFuture
+    runOnUiThread {
+      // The immutable token reconciles only its captured A Future/attachment. A later NewRun
+      // may already be selected; mutable global B authority is not an A bookkeeping prerequisite.
+      if (embeddedDuplexActivityDestroying ||
+          !proof.matchesCompletedRuntime(completed, embeddedDuplexRuntimeFuture,
+              embeddedDuplexAttachmentGeneration)) return@runOnUiThread
+      embeddedDuplexRuntimeFuture = null
+      embeddedDuplexAttachmentGeneration = 0L
+      marker("channel=embedded-duplex status=whole-close-activity-rollover-verified " +
+          "attachmentGeneration=${proof.attachmentGeneration} receiptSha256=${proof.receiptSha256}")
+    }
+  }
+
   /** Shared human/typed transport entry; enrollment and session values come from the app. */
   fun runEmbeddedDuplexRealPeerBootstrap(): CompletableFuture<
       io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus> {
+    return io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.bootstrapRealPeerFromActivity(this) {
     val generation = embeddedDuplexAttachmentGeneration
-    if (generation == 0L || embeddedDuplexActivityDestroying ||
-        embeddedDuplexDiagnosticFuture != null || embeddedDuplexRuntimeFuture != null) {
-      return CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus>().apply {
-        completeExceptionally(IllegalStateException("real-peer display unavailable"))
-      }
+    val readiness = embeddedDuplexBootstrapReadiness(false)
+    if (!readiness.bootstrapGateOpen) {
+      return@bootstrapRealPeerFromActivity CompletableFuture.failedFuture(
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.refuse(readiness))
     }
     val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
         .EmbeddedDuplexRuntimeService.bootstrapRealPeer(this, generation)
@@ -1695,6 +1798,30 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runOnUiThread {
         marker("channel=embedded-duplex status=" +
             if (failure == null) "real-peer-bootstrap-route-unverified" else "real-peer-bootstrap-pending-cleanup")
+      }
+    }
+    result
+    }
+  }
+
+  /** Explicit app quit entry; callers finish only after this actual owner completes. */
+  fun closeEmbeddedDuplexProduct(): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(IllegalStateException("embedded display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.closeProduct(this, generation)
+    result.whenComplete { _, failure ->
+      if (failure == null) {
+        embeddedDuplexAttachmentGeneration = 0L
+        embeddedDuplexRuntimeFuture = null
+      }
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "product-closed" else "product-close-pending")
       }
     }
     return result
@@ -1736,6 +1863,63 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runOnUiThread {
         marker("channel=embedded-duplex status=" +
             if (failure == null) "peer-session-current-route-unverified" else "pair-ceremony-cleanup-pending")
+      }
+    }
+    return result
+  }
+
+  /** Ordinary panel and typed-provider Start share this current-Activity owner. */
+  fun selectEmbeddedDuplexRun(runId:String,create:Boolean,legacyWholeOriginalId:String?=null):java.util.concurrent.CompletableFuture<String> {
+    return if(create) io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.newRun(applicationContext,runId,legacyWholeOriginalId)
+      else io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.resumeRun(applicationContext,runId)
+  }
+
+  fun runEmbeddedDuplexOrdinaryStart(expectedArmChallenge: String? = null): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    val resumeGeneration = ownResumeGeneration
+    val currentActivity = java.util.function.BooleanSupplier {
+      val current = ownResumeActive && ownResumeGeneration == resumeGeneration && generation > 0L &&
+          embeddedDuplexAttachmentGeneration == generation && !embeddedDuplexActivityDestroying
+      if (current && embeddedDuplexStartNeedsScenePermission(
+              BuildConfig.ENVIRONMENT_DEPTH_OWNER, privateLayerControlCoordinator.layerOverride) &&
+          checkSelfPermission("horizonos.permission.USE_SCENE") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        throw IllegalStateException("current selected environment-depth scene permission unavailable")
+      }
+      current
+    }
+    val admissionFailure = runCatching {
+      check(currentActivity.getAsBoolean()) { "current resumed Activity unavailable" }
+    }.exceptionOrNull()
+    if (admissionFailure != null) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(admissionFailure)
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.ordinaryStart(this, generation, expectedArmChallenge, currentActivity)
+    result.whenComplete { _, failure ->
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "ordinary-start-result-observed" else "ordinary-start-unavailable")
+      }
+    }
+    return result
+  }
+
+  /** Peer Stop remains available independently of a pending Start or its prerequisites. */
+  fun runEmbeddedDuplexPeerStop(): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation <= 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(IllegalStateException("current peer Stop display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.stopCurrentPeer(this, generation)
+    result.whenComplete { _, failure ->
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "peer-stop-result-observed" else "peer-stop-unavailable")
       }
     }
     return result
@@ -2139,6 +2323,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
             },
             startPeerCommonGraph = ::nativeStartSpatialPeerProjectionCommonGraph,
+            preparePeerRenderer = ::nativePrepareSpatialPeerRenderer,
+            readPreparedPeerRenderer = ::nativeReadPreparedSpatialPeerRenderer,
+            abortPreparedPeerRenderer = ::nativeAbortPreparedSpatialPeerRenderer,
             startSourceSetCommonGraph = ::nativeStartSourceSetCommonGraph,
             deferOwnNativeStart = io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative::captureRouteSelected,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
@@ -3019,6 +3206,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     scene.setReferenceSpace(ReferenceSpace.LOCAL_FLOOR)
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
     spatialSceneReady = true
+    cameraLatencyDiagnosticModule.onSpatialReady()
     passthroughReasonAggregator.reconcile("scene-ready-always-on")
     if (directImmersiveVideoPanelRequested()) {
       marker(immersiveVideoPanelCoordinator.routePolicyMarker())
@@ -3583,7 +3771,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     super.onStop()
   }
 
+  override fun onSpatialShutdown() {
+    cameraLatencyDiagnosticModule.onSpatialShutdown()
+    // VrActivity reaches this before DataModel.destroy, from finishing onStop or
+    // onDestroy. The later lifecycle worker may release codecs, but cannot own
+    // Entity deletion after the SDK has invalidated the model's native pointer.
+    embeddedDuplexActivityDestroying = true
+    immersiveVideoPanelCoordinator.retireScene("sdk-spatial-shutdown")
+    backgroundImmersiveVideoPanelCoordinator.retireScene("sdk-spatial-shutdown")
+    spatialVirtualRoomModule.retireScene("sdk-spatial-shutdown")
+    stagedAssetModule.retireScene("sdk-spatial-shutdown")
+    cameraHwbProjectionPanelCarrierCoordinator.retireScene("sdk-spatial-shutdown")
+    super.onSpatialShutdown()
+  }
+
   override fun onDestroy() {
+    cameraLatencyDiagnosticModule.onSpatialShutdown()
     EmbeddedDuplexDiagnosticActivityGate.paused(this)
     embeddedDuplexActivityDestroying = true
     io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
@@ -3599,8 +3802,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       } else {
         val pending = embeddedDuplexRuntimeFuture
         val close = {
-          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
-              .EmbeddedDuplexRuntimeService.closeNoMedia(this, generation)
+          (if (BuildConfig.EMBEDDED_DUPLEX_FRESH_SETUP_POLICY == "none")
+            io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.closeNoMedia(this, generation)
+          else io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.closeProduct(this, generation))
               .whenComplete { _, failure ->
                 if (failure == null) {
                   embeddedDuplexAttachmentGeneration = 0L
@@ -3608,9 +3812,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   scheduleOrderedActivityDestroyCleanup()
                 } else {
                   // Keep the old display callback and lifecycle executor reachable.
-                  // The process host remains CLOSING for exact no-media retry;
+                  // The actual product owner retains pending Stop/cleanup for retry;
                   // Activity replacement must not silently adopt this generation.
-                  runOnUiThread { marker("channel=embedded-duplex status=no-media-close-pending") }
+                  runOnUiThread { marker("channel=embedded-duplex status=product-close-pending") }
                 }
               }
         }
@@ -3751,6 +3955,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     refreshConnectionHub = connectionHubWearerControlClient::refresh,
                     startConnectionHub = connectionHubWearerControlClient::start,
                     stopConnectionHub = connectionHubWearerControlClient::stop,
+                    selectEmbeddedDuplexRun = { id, create -> selectEmbeddedDuplexRun(id,create) },
+                    embeddedDuplexRunStatus = { io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.runStatus(applicationContext) },
+                    runEmbeddedDuplexOrdinaryStart = { runEmbeddedDuplexOrdinaryStart() },
+                    runEmbeddedDuplexPeerStop = ::runEmbeddedDuplexPeerStop,
                     prepareEmbeddedDuplexStartPreflight =
                         ::prepareEmbeddedDuplexStartPreflight,
                     embeddedDuplexStartPreflightLive =
@@ -4057,24 +4265,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ) {
     privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     cameraLatencyDiagnosticModule.poll("camera-hwb-projection-pre-run", force = true)
-    if (nativeInteropCoordinator.receiptLibraryLoaded) {
-      val openXrProbe = SpatialNativeInteropProbe.capture(scene)
-      val timingMask =
-          nativeConfigureCameraLatencyOpenXrHandles(
-              openXrProbe.openXrInstanceHandle,
-              openXrProbe.openXrSessionHandle,
-              openXrProbe.openXrGetInstanceProcAddrHandle,
-          )
-      marker(
-          "channel=camera-latency-diagnostic status=openxr-handles-configured " +
-              "nativeUpdateMask=$timingMask openXrInstanceHandleNonZero=" +
-              "${openXrProbe.openXrInstanceHandle != 0L} openXrSessionHandleNonZero=" +
-              "${openXrProbe.openXrSessionHandle != 0L} " +
-              "openXrGetInstanceProcAddrHandleNonZero=" +
-              "${openXrProbe.openXrGetInstanceProcAddrHandle != 0L} " +
-              "frameLoopAuthority=spatial-sdk sidecarWaitFrame=false"
-      )
-    }
     cameraLatencyDiagnosticModule.resetPoseCapture("camera-hwb-projection-pre-run")
     check(cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run") == "destroyed") {
       "SDK projection cleanup remains Pending before new launch"
@@ -5048,7 +5238,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun armControlProfileHotloaderIfEnabled() {
     if (
         controlProfileHotloaderStarted ||
-            privatePanelInputLocked() ||
+            (privatePanelInputLocked() && !BuildConfig.DEBUG) ||
             activityReadOptionalBooleanSystemProperty(CONTROL_PROFILE_HOTLOAD_ENABLED_PROPERTY) !=
                 true
     ) {
@@ -5194,6 +5384,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private external fun nativeStartSourceSetCommonGraph(surface: AndroidSurface, width: Int, height: Int, frameCount: Int): Long
 
+  private external fun nativePrepareSpatialPeerRenderer(preparationId:String,surface:AndroidSurface,width:Int,height:Int,
+      routeGeneration:Long,launchChallenge:Long,layerGeneration:Long,layerSwitchCount:Long,layerStateCode:Int):String
+  private external fun nativeReadPreparedSpatialPeerRenderer(preparationId:String):String
+  private external fun nativeAbortPreparedSpatialPeerRenderer(preparationId:String):String
+
   private external fun nativeStartSpatialPeerProjectionCommonGraph(
       routeGeneration: Long,
       surface: AndroidSurface,
@@ -5257,9 +5452,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Long
 
   private external fun nativeConfigureCameraLatencyOpenXrHandles(
+      ownerId: Long,
       openXrInstanceHandle: Long,
       openXrSessionHandle: Long,
       openXrGetInstanceProcAddrHandle: Long,
+  ): Long
+
+  private external fun nativeReleaseCameraLatencyOpenXrHandles(
+      ownerId: Long,
+      retiring: Boolean,
   ): Long
 
   private external fun nativeUpdateCameraLatencyViewerPose(

@@ -21,8 +21,11 @@ import kotlin.math.min
 internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
   private var activeEntity: Entity? = null
   private var activeKey = ""
+  private var sceneRetired = false
 
+  @Synchronized
   fun startIfRequested(intent: Intent?, reason: String): Boolean {
+    if (sceneRetired) return false
     val config = SpatialStagedAssetConfig.from(intent)
     val activationDecision = SpatialAdapterNativeAuthority.resolveAsset(config.activationInput())
     if (!activationDecision.applied) {
@@ -131,11 +134,19 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
         }
   }
 
+  @Synchronized
+  fun retireScene(reason: String) {
+    if (sceneRetired) return
+    sceneRetired = true
+    destroy(reason)
+  }
+
+  @Synchronized
   fun destroy(reason: String) {
     val entity = activeEntity ?: return
-    runCatching { entity.destroy() }
     activeEntity = null
     activeKey = ""
+    entity.destroy()
     marker(
         "channel=spatial-sdk-asset-model status=destroyed module=${MODULE_ID} " +
             "reason=${markerToken(reason)}"

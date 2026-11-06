@@ -70,18 +70,17 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
   private var startMask = 0L
   private var syntheticVisualPresented = false
   private var readerMaxImages = CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES
+  @Volatile private var sceneRetired = false
+  private var sceneRetirementResult: Pair<Boolean, Boolean>? = null
 
   fun videoPanelBindings(): CameraHwbProjectionVideoPanelBindings =
       CameraHwbProjectionVideoPanelBindings(
           adoptSurface = { surface ->
-            surfaceConsumerCalled = true
-            panelSurface = surface
+            adoptSurface(surface)
           },
           settings = { _ -> bindings.panelMediaSettings() },
           adoptPanel = { panel ->
-            panelSceneObject = panel
-            panelReady = true
-            panelSurface = panel.surface
+            adoptPanel(panel)
           },
           planeForPlacement = bindings.projectionPlane,
           updateLayer = { plane -> updateLayer(plane, "panel-setup") },
@@ -95,8 +94,23 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
           emitMarker = bindings.marker,
       )
 
+  @Synchronized
+  private fun adoptSurface(surface: AndroidSurface) {
+    if (sceneRetired) return
+    surfaceConsumerCalled = true
+    panelSurface = surface
+  }
+
+  @Synchronized
+  private fun adoptPanel(panel: PanelSceneObject) {
+    if (sceneRetired) return
+    panelSceneObject = panel
+    panelReady = true
+    panelSurface = panel.surface
+  }
+
   fun run(readerMaxImages: Int, videoSettings: SpatialVideoProjectionSettings) {
-    if (!bindings.routeEnabled()) {
+    if (sceneRetired || !bindings.routeEnabled()) {
       return
     }
     val nativeState = bindings.nativeState()
@@ -108,60 +122,60 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
       )
       return
     }
-    val plane = bindings.projectionPlane()
-    nativeStarted = false
-    startMask = 0L
-    surfaceConsumerCalled = false
-    panelReady = false
-    panelSurface = null
-    syntheticVisualPresented = false
-    panelSceneObject = null
-    this.readerMaxImages = readerMaxImages
-    if (bindings.manualCustomMeshEnabled()) {
-      val entity = createManualCustomMeshPanel(plane, videoSettings)
+    val startReason = synchronized(this) {
+      if (sceneRetired) return
+      val plane = bindings.projectionPlane()
+      nativeStarted = false
+      startMask = 0L
+      surfaceConsumerCalled = false
+      panelReady = false
+      panelSurface = null
+      syntheticVisualPresented = false
+      panelSceneObject = null
+      this.readerMaxImages = readerMaxImages
+      if (bindings.manualCustomMeshEnabled()) {
+        val entity = createManualCustomMeshPanel(plane, videoSettings)
+        bindings.setProjectionEntity(entity)
+        panelEntity = entity
+        return@synchronized if (entity != null) "manual-custom-mesh-created" else null
+      }
+      val entity =
+          when (
+              val result =
+                  CameraHwbProjectionPanelCarrierModule.createVideoSurfacePanelEntity(
+                      plane = plane,
+                      carrier = bindings.carrierToken(),
+                      worldAnchored =
+                          bindings.immersiveVideoCarrierPresentation()?.worldAnchored == true,
+                  )
+          ) {
+            is CameraHwbProjectionPanelEntityCreateResult.Ready -> result.entity
+            is CameraHwbProjectionPanelEntityCreateResult.Failed -> {
+              bindings.marker(result.marker)
+              null
+            }
+          }
       bindings.setProjectionEntity(entity)
       panelEntity = entity
-      if (entity != null) {
-        startIfReady("manual-custom-mesh-created")
-      }
-      return
+      val entityCreated = entity != null
+      bindings.marker(
+          CameraHwbProjectionPanelCarrierModule.scenePanelCarrierEntitySpawnedMarker(
+              entityCreated = entityCreated,
+              carrier = bindings.carrierToken(),
+              plane = plane,
+              projectionMarkerFields = bindings.projectionMarkerFields(plane),
+              stereoMarkerFields = bindings.stereoMarkerFields(),
+              videoProjectionMarkerFields = bindings.videoProjectionMarkerFields(videoSettings),
+              publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
+          )
+      )
+      if (entityCreated) "entity-spawned" else null
     }
-    val entity =
-        when (
-            val result =
-                CameraHwbProjectionPanelCarrierModule.createVideoSurfacePanelEntity(
-                    plane = plane,
-                    carrier = bindings.carrierToken(),
-                    worldAnchored =
-                        bindings.immersiveVideoCarrierPresentation()?.worldAnchored == true,
-                )
-        ) {
-          is CameraHwbProjectionPanelEntityCreateResult.Ready -> result.entity
-          is CameraHwbProjectionPanelEntityCreateResult.Failed -> {
-            bindings.marker(result.marker)
-            null
-          }
-        }
-    bindings.setProjectionEntity(entity)
-    panelEntity = entity
-    val entityCreated = entity != null
-    bindings.marker(
-        CameraHwbProjectionPanelCarrierModule.scenePanelCarrierEntitySpawnedMarker(
-            entityCreated = entityCreated,
-            carrier = bindings.carrierToken(),
-            plane = plane,
-            projectionMarkerFields = bindings.projectionMarkerFields(plane),
-            stereoMarkerFields = bindings.stereoMarkerFields(),
-            videoProjectionMarkerFields = bindings.videoProjectionMarkerFields(videoSettings),
-            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
-        )
-    )
-    if (entityCreated) {
-      startIfReady("entity-spawned")
-    }
+    if (startReason != null) startIfReady(startReason)
   }
 
   fun rebuild(videoSettings: SpatialVideoProjectionSettings, reason: String): Boolean {
+    if (sceneRetired) return false
     val cleanupStatus = cleanup("$reason-carrier-rebuild")
     run(readerMaxImages, videoSettings)
     val rebuilt = panelEntity != null
@@ -214,7 +228,7 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
   }
 
   private fun startIfReady(reason: String) {
-    if (!bindings.routeEnabled()) {
+    if (sceneRetired || !bindings.routeEnabled()) {
       return
     }
     if (nativeStarted) {
@@ -266,19 +280,23 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
 
     val plane = bindings.projectionPlane()
     val immersivePresentation = bindings.immersiveVideoCarrierPresentation()
-    if (immersivePresentation?.worldAnchored == true) {
-      entity.setComponent(Transform(com.meta.spatial.core.Pose(plane.viewerPosition, plane.pose.q)))
-    } else {
-      entity.setComponent(Transform(plane.pose))
-      entity.setComponent(
-          PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters))
-      )
+    val panelLayerUpdateStatus = synchronized(this) {
+      if (sceneRetired || panelEntity !== entity) return
+      if (immersivePresentation?.worldAnchored == true) {
+        entity.setComponent(Transform(com.meta.spatial.core.Pose(plane.viewerPosition, plane.pose.q)))
+      } else {
+        entity.setComponent(Transform(plane.pose))
+        entity.setComponent(
+            PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters))
+        )
+      }
+      if (!bindings.manualCustomMeshEnabled()) {
+        entity.setComponent(Hittable(MeshCollision.NoCollision))
+      }
+      entity.setComponent(Visible(true))
+      updateLayer(plane, reason)
     }
-    if (!bindings.manualCustomMeshEnabled()) {
-      entity.setComponent(Hittable(MeshCollision.NoCollision))
-    }
-    entity.setComponent(Visible(true))
-    val panelLayerUpdateStatus = updateLayer(plane, reason)
+    if (sceneRetired) return
     if (bindings.syntheticVisualEnabled()) {
       val canvasDrawn =
           bindings.drawSyntheticVisual(
@@ -369,7 +387,9 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
     bindings.updateFromViewer(startReason, true)
   }
 
+  @Synchronized
   fun updateLayer(plane: CameraHwbProjectionPlane, reason: String): String {
+    if (sceneRetired) return "scene-retired"
     val panel = panelSceneObject ?: return "panel-scene-object-missing"
     return runCatching {
           panel.layer?.setAlphaBlend(
@@ -416,9 +436,41 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
         }
   }
 
+  /** SDK handles only. Native stop and Surface ownership remain with cleanup's worker. */
+  @Synchronized
+  fun retireScene(reason: String) {
+    if (sceneRetired) return
+    sceneRetired = true
+    sceneRetirementResult = releaseSceneHandles()
+  }
+
+  @Synchronized
+  private fun releaseSceneHandles(): Pair<Boolean, Boolean> {
+    val manualPanelSceneObject = panelSceneObject
+    val entity = panelEntity
+    panelEntity = null
+    panelSceneObject = null
+    panelReady = false
+    if (bindings.projectionEntity() === entity) bindings.setProjectionEntity(null)
+    var sceneObjectDestroyed = !bindings.manualCustomMeshEnabled() || manualPanelSceneObject == null
+    if (bindings.manualCustomMeshEnabled()) {
+      manualPanelSceneObject?.let { sceneObject ->
+        sceneObjectDestroyed = runCatching {
+          bindings.scene.destroyObject(sceneObject)
+          true
+        }.recoverCatching {
+          sceneObject.destroy()
+          true
+        }.getOrDefault(false)
+      }
+    }
+    val entityDestroyed = entity == null || runCatching { entity.destroy() }.isSuccess
+    return sceneObjectDestroyed to entityDestroyed
+  }
+
   fun cleanup(reason: String): String {
     val nativeState = bindings.nativeState()
-    var nativeStopped = true
+    var nativeStopped = !nativeStarted
     if (nativeStarted && nativeState.receiptLibraryLoaded) {
       nativeStopped =
           runCatching {
@@ -427,41 +479,14 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
               }
               .getOrDefault(false)
     }
-    var sceneObjectDestroyed = !bindings.manualCustomMeshEnabled() || panelSceneObject == null
-    val manualPanelSceneObject = panelSceneObject
-    if (bindings.manualCustomMeshEnabled()) {
-      manualPanelSceneObject?.let { sceneObject ->
-        sceneObjectDestroyed =
-            runCatching {
-                  bindings.scene.destroyObject(sceneObject)
-                  true
-                }
-                .recoverCatching {
-                  sceneObject.destroy()
-                  true
-                }
-                .getOrDefault(false)
-      }
+    val (sceneObjectDestroyed, entityDestroyed) = synchronized(this) {
+      sceneRetirementResult ?: releaseSceneHandles()
     }
-    var entityDestroyed = panelEntity == null
-    val entity = panelEntity
-    entity?.let {
-      entityDestroyed =
-          runCatching {
-                it.destroy()
-                true
-              }
-              .getOrDefault(false)
-    }
-    panelEntity = null
-    panelSceneObject = null
-    panelSurface = null
-    surfaceConsumerCalled = false
-    panelReady = false
-    nativeStarted = false
-    startMask = 0L
-    if (bindings.projectionEntity() == entity) {
-      bindings.setProjectionEntity(null)
+    if (nativeStopped) {
+      panelSurface = null
+      surfaceConsumerCalled = false
+      nativeStarted = false
+      startMask = 0L
     }
 
     val cleanupStatus =

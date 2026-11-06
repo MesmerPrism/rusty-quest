@@ -679,3 +679,9 @@ large legacy static ledger:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .
 ```
+
+### Artifact-bound bootstrap setup horizon
+
+The existing closed `bootstrap_real_peer` route still accepts only its challenge.
+A finite setup grant/lease horizon is selected at APK build time, not supplied as
+operator TTL or arbitrary policy JSON. See [finite setup credential policy](../EMBEDDED_DUPLEX_SETUP_CREDENTIAL_POLICY.md). Operation-token TTL and native expiry/renewal rules remain unchanged.

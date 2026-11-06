@@ -265,7 +265,10 @@ fn number(value: &Value, min: f64, max: f64) -> Result<(), String> {
 fn parse_polar_hold(value: &Value) -> Result<[f64; 2], String> {
     exact(value, &["entry_mg", "exit_mg"])?;
     let read = |key| {
-        value[key].as_f64().filter(|n| (0.1..=50.0).contains(n)).ok_or("polar_hold_out_of_range")
+        value[key]
+            .as_f64()
+            .filter(|n| (0.1..=50.0).contains(n))
+            .ok_or("polar_hold_out_of_range")
     };
     let entry = read("entry_mg")?;
     let exit = read("exit_mg")?;
@@ -301,7 +304,16 @@ fn validate_inputs(v: &Value) -> Result<(), String> {
         &v["controller_projection"],
         &["dynamic-axis", "fixed-orientation"],
     )?;
-    choice(&v["polar_projection"], &["xz", "3d", "dynamic-axis", "tilt-classifier", "adaptive-tilt"])?;
+    choice(
+        &v["polar_projection"],
+        &[
+            "xz",
+            "3d",
+            "dynamic-axis",
+            "tilt-classifier",
+            "adaptive-tilt",
+        ],
+    )?;
     if !v["inverted"].is_boolean() {
         return Err("boolean_required".into());
     }
@@ -512,7 +524,8 @@ pub(crate) fn monotonic_ns() -> u64 {
 }
 pub(crate) fn status_json() -> String {
     let mut status = lock().status();
-    status["calibration"] = crate::breath_composition_runtime::showcase_calibration_status(&status["inputs"]);
+    status["calibration"] =
+        crate::breath_composition_runtime::showcase_calibration_status(&status["inputs"]);
     status.to_string()
 }
 pub(crate) fn settings_json() -> String {
@@ -952,7 +965,10 @@ pub(crate) fn command_with_executor(
                         && inputs["breath_mapping"] == "state")
                     || (inputs["breath_source"] == "polar-acc"
                         && inputs["breath_mapping"] == "state"
-                        && matches!(inputs["polar_projection"].as_str(), Some("dynamic-axis" | "tilt-classifier" | "adaptive-tilt")))
+                        && matches!(
+                            inputs["polar_projection"].as_str(),
+                            Some("dynamic-axis" | "tilt-classifier" | "adaptive-tilt")
+                        ))
                 {
                     return Err("calibration-not-required".into());
                 }
@@ -1078,9 +1094,12 @@ mod tests {
     use super::*;
     #[test]
     fn calibration_receipt_follows_the_composition_command_status() {
-        let accepted = calibration_outcome(r#"{"command_status":"accepted","reason_code":"none"}"#).unwrap();
+        let accepted =
+            calibration_outcome(r#"{"command_status":"accepted","reason_code":"none"}"#).unwrap();
         assert_eq!(accepted["status"], "applied");
-        let rejected = calibration_outcome(r#"{"command_status":"rejected","reason_code":"invalid-action"}"#).unwrap();
+        let rejected =
+            calibration_outcome(r#"{"command_status":"rejected","reason_code":"invalid-action"}"#)
+                .unwrap();
         assert_eq!(rejected["status"], "rejected");
         assert_eq!(rejected["reason"], "invalid-action");
         assert!(calibration_outcome(r#"{"status":"accepted"}"#).is_err());
@@ -1101,14 +1120,29 @@ mod tests {
     fn polar_hold_thresholds_validate_and_restore_independently() {
         let mut active = state();
         let initial_inputs = active.inputs.clone();
-        assert_eq!(active.status()["polar_hold"], json!({"entry_mg":8.0,"exit_mg":11.2}));
-        let good = command(&active, "hold-ok", "set-polar-hold", json!({"entry_mg":6.2,"exit_mg":9.5}));
+        assert_eq!(
+            active.status()["polar_hold"],
+            json!({"entry_mg":8.0,"exit_mg":11.2})
+        );
+        let good = command(
+            &active,
+            "hold-ok",
+            "set-polar-hold",
+            json!({"entry_mg":6.2,"exit_mg":9.5}),
+        );
         assert_eq!(active.execute(&good)["status"], "accepted");
         let revision = active.revision;
         for (id, entry, exit) in [
-            ("hold-order", 10.0, 9.0), ("hold-range", 0.0, 10.0), ("hold-guard", 8.0, 60.0),
+            ("hold-order", 10.0, 9.0),
+            ("hold-range", 0.0, 10.0),
+            ("hold-guard", 8.0, 60.0),
         ] {
-            let bad = command(&active, id, "set-polar-hold", json!({"entry_mg":entry,"exit_mg":exit}));
+            let bad = command(
+                &active,
+                id,
+                "set-polar-hold",
+                json!({"entry_mg":entry,"exit_mg":exit}),
+            );
             assert_eq!(active.execute(&bad)["status"], "rejected");
         }
         assert_eq!(active.revision, revision);
@@ -1331,7 +1365,12 @@ mod tests {
         let request = command(&state, "switch-source", "set-inputs", inputs.clone());
         assert_eq!(state.execute_at(&request, 0)["status"], "accepted");
         let input_frame = prepare_visual_frame_from(&state).unwrap();
-        assert!(!input_frame.candidate_after(Some(0)).update_mask.full_snapshot);
+        assert!(
+            !input_frame
+                .candidate_after(Some(0))
+                .update_mask
+                .full_snapshot
+        );
 
         let request = command(
             &state,

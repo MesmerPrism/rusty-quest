@@ -646,14 +646,19 @@ mod worldspace_source_tests {
         assert!(!mode.uses_scene_depth());
         assert!(!mode.uses_custom_stereo_projection());
         assert!(mode.uses_solid_black_background(false));
-        assert_eq!(mode.camera_runtime_mode(), "skipped-solid-black-private-particles");
+        assert_eq!(
+            mode.camera_runtime_mode(),
+            "skipped-solid-black-private-particles"
+        );
         assert_eq!(
             WorldspaceInputPolicy::for_panel_selection(mode, false, false),
             WorldspaceInputPolicy::ExistingRoute,
         );
         assert_eq!(
             WorldspaceInputPolicy::for_panel_selection(
-                NativeRendererRenderMode::NativeWorldspaceIntegration, false, false,
+                NativeRendererRenderMode::NativeWorldspaceIntegration,
+                false,
+                false,
             ),
             WorldspaceInputPolicy::NeutralExclusive,
         );

@@ -66,6 +66,8 @@ struct PackagedConfigRequest {
     grant_id: String,
     grant_expires_at_ms: u64,
     lease_expires_at_ms: u64,
+    #[serde(default)]
+    setup_credential_horizon_ms: Option<u64>,
     max_token_ttl_ms: u64,
     product_spec: OwnedExactPackagedJson,
     product_lock: OwnedExactPackagedJson,
@@ -128,6 +130,7 @@ pub(crate) fn assemble_packaged_config_request_json(
         grant_id: &request.grant_id,
         grant_expires_at_ms: request.grant_expires_at_ms,
         lease_expires_at_ms: request.lease_expires_at_ms,
+        setup_credential_horizon_ms: request.setup_credential_horizon_ms,
         max_token_ttl_ms: request.max_token_ttl_ms,
         product_spec: request.product_spec.borrowed(),
         product_lock: request.product_lock.borrowed(),
@@ -183,6 +186,7 @@ pub(crate) struct EmbeddedDuplexPackagedConfigInput<'a> {
     pub(crate) grant_id: &'a str,
     pub(crate) grant_expires_at_ms: u64,
     pub(crate) lease_expires_at_ms: u64,
+    pub(crate) setup_credential_horizon_ms: Option<u64>,
     pub(crate) max_token_ttl_ms: u64,
     pub(crate) product_spec: ExactPackagedJson<'a>,
     pub(crate) product_lock: ExactPackagedJson<'a>,
@@ -294,7 +298,9 @@ pub(crate) fn assemble_embedded_duplex_packaged_config(
     input: EmbeddedDuplexPackagedConfigInput<'_>,
 ) -> Result<EmbeddedDuplexPackagedConfig, PackagedConfigError> {
     let exact_input_sha256 = validate_exact_inputs(&input)?;
-    validate_scalar_inputs(&input)?;
+    let lifetime_policy = super::development_lifetime_policy::for_config(&input.embedded_duplex)
+        .map_err(PackagedConfigError::RuntimeValidation)?;
+    validate_scalar_inputs(&input, lifetime_policy)?;
 
     let product_lock: Value = decode(input.product_lock, "product lock")?;
     let client: ClientLock = decode(input.client_lock, "client lock")?;
@@ -327,7 +333,7 @@ pub(crate) fn assemble_embedded_duplex_packaged_config(
     let product_fingerprint =
         required_string(&product_lock, "spec_fingerprint", "product fingerprint")?;
 
-    let raw_config = json!({
+    let mut raw_config = json!({
         "$schema": RUNTIME_CONFIG_SCHEMA,
         "bridge_kind": "embedded_in_process_jni",
         "adapter_config": {
@@ -397,18 +403,37 @@ pub(crate) fn assemble_embedded_duplex_packaged_config(
         "media_sessions": bindings.into_iter().map(|entry| entry.0).collect::<Vec<_>>(),
         "embedded_duplex": input.embedded_duplex.clone()
     });
+    if lifetime_policy.is_some() {
+        raw_config["admission"]["snapshot"]["$schema"] =
+            json!(rusty_manifold_admission::DEVELOPMENT_ADMISSION_SNAPSHOT_SCHEMA);
+    }
+    if let Some(horizon) = input.setup_credential_horizon_ms {
+        raw_config["admission"]["snapshot"]["root_renewal_policies"] = json!([{
+            "grant_id": input.grant_id, "horizon_ms": horizon
+        }]);
+    }
+
     let config: QuestBrokerRuntimeConfig = serde_json::from_value(raw_config)
         .map_err(|_| PackagedConfigError::Decode("assembled runtime config"))?;
     let canonical_json = serde_json::to_string(&config)
         .map_err(|_| PackagedConfigError::Decode("assembled runtime config"))?;
     let canonical_sha256 = canonical_runtime_config_sha256(&canonical_json)
         .map_err(|error| PackagedConfigError::RuntimeValidation(error.to_string()))?;
-    QuestBrokerAuthorityRuntime::from_config(
-        config.clone(),
-        input.validation_epoch_entropy_hex,
-        input.validation_wall_unix_ms,
-        input.validation_monotonic_elapsed_ns,
-    )
+    match lifetime_policy {
+        Some(policy) => QuestBrokerAuthorityRuntime::from_config_with_lifetime_policy(
+            config.clone(),
+            input.validation_epoch_entropy_hex,
+            input.validation_wall_unix_ms,
+            input.validation_monotonic_elapsed_ns,
+            policy,
+        ),
+        None => QuestBrokerAuthorityRuntime::from_config(
+            config.clone(),
+            input.validation_epoch_entropy_hex,
+            input.validation_wall_unix_ms,
+            input.validation_monotonic_elapsed_ns,
+        ),
+    }
     .map_err(|error| PackagedConfigError::RuntimeValidation(error.to_string()))?;
     Ok(EmbeddedDuplexPackagedConfig {
         config,
@@ -450,7 +475,30 @@ fn validate_exact_inputs(
 
 fn validate_scalar_inputs(
     input: &EmbeddedDuplexPackagedConfigInput<'_>,
+    lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
 ) -> Result<(), PackagedConfigError> {
+    if let Some(horizon) = input.setup_credential_horizon_ms {
+        let issued = u64::try_from(input.validation_wall_unix_ms)
+            .map_err(|_| PackagedConfigError::Binding("setup credential clock"))?;
+        let expiry = issued
+            .checked_add(horizon)
+            .ok_or(PackagedConfigError::Binding("setup credential overflow"))?;
+        if expiry > i64::MAX as u64
+            || !(300_000
+                ..=rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                    lifetime_policy,
+                    3_600_000,
+                ))
+                .contains(&horizon)
+            || horizon % 60_000 != 0
+            || input.grant_expires_at_ms != expiry
+            || input.lease_expires_at_ms != expiry
+        {
+            return Err(PackagedConfigError::Binding(
+                "setup credential horizon binding",
+            ));
+        }
+    }
     if input.package_name.trim().is_empty()
         || !is_raw_sha256(input.signing_certificate_sha256)
         || input.grant_expires_at_ms
@@ -703,4 +751,127 @@ fn is_raw_sha256(value: &str) -> bool {
 
 fn is_prefixed_sha256(value: &str) -> bool {
     value.strip_prefix("sha256:").map_or(false, is_raw_sha256)
+}
+
+#[cfg(test)]
+mod finite_setup_policy_tests {
+    use super::*;
+
+    #[test]
+    fn development_setup_scalar_binding_is_u64_selected_and_exact() {
+        let policy =
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::source_owned_v1().clone();
+        let horizon = policy.delegated_authority_horizon_ms;
+        assert!(horizon > i32::MAX as u64);
+        let hash = "a".repeat(64);
+        let opaque = ExactPackagedJson {
+            json: "{}",
+            sha256: &hash,
+        };
+        // This is the actual scalar ingress; document/feature verification is
+        // deliberately outside this fixture and is not claimed as qualification.
+        let mut input = EmbeddedDuplexPackagedConfigInput {
+            package_name: "application.scalar.test", signing_certificate_sha256: &hash,
+            expected_project_id: "project.test", expected_activation_marker: "marker.test",
+            adapter_id: "adapter.test", admission_authority_id: "authority.test", grant_id: "grant.test",
+            grant_expires_at_ms: 1000 + horizon, lease_expires_at_ms: 1000 + horizon,
+            setup_credential_horizon_ms: Some(horizon), max_token_ttl_ms: 120_000,
+            product_spec: opaque, product_lock: opaque, client_lock: opaque,
+            media_lifecycle_lock: opaque, app_feature_lock: opaque, media_bindings: [opaque; 2],
+            embedded_duplex: serde_json::from_value(json!({
+                "$schema":"rusty.quest.embedded_duplex.development_authority_config.v1",
+                "runtime_host_id":"host.scalar.test","trusted_operator_ids":["operator.test"],
+                "trusted_key_fingerprints":["fingerprint.test"],"trusted_adapter_ids":["adapter.test"],
+                "trusted_media_revoker_ids":["revoker.test"]
+            })).unwrap(),
+            validation_epoch_entropy_hex: &hash, validation_wall_unix_ms: 1000,
+            validation_monotonic_elapsed_ns: 1_000_000,
+        };
+        if option_env!("RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_LIFETIME_POLICY")
+            != Some("development-v1")
+        {
+            assert!(
+                super::super::development_lifetime_policy::for_config(&input.embedded_duplex)
+                    .is_err()
+            );
+        }
+        assert!(validate_scalar_inputs(&input, Some(&policy)).is_ok());
+        assert!(validate_scalar_inputs(&input, None).is_err());
+        input.lease_expires_at_ms -= 1;
+        assert!(validate_scalar_inputs(&input, Some(&policy)).is_err());
+        input.lease_expires_at_ms += 1;
+        input.validation_wall_unix_ms = i64::MAX;
+        assert!(validate_scalar_inputs(&input, Some(&policy)).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly retained actual Java packaged request"]
+    fn finite_setup_actual_java_transfer_assembles_native_scoped_policy() {
+        let path = std::env::var("RUSTY_QUEST_PACKAGED_POLICY_REQUEST")
+            .expect("explicit actual Java request required");
+        let raw = std::fs::read_to_string(path).unwrap();
+        let request: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(request["setup_credential_horizon_ms"], json!(1_800_000));
+        let assembled = assemble_packaged_config_request_json(&raw).unwrap();
+        let envelope: Value = serde_json::from_str(&assembled.0).unwrap();
+        let config: QuestBrokerRuntimeConfig =
+            serde_json::from_str(envelope["runtime_config_json"].as_str().unwrap()).unwrap();
+        assert_eq!(config.admission.snapshot.root_renewal_policies.len(), 1);
+        assert_eq!(
+            config.admission.snapshot.root_renewal_policies[0]
+                .grant_id
+                .as_str(),
+            request["grant_id"].as_str().unwrap()
+        );
+        assert_eq!(
+            config.admission.snapshot.root_renewal_policies[0].horizon_ms,
+            1_800_000
+        );
+        assert_eq!(
+            config.admission.snapshot.max_token_ttl_ms,
+            request["max_token_ttl_ms"].as_u64().unwrap()
+        );
+        for invalid in [0, 299_999, 300_001, 3_600_001, u64::MAX] {
+            let mut bad = request.clone();
+            bad["setup_credential_horizon_ms"] = json!(invalid);
+            assert!(assemble_packaged_config_request_json(&bad.to_string()).is_err());
+        }
+        for field in ["grant_expires_at_ms", "lease_expires_at_ms"] {
+            let mut bad = request.clone();
+            bad[field] = json!(request[field].as_u64().unwrap() + 1);
+            assert!(assemble_packaged_config_request_json(&bad.to_string()).is_err());
+        }
+        let mut overflow = request.clone();
+        overflow["validation_wall_unix_ms"] = json!(i64::MAX);
+        overflow["grant_expires_at_ms"] = json!(i64::MAX as u64 + 1_800_000);
+        overflow["lease_expires_at_ms"] = overflow["grant_expires_at_ms"].clone();
+        assert!(assemble_packaged_config_request_json(&overflow.to_string()).is_err());
+        let mut malformed = request.clone();
+        malformed["setup_credential_horizon_ms"] = json!("1800000");
+        assert!(assemble_packaged_config_request_json(&malformed.to_string()).is_err());
+        let mut legacy = request;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("setup_credential_horizon_ms");
+        let expires = legacy["validation_wall_unix_ms"].as_u64().unwrap() + 300_000;
+        legacy["grant_expires_at_ms"] = json!(expires);
+        legacy["lease_expires_at_ms"] = json!(expires);
+        let old = assemble_packaged_config_request_json(&legacy.to_string()).unwrap();
+        let envelope: Value = serde_json::from_str(&old.0).unwrap();
+        let old_config: QuestBrokerRuntimeConfig =
+            serde_json::from_str(envelope["runtime_config_json"].as_str().unwrap()).unwrap();
+        assert!(old_config
+            .admission
+            .snapshot
+            .root_renewal_policies
+            .is_empty());
+        assert_eq!(
+            old_config
+                .admission
+                .snapshot
+                .root_renewal_horizon_ms(&old_config.admission.snapshot.grants[0].grant_id),
+            300_000
+        );
+    }
 }

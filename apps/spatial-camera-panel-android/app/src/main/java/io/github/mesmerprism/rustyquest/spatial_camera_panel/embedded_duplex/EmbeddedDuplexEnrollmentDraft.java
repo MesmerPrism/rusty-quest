@@ -21,7 +21,7 @@ public final class EmbeddedDuplexEnrollmentDraft {
                 || !dotted(runtimeHostId) || !runtimeHostId.startsWith("host.")
                 || !dotted(trustedOperatorId) || !dotted(adapterId)
                 || !dotted(mediaRevokerId) || !dotted(admissionAuthorityId)
-                || maxTokenTtlMs <= 0L || maxTokenTtlMs > 24L * 60L * 60L * 1000L) {
+                || maxTokenTtlMs <= 0L || maxTokenTtlMs > (localFixture ? 24L * 60L * 60L * 1000L : EmbeddedDuplexSetupCredentials.selectedHorizon(24L * 60L * 60L * 1000L))) {
             throw new IllegalArgumentException("enrollment draft bounds");
         }
         this.roleId = roleId;

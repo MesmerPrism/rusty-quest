@@ -66,7 +66,6 @@ impl ClockAnchor {
 
 pub(crate) use crate::source_clock::SourceClock;
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourceTimestamp {
     pub(crate) clock: SourceClock,

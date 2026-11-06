@@ -445,7 +445,8 @@ Assert-NotContains "Offline pack installer" $installPackTool "kill-server"
 Assert-NotContains "Offline pack installer" $installPackTool "start-server"
 
 Assert-Contains "Spatial Camera Panel build tool" $buildTool '[ValidateSet("Debug", "Release")]'
-Assert-Contains "Spatial Camera Panel build tool" $buildTool '":app:assemble$BuildType"'
+# Assembly task composition and dispatch belong to Test-AndroidComponentBuildSeam.ps1
+# and Test-SpatialCameraPanelBuildWorkflowStatic.ps1, which exercise the actual owner.
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'spatial_sdk_version = "0.13.2"'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'media3_version = "1.4.1"'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'immersive_video_media_packaged = $offlineMediaPackagedAssets'

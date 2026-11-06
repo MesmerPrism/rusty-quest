@@ -27,19 +27,19 @@ use crate::{
     breath_guidance::{BreathGuidanceAssetIdentity, BreathGuidanceTarget, BreathGuidanceTimeline},
     experiment_session::{
         CommandEnvelope, CommandOutcome, CompletionProgress, ExperimentSessionController,
-        OperationToken, PreparationMode, PresentationState, RecordingFailure, RecordingResult, SessionCommand,
-        SessionEffect, SessionPhase,
+        OperationToken, PreparationMode, PresentationState, RecordingFailure, RecordingResult,
+        SessionCommand, SessionEffect, SessionPhase,
     },
     session_recording_clock::{
         ClockAnchor, MonotonicNanos, SessionTimestampKey, SourceClock, SourceTimestamp,
         UtcEpochNanos,
     },
     session_recording_contract::{
-        AudioAssetIdentity, BiasChange, BreathObservation, BreathPhase, ConditionKey, EffectiveRadiusProfile,
-        EffectiveRadiusSnapshotObservation, ExperimentIdentity, FinalizationReason, PolarAccBatch,
-        PolarAccSample, PolarEcgBatch, PolarEcgSample, PolarHeartRateObservation, SessionCounts,
-        SessionEvent, SessionEventKind, SessionRecord, SessionStartSpec,
-        DEFAULT_COMPLETION_THRESHOLD_NS,
+        AudioAssetIdentity, BiasChange, BreathObservation, BreathPhase, ConditionKey,
+        EffectiveRadiusProfile, EffectiveRadiusSnapshotObservation, ExperimentIdentity,
+        FinalizationReason, PolarAccBatch, PolarAccSample, PolarEcgBatch, PolarEcgSample,
+        PolarHeartRateObservation, SessionCounts, SessionEvent, SessionEventKind, SessionRecord,
+        SessionStartSpec, DEFAULT_COMPLETION_THRESHOLD_NS,
     },
     session_recording_recovery::{RecoveredConditionCounts, RecoveryReport},
     session_recording_writer::{
@@ -342,41 +342,72 @@ impl Default for Projection {
 }
 
 impl Projection {
-    fn observed_now(&self, now_ns: Option<u64>, frame_generation: u64, frame_sequence: u64, frame_ns: u64) -> Option<u64> {
+    fn observed_now(
+        &self,
+        now_ns: Option<u64>,
+        frame_generation: u64,
+        frame_sequence: u64,
+        frame_ns: u64,
+    ) -> Option<u64> {
         if self.phase == SessionPhase::Active
             && self.control_state == crate::experiment_session::ExperimentControlState::Running
-            && self.presentation == PresentationState::ImmersiveActive {
+            && self.presentation == PresentationState::ImmersiveActive
+        {
             let last_live_ns = if frame_generation == self.generation && frame_sequence > 0 {
                 frame_ns.saturating_add(SUBMITTED_FRAME_STALL_NS)
-            } else { self.active_interval_started_ns.unwrap_or(0) };
+            } else {
+                self.active_interval_started_ns.unwrap_or(0)
+            };
             now_ns.map(|now| now.min(last_live_ns))
-        } else { now_ns }
+        } else {
+            now_ns
+        }
     }
     fn response_json(&self, command_status: &str, reason_code: &str) -> String {
         self.response_json_at(command_status, reason_code, None)
     }
 
-    fn response_json_at(&self, command_status: &str, reason_code: &str, now_ns: Option<u64>) -> String {
+    fn response_json_at(
+        &self,
+        command_status: &str,
+        reason_code: &str,
+        now_ns: Option<u64>,
+    ) -> String {
         self.response_json_clocks(command_status, reason_code, now_ns, now_ns)
     }
 
     fn official_active_time_ns(&self, active_now_ns: Option<u64>) -> u64 {
         self.active_time_ns.saturating_add(
-            self.active_interval_started_ns.zip(active_now_ns)
-                .filter(|_| self.phase == SessionPhase::Active
-                    && self.control_state == crate::experiment_session::ExperimentControlState::Running
-                    && self.presentation == PresentationState::ImmersiveActive)
-                .map_or(0, |(start, now)| now.saturating_sub(start)))
+            self.active_interval_started_ns
+                .zip(active_now_ns)
+                .filter(|_| {
+                    self.phase == SessionPhase::Active
+                        && self.control_state
+                            == crate::experiment_session::ExperimentControlState::Running
+                        && self.presentation == PresentationState::ImmersiveActive
+                })
+                .map_or(0, |(start, now)| now.saturating_sub(start)),
+        )
     }
 
     fn polar_input_json(&self, diagnostics_observed: bool) -> Value {
         // Ages are sampled at the actual observation; readiness remains on the
         // worker projection so read-only status cannot race ahead of its effects.
         let mut input = if diagnostics_observed {
-            crate::polar_input_health::status(self.polar_input.required, self.polar_input.pause_latched).0.json()
+            crate::polar_input_health::status(
+                self.polar_input.required,
+                self.polar_input.pause_latched,
+            )
+            .0
+            .json()
         } else {
             let mut cached = self.polar_input.json();
-            for key in ["accepted_age_ms", "ingress_age_ms", "commit_age_ms", "ingress_to_commit_ms"] {
+            for key in [
+                "accepted_age_ms",
+                "ingress_age_ms",
+                "commit_age_ms",
+                "ingress_to_commit_ms",
+            ] {
                 cached[key] = Value::Null;
             }
             cached
@@ -390,13 +421,23 @@ impl Projection {
         input
     }
 
-    fn response_json_clocks(&self, command_status: &str, reason_code: &str, now_ns: Option<u64>, active_now_ns: Option<u64>) -> String {
+    fn response_json_clocks(
+        &self,
+        command_status: &str,
+        reason_code: &str,
+        now_ns: Option<u64>,
+        active_now_ns: Option<u64>,
+    ) -> String {
         let diagnostics_observed = now_ns.is_some();
         let now_ns = self.recording_ended_ns.or(now_ns);
         let active_time_ns = self.official_active_time_ns(active_now_ns);
-        let recording_elapsed_ns = self.recording_started_ns.zip(now_ns)
+        let recording_elapsed_ns = self
+            .recording_started_ns
+            .zip(now_ns)
             .map_or(0, |(start, now)| now.saturating_sub(start));
-        let preparation_elapsed_ns = self.recording_started_ns.zip(self.official_started_ns.or(now_ns))
+        let preparation_elapsed_ns = self
+            .recording_started_ns
+            .zip(self.official_started_ns.or(now_ns))
             .map_or(0, |(start, end)| end.saturating_sub(start));
         json!({
             "schema": EXPERIMENT_SESSION_RESPONSE_SCHEMA,
@@ -521,7 +562,8 @@ impl ReadbackCache {
             terminal_admission_busy: projection
                 .response_json("rejected", "terminal-admission-busy"),
             worker_closed: projection.response_json("rejected", "session-worker-closed"),
-            observation_unavailable: projection.response_json("rejected", "status-observation-unavailable"),
+            observation_unavailable: projection
+                .response_json("rejected", "status-observation-unavailable"),
         }
     }
 }
@@ -691,29 +733,47 @@ struct LocalTerminalFence {
 
 impl LocalTerminalFence {
     fn matches(&self, projection: &Projection) -> bool {
-        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap_or(Value::Null);
-        self.matches_with_binding(projection, binding["snapshot"]["activation_binding_sha256"].as_str())
+        let binding: Value =
+            serde_json::from_str(&crate::breath_composition_runtime::status_json())
+                .unwrap_or(Value::Null);
+        self.matches_with_binding(
+            projection,
+            binding["snapshot"]["activation_binding_sha256"].as_str(),
+        )
     }
 
     fn matches_with_binding(&self, projection: &Projection, binding: Option<&str>) -> bool {
         let s = &self.scope;
         self.owner.load(Ordering::Acquire) == s.owner_identity
-            && s.owner_identity > 0 && s.owner_identity < i64::MAX as u64
-            && s.runtime_epoch > 0 && projection.runtime_epoch == s.runtime_epoch
+            && s.owner_identity > 0
+            && s.owner_identity < i64::MAX as u64
+            && s.runtime_epoch > 0
+            && projection.runtime_epoch == s.runtime_epoch
             && projection.generation == s.generation
-            && projection.initialization_status == "ready" && projection.inventory_status == "ready"
+            && projection.initialization_status == "ready"
+            && projection.inventory_status == "ready"
             && valid_sha256(&s.binding_sha256)
             && binding == Some(s.binding_sha256.as_str())
-            && if s.session_key.is_empty() && s.condition_id.is_empty() && s.profile_sha256.is_empty() {
+            && if s.session_key.is_empty()
+                && s.condition_id.is_empty()
+                && s.profile_sha256.is_empty()
+            {
                 projection.phase == SessionPhase::Idle
-                    && matches!(projection.recording_result, RecordingResult::None | RecordingResult::Saved { .. })
-                    && projection.session_key.is_none() && projection.condition_id.is_none()
+                    && matches!(
+                        projection.recording_result,
+                        RecordingResult::None | RecordingResult::Saved { .. }
+                    )
+                    && projection.session_key.is_none()
+                    && projection.condition_id.is_none()
                     && projection.non_audio_profile_sha256.is_none()
             } else {
-                s.generation > 0 && !s.session_key.is_empty() && !s.condition_id.is_empty()
+                s.generation > 0
+                    && !s.session_key.is_empty()
+                    && !s.condition_id.is_empty()
                     && projection.session_key.as_deref() == Some(s.session_key.as_str())
                     && projection.condition_id.as_deref() == Some(s.condition_id.as_str())
-                    && projection.non_audio_profile_sha256.as_deref() == Some(s.profile_sha256.as_str())
+                    && projection.non_audio_profile_sha256.as_deref()
+                        == Some(s.profile_sha256.as_str())
                     && valid_sha256(&s.profile_sha256)
             }
     }
@@ -739,20 +799,30 @@ fn retirement_response(scope: &RendererRetirementScope, status: &str, reason: &s
     json!({"schema":"rusty.quest.native_renderer_retirement.v1", "status":status,
         "owner_identity":scope.owner_identity, "runtime_epoch":scope.runtime_epoch,
         "generation":scope.generation, "operation_id":scope.operation_id,
-        "shutdown_ack_revision":scope.shutdown_ack_revision, "reason_code":reason}).to_string()
+        "shutdown_ack_revision":scope.shutdown_ack_revision, "reason_code":reason})
+    .to_string()
 }
 
 fn terminal_receipt_matches(p: &Projection, s: &RendererRetirementScope) -> bool {
-    p.runtime_epoch == s.runtime_epoch && s.runtime_epoch > 0
-        && s.owner_identity > 0 && s.owner_identity < i64::MAX as u64
-        && p.phase == SessionPhase::Closed && p.shutdown_status == "complete"
-        && s.shutdown_ack_revision > 0 && p.shutdown_ack_revision == s.shutdown_ack_revision
-        && p.generation == s.generation && p.finalized_session_generation == s.generation
-        && !s.operation_id.is_empty() && p.finalized_operation_id.as_deref() == Some(s.operation_id.as_str())
+    p.runtime_epoch == s.runtime_epoch
+        && s.runtime_epoch > 0
+        && s.owner_identity > 0
+        && s.owner_identity < i64::MAX as u64
+        && p.phase == SessionPhase::Closed
+        && p.shutdown_status == "complete"
+        && s.shutdown_ack_revision > 0
+        && p.shutdown_ack_revision == s.shutdown_ack_revision
+        && p.generation == s.generation
+        && p.finalized_session_generation == s.generation
+        && !s.operation_id.is_empty()
+        && p.finalized_operation_id.as_deref() == Some(s.operation_id.as_str())
         && (s.generation > 0 && matches!(p.recording_result, RecordingResult::Saved { .. })
             || p.recording_result == RecordingResult::None
-                && p.session_key.is_none() && p.condition_id.is_none() && p.non_audio_profile_sha256.is_none()
-                && p.initialization_status == "ready" && p.inventory_status == "ready")
+                && p.session_key.is_none()
+                && p.condition_id.is_none()
+                && p.non_audio_profile_sha256.is_none()
+                && p.initialization_status == "ready"
+                && p.inventory_status == "ready")
 }
 
 #[derive(Clone, Debug)]
@@ -788,7 +858,12 @@ struct ProducerGate {
 }
 
 trait RecordingBackend: Send {
-    fn prepare_guided_breath(&mut self, at_ns: u64, generation: u64, operation_id: &str) -> Result<Value, String> {
+    fn prepare_guided_breath(
+        &mut self,
+        at_ns: u64,
+        generation: u64,
+        operation_id: &str,
+    ) -> Result<Value, String> {
         crate::breath_composition_runtime::prepare_guided_arm(at_ns, generation, operation_id)
             .map_err(|reason| format!("guided-breath-preparation:{reason}"))
     }
@@ -883,9 +958,7 @@ impl RecordingBackend for ActualRecordingBackend {
             .receive()
     }
     fn recover(&mut self, root: &Path) -> Result<RecoveryReport, String> {
-        self.ensure_writer(root)?
-            .recover()?
-            .receive()
+        self.ensure_writer(root)?.recover()?.receive()
     }
 
     fn prepare(&mut self, generation: u64, spec: SessionStartSpec) -> Result<(), String> {
@@ -1049,11 +1122,19 @@ impl SessionWorker {
         }
     }
 
-    fn process_raw(&mut self, raw: String, received_at: Instant, polar_ready_at_receipt: PolarInputAdmission, fence: Option<LocalTerminalFence>) {
+    fn process_raw(
+        &mut self,
+        raw: String,
+        received_at: Instant,
+        polar_ready_at_receipt: PolarInputAdmission,
+        fence: Option<LocalTerminalFence>,
+    ) {
         // Serializes only native owner transitions with this same worker command.
         // No registry or Java callback participates in this gate.
         let gate = fence.as_ref().map(|f| Arc::clone(&f.gate));
-        let _owner_guard = gate.as_ref().map(|g| g.lock().unwrap_or_else(|e| e.into_inner()));
+        let _owner_guard = gate
+            .as_ref()
+            .map(|g| g.lock().unwrap_or_else(|e| e.into_inner()));
         if is_status_command(&raw) {
             self.refresh_controller_projection();
             return;
@@ -1078,10 +1159,18 @@ impl SessionWorker {
             let matches = matches!(parsed.operation, ParsedOperation::SaveAndExit)
                 && parsed.expected_generation == fence.scope.generation
                 && fence.matches(&projection)
-                && self.trusted_inventory.as_ref().is_some_and(|i| i.validate().is_ok());
+                && self
+                    .trusted_inventory
+                    .as_ref()
+                    .is_some_and(|i| i.validate().is_ok());
             drop(projection);
             if !matches {
-                self.publish_operation(&parsed.operation_id, "rejected", "local-terminal-owner-fence-mismatch", None);
+                self.publish_operation(
+                    &parsed.operation_id,
+                    "rejected",
+                    "local-terminal-owner-fence-mismatch",
+                    None,
+                );
                 return;
             }
         }
@@ -1109,8 +1198,15 @@ impl SessionWorker {
             }
             return;
         }
-        if matches!(parsed.operation, ParsedOperation::SetBias(_)) && self.bias_history.len() >= 4096 {
-            self.publish_operation(&parsed.operation_id, "rejected", "bias-operation-history-full", None);
+        if matches!(parsed.operation, ParsedOperation::SetBias(_))
+            && self.bias_history.len() >= 4096
+        {
+            self.publish_operation(
+                &parsed.operation_id,
+                "rejected",
+                "bias-operation-history-full",
+                None,
+            );
             return;
         }
         self.remember(&parsed);
@@ -1150,16 +1246,30 @@ impl SessionWorker {
 
     fn apply_parsed(&mut self, parsed: ParsedCommand, polar_ready_at_receipt: PolarInputAdmission) {
         if let Some(fence) = &parsed.operator_fence {
-            let epoch = self.projection.read().unwrap_or_else(|e| e.into_inner()).runtime_epoch;
+            let epoch = self
+                .projection
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .runtime_epoch;
             let identity = self.current_identity.as_ref();
-            let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap_or(Value::Null);
-            let matches = binding["snapshot"]["activation_binding_sha256"].as_str() == Some(fence.binding_sha256.as_str())
+            let binding: Value =
+                serde_json::from_str(&crate::breath_composition_runtime::status_json())
+                    .unwrap_or(Value::Null);
+            let matches = binding["snapshot"]["activation_binding_sha256"].as_str()
+                == Some(fence.binding_sha256.as_str())
                 && epoch == fence.runtime_epoch
                 && self.current_session_key.as_deref() == Some(fence.session_key.as_str())
-                && identity.is_some_and(|i| i.condition_id == fence.condition_id
-                    && i.non_audio_profile_sha256 == fence.profile_sha256);
+                && identity.is_some_and(|i| {
+                    i.condition_id == fence.condition_id
+                        && i.non_audio_profile_sha256 == fence.profile_sha256
+                });
             if !matches {
-                self.publish_operation(&parsed.operation_id, "rejected", "operator-owner-fence-mismatch", None);
+                self.publish_operation(
+                    &parsed.operation_id,
+                    "rejected",
+                    "operator-owner-fence-mismatch",
+                    None,
+                );
                 return;
             }
         }
@@ -1187,24 +1297,46 @@ impl SessionWorker {
         // can be replaced. A validated guided identity always requires Polar.
         let pending_requires_polar = matches!(parsed.operation, ParsedOperation::Start { .. })
             && (polar_ready_at_receipt.required
-                || resolved_identity.as_ref().is_some_and(|identity| identity.breath_guidance.is_some())
+                || resolved_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.breath_guidance.is_some())
                 || crate::polar_input_health::status(false, false).0.required);
         // Arm is preparation, not official Start. All explicit native and
         // authenticated operator Start/Resume forms share this same owner gate.
-        if matches!(parsed.operation, ParsedOperation::Start { arm: false, .. }
-            | ParsedOperation::OfficialStart | ParsedOperation::Resume) {
-            let (input, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
+        if matches!(
+            parsed.operation,
+            ParsedOperation::Start { arm: false, .. }
+                | ParsedOperation::OfficialStart
+                | ParsedOperation::Resume
+        ) {
+            let (input, _) = crate::polar_input_health::status(
+                self.recording_requires_polar,
+                self.polar_pause_latched,
+            );
             // Guided preparation can select Polar even when the packaged source
             // was a controller. A source-changing legacy combined Start must use
             // Arm -> explicit OfficialStart; later data cannot satisfy its intent.
             if matches!(parsed.operation, ParsedOperation::Start { arm: false, .. })
-                && resolved_identity.as_ref().is_some_and(|identity| identity.breath_guidance.is_some())
-                && (!polar_ready_at_receipt.required || !input.required) {
-                self.publish_operation(&parsed.operation_id, "rejected", "guided-start-requires-arm", None);
+                && resolved_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.breath_guidance.is_some())
+                && (!polar_ready_at_receipt.required || !input.required)
+            {
+                self.publish_operation(
+                    &parsed.operation_id,
+                    "rejected",
+                    "guided-start-requires-arm",
+                    None,
+                );
                 return;
             }
             if !polar_ready_at_receipt.ready || (input.required && !input.fresh) {
-                self.publish_operation(&parsed.operation_id, "rejected", "polar-input-not-fresh", None);
+                self.publish_operation(
+                    &parsed.operation_id,
+                    "rejected",
+                    "polar-input-not-fresh",
+                    None,
+                );
                 return;
             }
         }
@@ -1227,7 +1359,12 @@ impl SessionWorker {
                         .clone()
                         .expect("resolved start identity"),
                 };
-                self.pending_start = Some((spec, identity.clone(), parsed.received_at, parsed.operation_id.clone()));
+                self.pending_start = Some((
+                    spec,
+                    identity.clone(),
+                    parsed.received_at,
+                    parsed.operation_id.clone(),
+                ));
                 if *arm {
                     SessionCommand::Arm {
                         condition: condition.clone(),
@@ -1270,8 +1407,12 @@ impl SessionWorker {
         if matches!(parsed.operation, ParsedOperation::Start { .. }) {
             self.recording_requires_polar = pending_requires_polar;
         }
-        if matches!(parsed.operation, ParsedOperation::Start { .. }
-            | ParsedOperation::OfficialStart | ParsedOperation::Resume) {
+        if matches!(
+            parsed.operation,
+            ParsedOperation::Start { .. }
+                | ParsedOperation::OfficialStart
+                | ParsedOperation::Resume
+        ) {
             self.last_input_revision = crate::polar_input_health::acknowledge_interruptions();
         }
         if matches!(parsed.operation, ParsedOperation::Resume) {
@@ -1279,7 +1420,11 @@ impl SessionWorker {
             self.polar_last_pause = None;
         }
         if parsed.operator_fence.is_some() {
-            let origin = parsed.operator_fence.as_ref().expect("operator fence").origin;
+            let origin = parsed
+                .operator_fence
+                .as_ref()
+                .expect("operator fence")
+                .origin;
             self.projection_write(|projection| projection.operator_origin = origin);
         }
         if matches!(parsed.operation, ParsedOperation::Start { .. }) {
@@ -1308,7 +1453,12 @@ impl SessionWorker {
         let result = self.process_effects(outcome.effects.clone(), parsed.at);
         match result {
             Ok(()) => {
-                if let ParsedOperation::Start { arm: true, condition, .. } = &parsed.operation {
+                if let ParsedOperation::Start {
+                    arm: true,
+                    condition,
+                    ..
+                } = &parsed.operation
+                {
                     // prepare() has awaited the actual writer's durable initial checkpoint.
                     self.projection_write(|projection| {
                         projection.arm_operation_id = Some(parsed.operation_id.clone());
@@ -1325,7 +1475,7 @@ impl SessionWorker {
                     });
                 }
                 self.publish_operation(&parsed.operation_id, "accepted", "none", None)
-            },
+            }
             Err(reason) => {
                 if parsed.operator_fence.is_some() {
                     self.projection_write(|projection| {
@@ -1344,39 +1494,80 @@ impl SessionWorker {
         let rejection = if parsed.expected_generation != generation {
             Some("bias-generation-stale")
         } else if self.controller.phase() != SessionPhase::Active
-            || !matches!(self.controller.control_state(), ExperimentControlState::Armed | ExperimentControlState::Running | ExperimentControlState::Paused) {
+            || !matches!(
+                self.controller.control_state(),
+                ExperimentControlState::Armed
+                    | ExperimentControlState::Running
+                    | ExperimentControlState::Paused
+            )
+        {
             Some("bias-session-not-ready")
-        } else if self.controller.last_monotonic().is_some_and(|last| parsed.at < last) {
+        } else if self
+            .controller
+            .last_monotonic()
+            .is_some_and(|last| parsed.at < last)
+        {
             Some("bias-clock-regressed")
-        } else { None };
+        } else {
+            None
+        };
         if let Some(reason) = rejection {
             self.publish_operation(&parsed.operation_id, "rejected", reason, None);
             return;
         }
-        let prior = self.active_breath_guidance.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let prior = self
+            .active_breath_guidance
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let Some(prior) = prior.filter(|g| g.generation == generation) else {
-            self.publish_operation(&parsed.operation_id, "rejected", "bias-guidance-unavailable", None);
+            self.publish_operation(
+                &parsed.operation_id,
+                "rejected",
+                "bias-guidance-unavailable",
+                None,
+            );
             return;
         };
         if parsed.at < prior.changed_at {
-            self.publish_operation(&parsed.operation_id, "rejected", "bias-clock-regressed", None);
+            self.publish_operation(
+                &parsed.operation_id,
+                "rejected",
+                "bias-clock-regressed",
+                None,
+            );
             return;
         }
         let Some(revision) = prior.bias_revision.checked_add(1) else {
-            self.publish_operation(&parsed.operation_id, "rejected", "bias-revision-exhausted", None);
+            self.publish_operation(
+                &parsed.operation_id,
+                "rejected",
+                "bias-revision-exhausted",
+                None,
+            );
             return;
         };
-        let origin = parsed.operator_fence.as_ref().expect("set-bias requires operator fence").origin;
+        let origin = parsed
+            .operator_fence
+            .as_ref()
+            .expect("set-bias requires operator fence")
+            .origin;
         let change = BiasChange {
-            observed_at: parsed.at, generation, operation_id: parsed.operation_id.clone(),
-            operator_origin: origin.to_owned(), old_bias_percent: prior.bias_percent,
-            new_bias_percent: bias_percent, bias_revision: revision,
+            observed_at: parsed.at,
+            generation,
+            operation_id: parsed.operation_id.clone(),
+            operator_origin: origin.to_owned(),
+            old_bias_percent: prior.bias_percent,
+            new_bias_percent: bias_percent,
+            bias_revision: revision,
         };
         // The writer retains ownership through fsync/checkpoint completion. An uncertain
         // outcome terminates this recording; neither application nor automatic retry is safe.
         if let Err(error) = self.backend.record_bias_change(change) {
             self.completion_persistence_failure = Some(error.clone());
-            if let Ok(stopping) = self.apply_internal(parsed.at, SessionCommand::RestartToExperimenter) {
+            if let Ok(stopping) =
+                self.apply_internal(parsed.at, SessionCommand::RestartToExperimenter)
+            {
                 self.refresh_controller_projection();
                 let _ = self.process_effects(stopping.effects, parsed.at);
             }
@@ -1385,11 +1576,23 @@ impl SessionWorker {
                 p.operator_operation_id = Some(parsed.operation_id.clone());
                 p.operator_operation_status = "failed";
             });
-            self.publish_operation(&parsed.operation_id, "failed", format!("recording-bias-persistence:{error}"), None);
+            self.publish_operation(
+                &parsed.operation_id,
+                "failed",
+                format!("recording-bias-persistence:{error}"),
+                None,
+            );
             return;
         }
-        *self.active_breath_guidance.write().unwrap_or_else(|e| e.into_inner()) =
-            Some(ActiveBreathGuidance { bias_percent, bias_revision: revision, changed_at: parsed.at, ..prior });
+        *self
+            .active_breath_guidance
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(ActiveBreathGuidance {
+            bias_percent,
+            bias_revision: revision,
+            changed_at: parsed.at,
+            ..prior
+        });
         self.projection_write(|p| {
             p.operator_origin = origin;
             p.operator_operation_id = Some(parsed.operation_id.clone());
@@ -1546,7 +1749,8 @@ impl SessionWorker {
                                 .write()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = active_guidance;
                             self.projection_write(|projection| {
-                                projection.recording_started_ns = Some(spec.clock_anchor.monotonic.get());
+                                projection.recording_started_ns =
+                                    Some(spec.clock_anchor.monotonic.get());
                                 projection.official_started_ns = None;
                                 projection.recording_ended_ns = None;
                                 projection.breath_guidance_last_operation_id = None;
@@ -1793,7 +1997,7 @@ impl SessionWorker {
                 SessionEffect::ResetRuntimeDefaults => {
                     self.recording_requires_polar = false;
                     self.polar_pause_latched = false;
-            self.polar_last_pause = None;
+                    self.polar_last_pause = None;
                     crate::breath_composition_runtime::reset_to_packaged_defaults();
                     let reset_revision = request_particle_packaged_defaults_reset();
                     self.current_identity = None;
@@ -1818,7 +2022,7 @@ impl SessionWorker {
                 SessionEffect::ShutdownApp => {
                     self.recording_requires_polar = false;
                     self.polar_pause_latched = false;
-            self.polar_last_pause = None;
+                    self.polar_last_pause = None;
                     self.projection_write(|projection| {
                         projection.shutdown_status = "joining";
                     });
@@ -1941,23 +2145,42 @@ impl SessionWorker {
 
     fn reconcile_polar_input(&mut self, command_at: Option<MonotonicNanos>) {
         use crate::experiment_session::ExperimentControlState;
-        let (input, loss) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
-        if matches!(self.controller.phase(), SessionPhase::Idle | SessionPhase::Closed) {
+        let (input, loss) = crate::polar_input_health::status(
+            self.recording_requires_polar,
+            self.polar_pause_latched,
+        );
+        if matches!(
+            self.controller.phase(),
+            SessionPhase::Idle | SessionPhase::Closed
+        ) {
             self.recording_requires_polar = false;
             self.polar_pause_latched = false;
             self.polar_last_pause = None;
         } else {
             self.recording_requires_polar |= input.required;
         }
-        if input.required && (!input.fresh || loss.revision != self.last_input_revision)
+        if input.required
+            && (!input.fresh || loss.revision != self.last_input_revision)
             && self.controller.phase() == SessionPhase::Active
-            && self.controller.control_state() == ExperimentControlState::Running {
+            && self.controller.control_state() == ExperimentControlState::Running
+        {
             if let Some(now) = current_from_bridge(&self.monotonic_bridge) {
                 // Freeze at the loss deadline even if the command/writer lane was busy.
-                let at = MonotonicNanos::new(now.get().saturating_sub(loss.overdue.as_nanos().min(u128::from(u64::MAX)) as u64)
-                    .max(self.controller.last_monotonic().map_or(0, MonotonicNanos::get)));
+                let at = MonotonicNanos::new(
+                    now.get()
+                        .saturating_sub(loss.overdue.as_nanos().min(u128::from(u64::MAX)) as u64)
+                        .max(
+                            self.controller
+                                .last_monotonic()
+                                .map_or(0, MonotonicNanos::get),
+                        ),
+                );
                 let at = command_at.map_or(at, |command| at.min(command));
-                if self.controller.last_monotonic().is_none_or(|last| at >= last) {
+                if self
+                    .controller
+                    .last_monotonic()
+                    .is_none_or(|last| at >= last)
+                {
                     match self.apply_internal(at, SessionCommand::Pause) {
                         Ok(outcome) => {
                             self.polar_pause_latched = true;
@@ -1978,15 +2201,35 @@ impl SessionWorker {
                 }
             }
         }
-        let (current, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
-        let unchanged = self.projection.read().unwrap_or_else(|e| e.into_inner()).polar_input.same_readiness(current);
-        if !unchanged { self.refresh_controller_projection(); }
+        let (current, _) = crate::polar_input_health::status(
+            self.recording_requires_polar,
+            self.polar_pause_latched,
+        );
+        let unchanged = self
+            .projection
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .polar_input
+            .same_readiness(current);
+        if !unchanged {
+            self.refresh_controller_projection();
+        }
     }
 
     fn reconcile_submitted_frame_stall(&mut self, command_at: Option<MonotonicNanos>) -> bool {
-        let Some(mut now) = current_from_bridge(&self.monotonic_bridge) else { return false; };
-        if let Some(command_at) = command_at { now = now.min(command_at); }
-        if self.controller.last_monotonic().is_some_and(|last| now < last) { return false; }
+        let Some(mut now) = current_from_bridge(&self.monotonic_bridge) else {
+            return false;
+        };
+        if let Some(command_at) = command_at {
+            now = now.min(command_at);
+        }
+        if self
+            .controller
+            .last_monotonic()
+            .is_some_and(|last| now < last)
+        {
+            return false;
+        }
         if self.controller.presentation() == PresentationState::ImmersiveActive {
             let generation = self.controller.generation();
             let submitted_generation = self.submitted_frame_generation.load(Ordering::Acquire);
@@ -1996,8 +2239,16 @@ impl SessionWorker {
                 || submitted_sequence == 0
                 || now.get().saturating_sub(submitted_at) > SUBMITTED_FRAME_STALL_NS
             {
-                let stopped_at = MonotonicNanos::new(submitted_at.saturating_add(SUBMITTED_FRAME_STALL_NS)
-                    .min(now.get()).max(self.controller.last_monotonic().map_or(0, MonotonicNanos::get)));
+                let stopped_at = MonotonicNanos::new(
+                    submitted_at
+                        .saturating_add(SUBMITTED_FRAME_STALL_NS)
+                        .min(now.get())
+                        .max(
+                            self.controller
+                                .last_monotonic()
+                                .map_or(0, MonotonicNanos::get),
+                        ),
+                );
                 match self.apply_internal(
                     stopped_at,
                     SessionCommand::PresentationChanged(PresentationState::Unfocused),
@@ -2018,8 +2269,12 @@ impl SessionWorker {
 
     fn process_timed_tick(&mut self) {
         self.reconcile_polar_input(None);
-        if self.reconcile_submitted_frame_stall(None) { return; }
-        let Some(now) = current_from_bridge(&self.monotonic_bridge) else { return; };
+        if self.reconcile_submitted_frame_stall(None) {
+            return;
+        }
+        let Some(now) = current_from_bridge(&self.monotonic_bridge) else {
+            return;
+        };
         let Some(deadline) = self.controller.completion_deadline() else {
             return;
         };
@@ -2051,7 +2306,10 @@ impl SessionWorker {
 
     fn remember(&mut self, parsed: &ParsedCommand) {
         if matches!(parsed.operation, ParsedOperation::SetBias(_)) {
-            self.bias_history.push(OperationHistoryEntry { id: parsed.operation_id.clone(), value: parsed.value.clone() });
+            self.bias_history.push(OperationHistoryEntry {
+                id: parsed.operation_id.clone(),
+                value: parsed.value.clone(),
+            });
             return;
         }
         if self.history.len() == MAX_OPERATION_HISTORY {
@@ -2125,11 +2383,15 @@ impl SessionWorker {
     }
 
     fn refresh_controller_projection(&self) {
-        let (polar_input, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
+        let (polar_input, _) = crate::polar_input_health::status(
+            self.recording_requires_polar,
+            self.polar_pause_latched,
+        );
         // Only the recording latch crosses this atomic bridge. Current source
         // requirement is read live from health at request arrival, so an idle
         // source change cannot inherit the prior projection's configuration.
-        self.polar_requirement.store(u64::from(self.recording_requires_polar), Ordering::Release);
+        self.polar_requirement
+            .store(u64::from(self.recording_requires_polar), Ordering::Release);
         self.projection_write(|projection| {
             projection.polar_input = polar_input;
             projection.polar_last_pause = self.polar_last_pause.clone();
@@ -2147,14 +2409,24 @@ impl SessionWorker {
             projection.active_interval_started_ns = (self.controller.control_state()
                 == crate::experiment_session::ExperimentControlState::Running
                 && self.controller.presentation() == PresentationState::ImmersiveActive)
-                .then(|| self.controller.active_interval_started().map(MonotonicNanos::get))
+                .then(|| {
+                    self.controller
+                        .active_interval_started()
+                        .map(MonotonicNanos::get)
+                })
                 .flatten();
             projection.completion = self.controller.completion();
             projection.recording_result = self.controller.recording_result();
             projection.profile_identity_bound = self.current_identity.is_some();
             projection.session_key = self.current_session_key.clone();
-            projection.condition_id = self.current_identity.as_ref().map(|i| i.condition_id.clone());
-            projection.non_audio_profile_sha256 = self.current_identity.as_ref().map(|i| i.non_audio_profile_sha256.clone());
+            projection.condition_id = self
+                .current_identity
+                .as_ref()
+                .map(|i| i.condition_id.clone());
+            projection.non_audio_profile_sha256 = self
+                .current_identity
+                .as_ref()
+                .map(|i| i.non_audio_profile_sha256.clone());
             projection.audio_identity_bound = self.current_identity.is_some();
             projection.breath_guidance_identity_bound = self
                 .current_identity
@@ -2164,9 +2436,14 @@ impl SessionWorker {
                 .current_identity
                 .as_ref()
                 .map_or(0, |identity| identity.breath_guidance_bias_percent);
-            let guidance = self.active_breath_guidance.read().unwrap_or_else(|e| e.into_inner());
-            projection.breath_guidance_bias_percent = guidance.as_ref().map_or(0, |g| g.bias_percent);
-            projection.breath_guidance_bias_revision = guidance.as_ref().map_or(0, |g| g.bias_revision);
+            let guidance = self
+                .active_breath_guidance
+                .read()
+                .unwrap_or_else(|e| e.into_inner());
+            projection.breath_guidance_bias_percent =
+                guidance.as_ref().map_or(0, |g| g.bias_percent);
+            projection.breath_guidance_bias_revision =
+                guidance.as_ref().map_or(0, |g| g.bias_revision);
             projection.producer_retry_drops =
                 producer_loss_count(&self.producer_retry_drops, self.controller.generation());
         });
@@ -2284,8 +2561,13 @@ impl ExperimentSessionRuntime {
             + Send
             + 'static,
     ) -> Result<Self, String> {
-        Self::spawn_with_preparation_mode(recording_root, trusted_inventory, runtime_epoch,
-            crate::native_renderer_panel_bridge::packaged_preparation_mode(), backend_factory)
+        Self::spawn_with_preparation_mode(
+            recording_root,
+            trusted_inventory,
+            runtime_epoch,
+            crate::native_renderer_panel_bridge::packaged_preparation_mode(),
+            backend_factory,
+        )
     }
 
     fn spawn_with_preparation_mode(
@@ -2293,15 +2575,20 @@ impl ExperimentSessionRuntime {
         trusted_inventory: Option<TrustedExperimentInventory>,
         runtime_epoch: u64,
         preparation_mode: PreparationMode,
-        backend_factory: impl FnOnce(Arc<Mutex<Option<Arc<SessionRecordingWriter>>>>,
-            Arc<OnceLock<ExternalLossRecorder>>) -> Box<dyn RecordingBackend> + Send + 'static,
+        backend_factory: impl FnOnce(
+                Arc<Mutex<Option<Arc<SessionRecordingWriter>>>>,
+                Arc<OnceLock<ExternalLossRecorder>>,
+            ) -> Box<dyn RecordingBackend>
+            + Send
+            + 'static,
     ) -> Result<Self, String> {
         if runtime_epoch == 0 {
             return Err("experiment-session-runtime-epoch-invalid".to_owned());
         }
         let (command_sender, command_receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let preparation_presentation_observation = Arc::new(AtomicU64::new(0));
-        let worker_preparation_presentation_observation = Arc::clone(&preparation_presentation_observation);
+        let worker_preparation_presentation_observation =
+            Arc::clone(&preparation_presentation_observation);
         let (terminal_sender, terminal_receiver) = mpsc::sync_channel(TERMINAL_QUEUE_CAPACITY);
         let (observation_sender, observation_receiver) = mpsc::sync_channel(4);
         let (retry_sender, retry_receiver) = mpsc::sync_channel(RETRY_QUEUE_CAPACITY);
@@ -2381,7 +2668,12 @@ impl ExperimentSessionRuntime {
             .map_err(|error| format!("experiment-session-worker-spawn:{error}"))?;
         Ok(Self {
             breath_monitor: Mutex::new(crate::breath_monitor::History::default()),
-            recording_export: if option_env!("RUSTY_QUEST_NATIVE_RECORDING_EXPORT")==Some("true") {Some(crate::session_recording_export::Service::new()?)} else {None},
+            recording_export: if option_env!("RUSTY_QUEST_NATIVE_RECORDING_EXPORT") == Some("true")
+            {
+                Some(crate::session_recording_export::Service::new()?)
+            } else {
+                None
+            },
             preparation_presentation_observation,
             runtime_epoch,
             immersive_owner_identity: Arc::new(AtomicU64::new(0)),
@@ -2436,7 +2728,11 @@ impl ExperimentSessionRuntime {
         self.apply_command_json_with_fence(raw, None)
     }
 
-    fn apply_command_json_with_fence(&self, raw: &str, local_terminal_fence: Option<LocalTerminalFence>) -> String {
+    fn apply_command_json_with_fence(
+        &self,
+        raw: &str,
+        local_terminal_fence: Option<LocalTerminalFence>,
+    ) -> String {
         if raw.len() > MAX_COMMAND_BYTES {
             return self.cached(|cache| &cache.command_too_large);
         }
@@ -2460,14 +2756,21 @@ impl ExperimentSessionRuntime {
             if worker_finished && !self.rearmable_after_shutdown() {
                 return self.cached(|cache| &cache.worker_closed);
             }
-            if worker_finished { return self.status_json(); }
+            if worker_finished {
+                return self.status_json();
+            }
             // A live handle and a cached projection are not worker progress. Drop
             // every authority/worker lock before the bounded read-only request.
             let (acknowledgement, response) = mpsc::sync_channel(1);
-            if self.observation_sender.try_send(StatusObservation { acknowledgement }).is_err() {
+            if self
+                .observation_sender
+                .try_send(StatusObservation { acknowledgement })
+                .is_err()
+            {
                 return self.cached(|cache| &cache.observation_unavailable);
             }
-            return response.recv_timeout(Duration::from_millis(250))
+            return response
+                .recv_timeout(Duration::from_millis(250))
                 .unwrap_or_else(|_| self.cached(|cache| &cache.observation_unavailable));
         }
         let terminal_generation = terminal_command_generation(raw);
@@ -2536,7 +2839,10 @@ impl ExperimentSessionRuntime {
         // Recovery while a request waits in the command lane cannot replay it.
         let required = self.polar_requirement.load(Ordering::Acquire) != 0;
         let (input, _) = crate::polar_input_health::status(required, false);
-        PolarInputAdmission { required: input.required, ready: !input.required || input.fresh }
+        PolarInputAdmission {
+            required: input.required,
+            ready: !input.required || input.fresh,
+        }
     }
 
     pub(crate) fn status_json(&self) -> String {
@@ -2546,12 +2852,14 @@ impl ExperimentSessionRuntime {
         match self.projection.try_read() {
             Ok(projection) => {
                 let now = self.current_elapsed_realtime_ns();
-                let active_now = projection.observed_now(now,
+                let active_now = projection.observed_now(
+                    now,
                     self.submitted_frame_generation.load(Ordering::Acquire),
                     self.submitted_frame_sequence.load(Ordering::Acquire),
-                    self.submitted_frame_elapsed_ns.load(Ordering::Acquire));
+                    self.submitted_frame_elapsed_ns.load(Ordering::Acquire),
+                );
                 projection.response_json_clocks("accepted", "none", now, active_now)
-            },
+            }
             Err(_) => self.cached(|cache| &cache.accepted),
         }
     }
@@ -2559,52 +2867,124 @@ impl ExperimentSessionRuntime {
     fn monitor_clock(&self) -> Option<(u64, u64, bool, u64, &'static str)> {
         let now = self.current_elapsed_realtime_ns()?;
         let p = self.projection.try_read().ok()?;
-        let observed = p.observed_now(Some(now),
+        let observed = p.observed_now(
+            Some(now),
             self.submitted_frame_generation.load(Ordering::Acquire),
             self.submitted_frame_sequence.load(Ordering::Acquire),
-            self.submitted_frame_elapsed_ns.load(Ordering::Acquire));
+            self.submitted_frame_elapsed_ns.load(Ordering::Acquire),
+        );
         let running = p.phase == SessionPhase::Active
             && p.control_state == crate::experiment_session::ExperimentControlState::Running
-            && p.presentation == PresentationState::ImmersiveActive && observed == Some(now);
+            && p.presentation == PresentationState::ImmersiveActive
+            && observed == Some(now);
         let active_ns = p.official_active_time_ns(observed);
-        Some((p.generation, active_ns / 1_000_000, running, now, phase_token(p.phase)))
+        Some((
+            p.generation,
+            active_ns / 1_000_000,
+            running,
+            now,
+            phase_token(p.phase),
+        ))
     }
 
-    fn observe_breath_monitor(&self, source: &'static str, tracking: &'static str,
-        phase: &'static str, volume: Option<f32>, quality: f32, input_generation: u64) {
-        let Some((generation, active_ms, true, observed_ns, _)) = self.monitor_clock() else { return; };
-        let Ok(mut history) = self.breath_monitor.try_lock() else { return; };
+    fn observe_breath_monitor(
+        &self,
+        source: &'static str,
+        tracking: &'static str,
+        phase: &'static str,
+        volume: Option<f32>,
+        quality: f32,
+        input_generation: u64,
+    ) {
+        let Some((generation, active_ms, true, observed_ns, _)) = self.monitor_clock() else {
+            return;
+        };
+        let Ok(mut history) = self.breath_monitor.try_lock() else {
+            return;
+        };
         let run = format!("{}:{generation}", self.runtime_epoch);
-        history.observe(&run, crate::breath_monitor::Sample {
-            id: 0, active_ms, observed_ns, source, phase, tracking, input_generation,
-            volume: volume.filter(|v| tracking == "valid" && v.is_finite() && (0.0..=1.0).contains(v)),
-            quality: if quality.is_finite() { quality.clamp(0.0, 1.0) } else { 0.0 },
-        });
+        history.observe(
+            &run,
+            crate::breath_monitor::Sample {
+                id: 0,
+                active_ms,
+                observed_ns,
+                source,
+                phase,
+                tracking,
+                input_generation,
+                volume: volume
+                    .filter(|v| tracking == "valid" && v.is_finite() && (0.0..=1.0).contains(v)),
+                quality: if quality.is_finite() {
+                    quality.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                },
+            },
+        );
     }
 
     fn recordings_json(&self, request: &Value) -> String {
-        let unavailable=||json!({"v":1,"state":"unavailable","reason":"recording-owner-unavailable"}).to_string();
+        let unavailable = || {
+            json!({"v":1,"state":"unavailable","reason":"recording-owner-unavailable"}).to_string()
+        };
         if option_env!("RUSTY_QUEST_NATIVE_RECORDING_EXPORT") != Some("true")
-            || request.as_object().is_none_or(|o|o.len()!=4)
-            || request["schema"]!=EXPERIMENT_SESSION_COMMAND_SCHEMA {return unavailable();}
-        let Some(service)=self.recording_export.as_ref() else{return unavailable();};
-        let Some(binding)=request["binding"].as_str().filter(|s|!s.is_empty()&&s.len()<=256) else{return unavailable();};
-        let mode=crate::experiment_control_mode::read();
-        if !mode.selected()||mode.mode()!=crate::experiment_control_mode::ControlMode::Remote{return unavailable();}
-        let owner=self.immersive_owner_identity.load(Ordering::Acquire);
-        if owner==0||owner==u64::MAX{return unavailable();}
-        let Ok(p)=self.projection.try_read() else{return unavailable();};
-        let generation=p.generation;let epoch=self.runtime_epoch;
+            || request.as_object().is_none_or(|o| o.len() != 4)
+            || request["schema"] != EXPERIMENT_SESSION_COMMAND_SCHEMA
+        {
+            return unavailable();
+        }
+        let Some(service) = self.recording_export.as_ref() else {
+            return unavailable();
+        };
+        let Some(binding) = request["binding"]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 256)
+        else {
+            return unavailable();
+        };
+        let mode = crate::experiment_control_mode::read();
+        if !mode.selected() || mode.mode() != crate::experiment_control_mode::ControlMode::Remote {
+            return unavailable();
+        }
+        let owner = self.immersive_owner_identity.load(Ordering::Acquire);
+        if owner == 0 || owner == u64::MAX {
+            return unavailable();
+        }
+        let Ok(p) = self.projection.try_read() else {
+            return unavailable();
+        };
+        let generation = p.generation;
+        let epoch = self.runtime_epoch;
         drop(p);
-        let projection=Arc::clone(&self.projection);let identity=Arc::clone(&self.immersive_owner_identity);
-        let guard=Arc::new(move||{
-            if crate::experiment_control_mode::read()!=mode||identity.load(Ordering::Acquire)!=owner{return false;}
-            projection.try_read().ok().is_some_and(|p|p.runtime_epoch==epoch&&p.generation==generation
-                &&p.phase==SessionPhase::Idle&&p.control_state==crate::experiment_session::ExperimentControlState::Idle
-                &&p.session_key.is_none()&&p.initialization_status=="ready"&&p.recovery_status=="complete"
-                &&p.recording_root_status=="ready"&&p.shutdown_status=="not-requested")
+        let projection = Arc::clone(&self.projection);
+        let identity = Arc::clone(&self.immersive_owner_identity);
+        let guard = Arc::new(move || {
+            if crate::experiment_control_mode::read() != mode
+                || identity.load(Ordering::Acquire) != owner
+            {
+                return false;
+            }
+            projection.try_read().ok().is_some_and(|p| {
+                p.runtime_epoch == epoch
+                    && p.generation == generation
+                    && p.phase == SessionPhase::Idle
+                    && p.control_state == crate::experiment_session::ExperimentControlState::Idle
+                    && p.session_key.is_none()
+                    && p.initialization_status == "ready"
+                    && p.recovery_status == "complete"
+                    && p.recording_root_status == "ready"
+                    && p.shutdown_status == "not-requested"
+            })
         });
-        service.query(&self.recording_root,&request["query"],format!("{epoch}:{owner}:{generation}:{}:{binding}",mode.packed()),guard).to_string()
+        service
+            .query(
+                &self.recording_root,
+                &request["query"],
+                format!("{epoch}:{owner}:{generation}:{}:{binding}", mode.packed()),
+                guard,
+            )
+            .to_string()
     }
 
     /// Isolated read-only projection; never queues commands or acquires composition ownership.
@@ -2613,10 +2993,20 @@ impl ExperimentSessionRuntime {
         let valid = request.as_object().is_some_and(|o| o.len() == 4)
             && request["schema"].as_str() == Some(EXPERIMENT_SESSION_COMMAND_SCHEMA)
             && request["run"].as_str().is_some_and(|s| s.len() <= 64)
-            && request["after"].as_u64().is_some_and(|v| v <= 9_007_199_254_740_991);
-        if !valid { return json!({"v":1,"available":false,"reason":"invalid-monitor-query"}).to_string(); }
-        if !self.worker.try_lock().ok().is_some_and(|worker| worker.as_ref().is_some_and(|w| !w.is_finished())) {
-            return json!({"v":1,"available":false,"reason":"monitor-owner-unavailable"}).to_string();
+            && request["after"]
+                .as_u64()
+                .is_some_and(|v| v <= 9_007_199_254_740_991);
+        if !valid {
+            return json!({"v":1,"available":false,"reason":"invalid-monitor-query"}).to_string();
+        }
+        if !self
+            .worker
+            .try_lock()
+            .ok()
+            .is_some_and(|worker| worker.as_ref().is_some_and(|w| !w.is_finished()))
+        {
+            return json!({"v":1,"available":false,"reason":"monitor-owner-unavailable"})
+                .to_string();
         }
         let Some((generation, active_ms, running, now, state)) = self.monitor_clock() else {
             return json!({"v":1,"available":false,"reason":"monitor-busy"}).to_string();
@@ -2629,18 +3019,39 @@ impl ExperimentSessionRuntime {
         let cursor = latest.map_or(0, |s| s.id);
         let after = if request["run"].as_str() == Some(&run) {
             request["after"].as_u64().unwrap().min(cursor)
-        } else { 0 };
-        let samples: Vec<Value> = history.read(&run, after).into_iter().map(|s|
-            json!([s.id, s.active_ms, s.volume.map(|v| (f64::from(v) * 1000.0).round() / 1000.0),
-                s.phase, s.tracking, (f64::from(s.quality) * 1000.0).round() / 1000.0, s.source])).collect();
+        } else {
+            0
+        };
+        let samples: Vec<Value> = history
+            .read(&run, after)
+            .into_iter()
+            .map(|s| {
+                json!([
+                    s.id,
+                    s.active_ms,
+                    s.volume.map(|v| (f64::from(v) * 1000.0).round() / 1000.0),
+                    s.phase,
+                    s.tracking,
+                    (f64::from(s.quality) * 1000.0).round() / 1000.0,
+                    s.source
+                ])
+            })
+            .collect();
         let source = latest.map(|s| s.source);
         let age_ms = latest.map(|s| now.saturating_sub(s.observed_ns) / 1_000_000);
         drop(history);
         let Ok(guidance) = self.active_breath_guidance.try_read() else {
             return json!({"v":1,"available":false,"reason":"monitor-busy"}).to_string();
         };
-        let segments = guidance.as_ref().filter(|g| g.generation == generation)
-            .map(|g| g.timeline.monitor_segments(active_ms.saturating_sub(HISTORY_MS), active_ms.saturating_add(PREVIEW_MS)))
+        let segments = guidance
+            .as_ref()
+            .filter(|g| g.generation == generation)
+            .map(|g| {
+                g.timeline.monitor_segments(
+                    active_ms.saturating_sub(HISTORY_MS),
+                    active_ms.saturating_add(PREVIEW_MS),
+                )
+            })
             .unwrap_or_default();
         if segments.len() > 256 {
             return json!({"v":1,"available":false,"reason":"target-window-too-dense"}).to_string();
@@ -2648,7 +3059,8 @@ impl ExperimentSessionRuntime {
         json!({"v":1,"available":true,"epoch":self.runtime_epoch.to_string(),"run":run,
             "active_ms":active_ms,"running":running,"state":state,"source":source,
             "age_ms":age_ms,"cursor":cursor,"samples":samples,"segments":segments,
-            "history_ms":HISTORY_MS,"preview_ms":PREVIEW_MS}).to_string()
+            "history_ms":HISTORY_MS,"preview_ms":PREVIEW_MS})
+        .to_string()
     }
 
     fn cached(&self, select: impl FnOnce(&ReadbackCache) -> &String) -> String {
@@ -2659,61 +3071,121 @@ impl ExperimentSessionRuntime {
     }
 
     fn apply_local_terminal(&self, raw: &str, scope: LocalTerminalScope) -> String {
-        if raw.len() > MAX_COMMAND_BYTES { return self.cached(|cache| &cache.command_too_large); }
-        let fence = LocalTerminalFence { scope, owner: Arc::clone(&self.immersive_owner_identity),
-            gate: Arc::clone(&self.local_terminal_gate) };
+        if raw.len() > MAX_COMMAND_BYTES {
+            return self.cached(|cache| &cache.command_too_large);
+        }
+        let fence = LocalTerminalFence {
+            scope,
+            owner: Arc::clone(&self.immersive_owner_identity),
+            gate: Arc::clone(&self.local_terminal_gate),
+        };
         let gate = Arc::clone(&fence.gate);
         let _owner_guard = gate.lock().unwrap_or_else(|e| e.into_inner());
         let projection = self.projection.read().unwrap_or_else(|e| e.into_inner());
-        let parsed = parse_command_value(raw).ok().and_then(|v| parse_mutating_command(v, Instant::now()).ok());
-        let valid = parsed.is_some_and(|p| matches!(p.operation, ParsedOperation::SaveAndExit)
-            && p.expected_generation == fence.scope.generation) && fence.matches(&projection);
-        if !valid { return projection.response_json("rejected", "local-terminal-owner-fence-mismatch"); }
+        let parsed = parse_command_value(raw)
+            .ok()
+            .and_then(|v| parse_mutating_command(v, Instant::now()).ok());
+        let valid = parsed.is_some_and(|p| {
+            matches!(p.operation, ParsedOperation::SaveAndExit)
+                && p.expected_generation == fence.scope.generation
+        }) && fence.matches(&projection);
+        if !valid {
+            return projection.response_json("rejected", "local-terminal-owner-fence-mismatch");
+        }
         drop(projection);
         self.apply_command_json_with_fence(raw, Some(fence))
     }
 
     fn retirement_json(&self, scope: RendererRetirementScope, request: bool) -> String {
-        let _owner_guard = self.local_terminal_gate.lock().unwrap_or_else(|e| e.into_inner());
-        let mut state = self.renderer_retirement.lock().unwrap_or_else(|e| e.into_inner());
+        let _owner_guard = self
+            .local_terminal_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut state = self
+            .renderer_retirement
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = state.as_ref() {
             return if existing.scope == scope {
                 retirement_response(&scope, existing.status, &existing.reason)
-            } else { retirement_response(&scope, "error", "retirement-scope-mismatch") };
+            } else {
+                retirement_response(&scope, "error", "retirement-scope-mismatch")
+            };
         }
-        if !request { return retirement_response(&scope, "error", "retirement-not-requested"); }
+        if !request {
+            return retirement_response(&scope, "error", "retirement-not-requested");
+        }
         if self.immersive_owner_identity.load(Ordering::Acquire) != scope.owner_identity
-            || !self.projection.read().ok().is_some_and(|p| terminal_receipt_matches(&p, &scope)) {
+            || !self
+                .projection
+                .read()
+                .ok()
+                .is_some_and(|p| terminal_receipt_matches(&p, &scope))
+        {
             return retirement_response(&scope, "error", "terminal-receipt-mismatch");
         }
         if !self.worker_finished() {
             return retirement_response(&scope, "not-ready", "terminal-worker-not-finished");
         }
         if let Err(error) = self.join_finished_worker() {
-            *state = Some(RendererRetirement { scope: scope.clone(), status: "error", reason: error.clone() });
+            *state = Some(RendererRetirement {
+                scope: scope.clone(),
+                status: "error",
+                reason: error.clone(),
+            });
             return retirement_response(&scope, "error", &error);
         }
-        if !self.writer_slot.lock().ok().is_some_and(|writer| writer.is_none()) {
+        if !self
+            .writer_slot
+            .lock()
+            .ok()
+            .is_some_and(|writer| writer.is_none())
+        {
             return retirement_response(&scope, "error", "recording-writer-not-closed");
         }
-        *state = Some(RendererRetirement { scope: scope.clone(), status: "pending", reason: "accepted".to_owned() });
+        *state = Some(RendererRetirement {
+            scope: scope.clone(),
+            status: "pending",
+            reason: "accepted".to_owned(),
+        });
         retirement_response(&scope, "pending", "accepted")
     }
 
     /// Only the captured renderer may consume this existing runtime's request.
     pub(crate) fn renderer_retirement_pending(&self, owner_identity: u64) -> bool {
         self.immersive_owner_identity.load(Ordering::Acquire) == owner_identity
-            && self.renderer_retirement.lock().ok().is_some_and(|s| s.as_ref().is_some_and(|r|
-                r.scope.owner_identity == owner_identity && r.scope.runtime_epoch == self.runtime_epoch && r.status == "pending"))
+            && self.renderer_retirement.lock().ok().is_some_and(|s| {
+                s.as_ref().is_some_and(|r| {
+                    r.scope.owner_identity == owner_identity
+                        && r.scope.runtime_epoch == self.runtime_epoch
+                        && r.status == "pending"
+                })
+            })
     }
 
-    pub(crate) fn complete_renderer_retirement(&self, owner_identity: u64, result: Result<(), String>) {
-        let mut state = self.renderer_retirement.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(r) = state.as_mut().filter(|r| r.scope.owner_identity == owner_identity
-            && r.scope.runtime_epoch == self.runtime_epoch && r.status == "pending") {
+    pub(crate) fn complete_renderer_retirement(
+        &self,
+        owner_identity: u64,
+        result: Result<(), String>,
+    ) {
+        let mut state = self
+            .renderer_retirement
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(r) = state.as_mut().filter(|r| {
+            r.scope.owner_identity == owner_identity
+                && r.scope.runtime_epoch == self.runtime_epoch
+                && r.status == "pending"
+        }) {
             match result {
-                Ok(()) => { r.status = "retired"; r.reason = "gpu-xr-ui-resources-retired".to_owned(); }
-                Err(error) => { r.status = "error"; r.reason = error; }
+                Ok(()) => {
+                    r.status = "retired";
+                    r.reason = "gpu-xr-ui-resources-retired".to_owned();
+                }
+                Err(error) => {
+                    r.status = "error";
+                    r.reason = error;
+                }
             }
         }
     }
@@ -2756,14 +3228,29 @@ impl ExperimentSessionRuntime {
     }
 
     fn claim_immersive_owner(&self, identity: u64) -> Result<(), String> {
-        let _guard = self.local_terminal_gate.lock().unwrap_or_else(|e| e.into_inner());
-        if identity == 0 || identity >= i64::MAX as u64 { return Err("native-owner-invalid".to_owned()); }
+        let _guard = self
+            .local_terminal_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if identity == 0 || identity >= i64::MAX as u64 {
+            return Err("native-owner-invalid".to_owned());
+        }
         let mut prior = self.immersive_owner_identity.load(Ordering::Acquire);
         loop {
-            if prior == u64::MAX || self.worker_finished() { return Err("native-owner-retiring".to_owned()); }
-            if prior >= identity { return Err("native-owner-stale".to_owned()); }
-            match self.immersive_owner_identity.compare_exchange_weak(prior, identity, Ordering::AcqRel, Ordering::Acquire) {
-                Ok(_) => return Ok(()), Err(current) => prior=current,
+            if prior == u64::MAX || self.worker_finished() {
+                return Err("native-owner-retiring".to_owned());
+            }
+            if prior >= identity {
+                return Err("native-owner-stale".to_owned());
+            }
+            match self.immersive_owner_identity.compare_exchange_weak(
+                prior,
+                identity,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(current) => prior = current,
             }
         }
     }
@@ -2773,9 +3260,17 @@ impl ExperimentSessionRuntime {
         // shut down a replacement on this Arc, and retirement cannot acquire a
         // new owner while its terminal request/acknowledgement is pending.
         {
-            let _guard = self.local_terminal_gate.lock().unwrap_or_else(|e| e.into_inner());
-            if self.immersive_owner_identity.compare_exchange(identity, u64::MAX,
-                    Ordering::AcqRel, Ordering::Acquire).is_err() { return Ok(false); }
+            let _guard = self
+                .local_terminal_gate
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if self
+                .immersive_owner_identity
+                .compare_exchange(identity, u64::MAX, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                return Ok(false);
+            }
         }
         self.shutdown_for_immersive_owner_destroyed().map(|()| true)
     }
@@ -2876,10 +3371,13 @@ impl ExperimentSessionRuntime {
 
     fn current_breath_guidance_target(&self) -> Option<BreathGuidanceTarget> {
         self.current_breath_guidance_sample()
-            .map(|(_, _, _, _, target)| target).filter(|target| target.bias_percent > 0)
+            .map(|(_, _, _, _, target)| target)
+            .filter(|target| target.bias_percent > 0)
     }
 
-    fn current_breath_guidance_sample(&self) -> Option<(u64, usize, u64, u64, BreathGuidanceTarget)> {
+    fn current_breath_guidance_sample(
+        &self,
+    ) -> Option<(u64, usize, u64, u64, BreathGuidanceTarget)> {
         let now_ns = self.current_elapsed_realtime_ns()?;
         let projection = self.projection.try_read().ok()?;
         if projection.phase != SessionPhase::Active
@@ -2889,10 +3387,13 @@ impl ExperimentSessionRuntime {
         {
             return None;
         }
-        if projection.observed_now(Some(now_ns),
+        if projection.observed_now(
+            Some(now_ns),
             self.submitted_frame_generation.load(Ordering::Acquire),
             self.submitted_frame_sequence.load(Ordering::Acquire),
-            self.submitted_frame_elapsed_ns.load(Ordering::Acquire)) != Some(now_ns) {
+            self.submitted_frame_elapsed_ns.load(Ordering::Acquire),
+        ) != Some(now_ns)
+        {
             return None;
         }
         let generation = projection.generation;
@@ -2906,9 +3407,13 @@ impl ExperimentSessionRuntime {
         if guidance.generation != generation {
             return None;
         }
-        let mut target = guidance.timeline.intended_target_at(active_time_ns / 1_000_000, guidance.bias_percent)?;
+        let mut target = guidance
+            .timeline
+            .intended_target_at(active_time_ns / 1_000_000, guidance.bias_percent)?;
         target.bias_revision = guidance.bias_revision;
-        let (index, start, end) = guidance.timeline.phase_segment_at(target.official_active_time_ms)?;
+        let (index, start, end) = guidance
+            .timeline
+            .phase_segment_at(target.official_active_time_ms)?;
         Some((generation, index, start, end, target))
     }
 
@@ -2987,7 +3492,12 @@ fn run_worker(
                 terminal_claim,
                 local_terminal_fence,
             }) => {
-                worker.process_raw(raw, received_at, polar_ready_at_receipt, local_terminal_fence);
+                worker.process_raw(
+                    raw,
+                    received_at,
+                    polar_ready_at_receipt,
+                    local_terminal_fence,
+                );
                 worker.reconcile_polar_input(None);
                 worker.reconcile_submitted_frame_stall(None);
                 if let Some(generation) = terminal_claim {
@@ -3048,16 +3558,30 @@ fn run_worker(
         }
         worker.drain_pending_retries();
         // Latest actual renderer observation survives mutation-lane saturation.
-        let observed = worker.preparation_presentation_observation.swap(0, Ordering::AcqRel);
+        let observed = worker
+            .preparation_presentation_observation
+            .swap(0, Ordering::AcqRel);
         if observed & (1 << 63) != 0
-            && worker.controller.observe_preparation_presentation(presentation_from_code(observed & !(1 << 63))) {
+            && worker
+                .controller
+                .observe_preparation_presentation(presentation_from_code(observed & !(1 << 63)))
+        {
             worker.refresh_controller_projection();
         }
         match command_receiver.recv_timeout(Duration::from_millis(10)) {
             Ok(WorkerMessage::Command {
-                raw, received_at, polar_ready_at_receipt, local_terminal_fence, ..
+                raw,
+                received_at,
+                polar_ready_at_receipt,
+                local_terminal_fence,
+                ..
             }) => {
-                worker.process_raw(raw, received_at, polar_ready_at_receipt, local_terminal_fence);
+                worker.process_raw(
+                    raw,
+                    received_at,
+                    polar_ready_at_receipt,
+                    local_terminal_fence,
+                );
                 // Also runs after a blocking writer operation and with a busy
                 // command lane; freshness cannot depend on recv_timeout firing.
                 worker.reconcile_polar_input(None);
@@ -3210,8 +3734,12 @@ fn load_compiled_experiment_inventory(
         return Err("experiment-session-compiled-anchor-invalid".to_owned());
     }
 
-    let selected_directory = materialization::selected_directory(trusted_files_root, profile_sha256)?;
-    let bytes = materialization::read_file(&selected_directory, Path::new(EXPERIMENT_SESSION_PROFILE_FILE))?;
+    let selected_directory =
+        materialization::selected_directory(trusted_files_root, profile_sha256)?;
+    let bytes = materialization::read_file(
+        &selected_directory,
+        Path::new(EXPERIMENT_SESSION_PROFILE_FILE),
+    )?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| "experiment-session-profile-utf8-invalid".to_owned())?;
     if text.starts_with('\u{feff}') {
@@ -3324,9 +3852,11 @@ fn load_compiled_experiment_inventory(
                         .ok_or_else(|| {
                             "experiment-session-runtime-breath-guidance-bias-invalid".to_owned()
                         })?;
-                    let bytes = materialization::read_file(&selected_directory,
-                        &Path::new("breath-guidance").join(format!("{name}.json")))
-                        .map_err(|error| format!("breath-guidance-read:{error}"))?;
+                    let bytes = materialization::read_file(
+                        &selected_directory,
+                        &Path::new("breath-guidance").join(format!("{name}.json")),
+                    )
+                    .map_err(|error| format!("breath-guidance-read:{error}"))?;
                     let timeline = BreathGuidanceTimeline::parse_exact(
                         &bytes,
                         identity,
@@ -3457,7 +3987,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn capture_immersive_owner_runtime(identity: u64) -> Result<(u64, Arc<ExperimentSessionRuntime>), String> {
+pub(crate) fn capture_immersive_owner_runtime(
+    identity: u64,
+) -> Result<(u64, Arc<ExperimentSessionRuntime>), String> {
     let runtime = runtime().map_err(str::to_owned)?;
     if runtime.runtime_epoch == 0 || runtime.runtime_epoch > i64::MAX as u64 {
         return Err("native-owner-epoch-unrepresentable".to_owned());
@@ -3473,17 +4005,36 @@ pub(crate) fn apply_command_json(raw: &str) -> String {
     )
 }
 
-pub(crate) fn retire_recording_export() { if let Ok(r)=runtime(){if let Some(service)=r.recording_export.as_ref(){service.retire();}} }
+pub(crate) fn retire_recording_export() {
+    if let Ok(r) = runtime() {
+        if let Some(service) = r.recording_export.as_ref() {
+            service.retire();
+        }
+    }
+}
 
 pub(crate) fn status_json() -> String {
     runtime().map_or_else(startup_failure_json, |runtime| runtime.status_json())
 }
 
-pub(crate) fn observe_breath_monitor(source: &'static str, tracking: &'static str,
-    phase: &'static str, volume: Option<f32>, quality: f32, input_generation: u64) {
+pub(crate) fn observe_breath_monitor(
+    source: &'static str,
+    tracking: &'static str,
+    phase: &'static str,
+    volume: Option<f32>,
+    quality: f32,
+    input_generation: u64,
+) {
     if crate::experiment_control_mode::read().selected() {
         if let Ok(runtime) = runtime() {
-            runtime.observe_breath_monitor(source, tracking, phase, volume, quality, input_generation);
+            runtime.observe_breath_monitor(
+                source,
+                tracking,
+                phase,
+                volume,
+                quality,
+                input_generation,
+            );
         }
     }
 }
@@ -3622,8 +4173,11 @@ pub(crate) fn current_route_action() -> (RouteAction, u64) {
 }
 
 pub(crate) fn immersive_owner_identity() -> u64 {
-    runtime().ok().map(|r| r.immersive_owner_identity.load(Ordering::Acquire))
-        .filter(|id| *id > 0 && *id < i64::MAX as u64).unwrap_or(0)
+    runtime()
+        .ok()
+        .map(|r| r.immersive_owner_identity.load(Ordering::Acquire))
+        .filter(|id| *id > 0 && *id < i64::MAX as u64)
+        .unwrap_or(0)
 }
 
 pub(crate) fn apply_terminal_with_fence(raw: &str, scope: LocalTerminalScope) -> String {
@@ -3665,7 +4219,10 @@ pub(crate) fn current_presentation() -> PresentationState {
 
 pub(crate) fn note_preparation_presentation(presentation: PresentationState) {
     if let Ok(runtime) = runtime() {
-        runtime.preparation_presentation_observation.store((1 << 63) | presentation_code(presentation), Ordering::Release);
+        runtime.preparation_presentation_observation.store(
+            (1 << 63) | presentation_code(presentation),
+            Ordering::Release,
+        );
     }
 }
 
@@ -3682,10 +4239,10 @@ pub(crate) fn current_breath_guidance_target() -> Option<BreathGuidanceTarget> {
 }
 
 /// Audio and bias share the same generation-bound intended target/official clock method.
-pub(crate) fn current_breath_phase_audio_sample() -> Option<(u64, usize, u64, u64, BreathGuidanceTarget)> {
+pub(crate) fn current_breath_phase_audio_sample(
+) -> Option<(u64, usize, u64, u64, BreathGuidanceTarget)> {
     runtime().ok()?.current_breath_guidance_sample()
 }
-
 
 pub(crate) fn note_current_session_submitted_frame(generation: u64, frame_sequence: u64) -> bool {
     runtime()
@@ -3922,10 +4479,16 @@ fn parse_mutating_command(
         .ok_or_else(|| failure("operation-invalid"))?;
     let operator_fence = if operation_name.starts_with("operator-") {
         let mut operator_fields = vec![
-            "operator_origin", "expected_runtime_epoch", "expected_session_key",
-            "expected_condition", "expected_profile_sha256", "expected_binding_sha256",
+            "operator_origin",
+            "expected_runtime_epoch",
+            "expected_session_key",
+            "expected_condition",
+            "expected_profile_sha256",
+            "expected_binding_sha256",
         ];
-        if operation_name == "operator-set-bias" { operator_fields.push("bias_percent"); }
+        if operation_name == "operator-set-bias" {
+            operator_fields.push("bias_percent");
+        }
         require_common_fields(object, &operator_fields).map_err(|reason| failure(reason))?;
         let origin = match object.get("operator_origin").and_then(Value::as_str) {
             Some("shell-experiment-operator-v1") => "shell-experiment-operator-v1",
@@ -3933,24 +4496,62 @@ fn parse_mutating_command(
             Some("ui-session-v2") => "ui-session-v2",
             _ => return Err(failure("operator-origin-invalid")),
         };
-        let runtime_epoch = object.get("expected_runtime_epoch").and_then(Value::as_u64)
-            .filter(|v| *v > 0).ok_or_else(|| failure("operator-epoch-invalid"))?;
-        let session_key = object.get("expected_session_key").and_then(Value::as_str)
-            .filter(|v| v.len() == 27 && v.starts_with("utc-ns-") && v[7..].bytes().all(|b| b.is_ascii_digit()))
-            .ok_or_else(|| failure("operator-session-invalid"))?.to_owned();
-        let condition_id = object.get("expected_condition").and_then(Value::as_str)
+        let runtime_epoch = object
+            .get("expected_runtime_epoch")
+            .and_then(Value::as_u64)
+            .filter(|v| *v > 0)
+            .ok_or_else(|| failure("operator-epoch-invalid"))?;
+        let session_key = object
+            .get("expected_session_key")
+            .and_then(Value::as_str)
+            .filter(|v| {
+                v.len() == 27
+                    && v.starts_with("utc-ns-")
+                    && v[7..].bytes().all(|b| b.is_ascii_digit())
+            })
+            .ok_or_else(|| failure("operator-session-invalid"))?
+            .to_owned();
+        let condition_id = object
+            .get("expected_condition")
+            .and_then(Value::as_str)
             .filter(|v| *v == "condition-a" || *v == "condition-b")
-            .ok_or_else(|| failure("operator-condition-invalid"))?.to_owned();
-        let profile_sha256 = object.get("expected_profile_sha256").and_then(Value::as_str)
-            .filter(|v| valid_sha256(v)).ok_or_else(|| failure("operator-profile-invalid"))?.to_owned();
-        let binding_sha256 = object.get("expected_binding_sha256").and_then(Value::as_str)
-            .filter(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))).ok_or_else(|| failure("operator-binding-invalid"))?.to_owned();
-        Some(OperatorFence { origin, runtime_epoch, session_key, condition_id, profile_sha256, binding_sha256 })
-    } else { None };
+            .ok_or_else(|| failure("operator-condition-invalid"))?
+            .to_owned();
+        let profile_sha256 = object
+            .get("expected_profile_sha256")
+            .and_then(Value::as_str)
+            .filter(|v| valid_sha256(v))
+            .ok_or_else(|| failure("operator-profile-invalid"))?
+            .to_owned();
+        let binding_sha256 = object
+            .get("expected_binding_sha256")
+            .and_then(Value::as_str)
+            .filter(|v| {
+                v.len() == 64
+                    && v.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+            .ok_or_else(|| failure("operator-binding-invalid"))?
+            .to_owned();
+        Some(OperatorFence {
+            origin,
+            runtime_epoch,
+            session_key,
+            condition_id,
+            profile_sha256,
+            binding_sha256,
+        })
+    } else {
+        None
+    };
     let operation = match operation_name {
-        "operator-set-bias" => ParsedOperation::SetBias(object.get("bias_percent")
-            .and_then(Value::as_u64).filter(|bias| *bias <= 100)
-            .ok_or_else(|| failure("bias-percent-invalid"))? as u8),
+        "operator-set-bias" => ParsedOperation::SetBias(
+            object
+                .get("bias_percent")
+                .and_then(Value::as_u64)
+                .filter(|bias| *bias <= 100)
+                .ok_or_else(|| failure("bias-percent-invalid"))? as u8,
+        ),
         "operator-official-start" => ParsedOperation::OfficialStart,
         "operator-pause" => ParsedOperation::Pause,
         "operator-resume" => ParsedOperation::Resume,
@@ -4468,7 +5069,9 @@ mod tests {
     }
 
     fn materialize_compiled_profile(files_root: &Path, text: &str) {
-        let recording_root = files_root.join("viscereality-recordings").join("packaged-closures")
+        let recording_root = files_root
+            .join("viscereality-recordings")
+            .join("packaged-closures")
             .join(rusty_quest_broker_authority::packaged_json_sha256(text));
         fs::create_dir_all(&recording_root).unwrap();
         fs::write(recording_root.join(EXPERIMENT_SESSION_PROFILE_FILE), text).unwrap();
@@ -4490,38 +5093,68 @@ mod tests {
     fn local_terminal_scope_distinguishes_real_idle_and_every_active_identity_field() {
         let binding = "a".repeat(64);
         let owner = Arc::new(AtomicU64::new(7));
-        let mut fence = LocalTerminalFence { scope: LocalTerminalScope {
-            owner_identity: 7, runtime_epoch: 3, generation: 0, session_key: String::new(),
-            condition_id: String::new(), profile_sha256: String::new(), binding_sha256: binding.clone(),
-        }, owner: Arc::clone(&owner), gate: Arc::new(Mutex::new(())) };
-        let mut p = Projection { runtime_epoch: 3, initialization_status: "ready", inventory_status: "ready", ..Projection::default() };
+        let mut fence = LocalTerminalFence {
+            scope: LocalTerminalScope {
+                owner_identity: 7,
+                runtime_epoch: 3,
+                generation: 0,
+                session_key: String::new(),
+                condition_id: String::new(),
+                profile_sha256: String::new(),
+                binding_sha256: binding.clone(),
+            },
+            owner: Arc::clone(&owner),
+            gate: Arc::new(Mutex::new(())),
+        };
+        let mut p = Projection {
+            runtime_epoch: 3,
+            initialization_status: "ready",
+            inventory_status: "ready",
+            ..Projection::default()
+        };
         assert!(fence.matches_with_binding(&p, Some(&binding)));
         fence.scope.profile_sha256 = "b".repeat(64);
         assert!(!fence.matches_with_binding(&p, Some(&binding))); // Idle must not invent a profile.
-        p.generation = 5; p.phase = SessionPhase::Active;
-        p.session_key = Some("session".to_owned()); p.condition_id = Some("condition-a".to_owned());
+        p.generation = 5;
+        p.phase = SessionPhase::Active;
+        p.session_key = Some("session".to_owned());
+        p.condition_id = Some("condition-a".to_owned());
         p.non_audio_profile_sha256 = Some(fence.scope.profile_sha256.clone());
-        fence.scope.generation = 5; fence.scope.session_key = "session".to_owned(); fence.scope.condition_id = "condition-a".to_owned();
+        fence.scope.generation = 5;
+        fence.scope.session_key = "session".to_owned();
+        fence.scope.condition_id = "condition-a".to_owned();
         assert!(fence.matches_with_binding(&p, Some(&binding)));
         for damaged in 0..7 {
             let mut bad = fence.clone();
-            match damaged { 0 => bad.scope.owner_identity += 1, 1 => bad.scope.runtime_epoch += 1,
-                2 => bad.scope.generation += 1, 3 => bad.scope.session_key.push('x'),
-                4 => bad.scope.condition_id.push('x'), 5 => bad.scope.profile_sha256 = "c".repeat(64),
-                _ => bad.scope.binding_sha256 = "d".repeat(64) }
+            match damaged {
+                0 => bad.scope.owner_identity += 1,
+                1 => bad.scope.runtime_epoch += 1,
+                2 => bad.scope.generation += 1,
+                3 => bad.scope.session_key.push('x'),
+                4 => bad.scope.condition_id.push('x'),
+                5 => bad.scope.profile_sha256 = "c".repeat(64),
+                _ => bad.scope.binding_sha256 = "d".repeat(64),
+            }
             assert!(!bad.matches_with_binding(&p, Some(&binding)));
         }
         owner.store(8, Ordering::Release);
         assert!(!fence.matches_with_binding(&p, Some(&binding)));
         owner.store(7, Ordering::Release);
         p.phase = SessionPhase::Idle;
-        p.session_key = None; p.condition_id = None; p.non_audio_profile_sha256 = None;
-        fence.scope.session_key.clear(); fence.scope.condition_id.clear(); fence.scope.profile_sha256.clear();
+        p.session_key = None;
+        p.condition_id = None;
+        p.non_audio_profile_sha256 = None;
+        fence.scope.session_key.clear();
+        fence.scope.condition_id.clear();
+        fence.scope.profile_sha256.clear();
         p.recording_result = RecordingResult::Saved { completed: false };
         assert!(fence.matches_with_binding(&p, Some(&binding))); // Retains generation five.
         p.recording_result = RecordingResult::None;
         assert!(fence.matches_with_binding(&p, Some(&binding)));
-        p.recording_result = RecordingResult::Unsaved { completed: false, error: RecordingFailure::Finalize };
+        p.recording_result = RecordingResult::Unsaved {
+            completed: false,
+            error: RecordingFailure::Finalize,
+        };
         assert!(!fence.matches_with_binding(&p, Some(&binding)));
         p.recording_result = RecordingResult::Saved { completed: false };
         p.phase = SessionPhase::Closed;
@@ -4535,7 +5168,9 @@ mod tests {
         let runtime = runtime(&root);
         struct JoinSessionOnDrop<'a>(&'a ExperimentSessionRuntime);
         impl Drop for JoinSessionOnDrop<'_> {
-            fn drop(&mut self) { let _ = self.0.shutdown_for_test(); }
+            fn drop(&mut self) {
+                let _ = self.0.shutdown_for_test();
+            }
         }
         // Join before restoring the outer breath fixture, even on assertion panic.
         let _session_cleanup = JoinSessionOnDrop(&runtime);
@@ -4543,44 +5178,86 @@ mod tests {
         runtime.claim_immersive_owner(1).unwrap();
         runtime.apply_command_json(&start_command(&root, "retained-start"));
         wait_for(&runtime, "\"phase\":\"active\"");
-        runtime.apply_command_json(&command("restart-to-experimenter", "retained-save-next", 1, 2_000));
+        runtime.apply_command_json(&command(
+            "restart-to-experimenter",
+            "retained-save-next",
+            1,
+            2_000,
+        ));
         wait_for(&runtime, "\"last_operation_id\":\"retained-save-next\"");
         // The operation receipt is published before the final controller readback
         // refresh. Observe its completed idle identity tuple, not that transient
         // receipt with the previous session's identity still cached.
-        let saved: Value = serde_json::from_str(&wait_for(&runtime, "\"profile_identity_bound\":false")).unwrap();
+        let saved: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"profile_identity_bound\":false")).unwrap();
         assert_eq!(saved["readback"]["last_operation_id"], "retained-save-next");
         assert_eq!(saved["readback"]["last_operation_status"], "accepted");
-        assert_eq!(saved["readback"]["finalized_operation_id"], "retained-save-next");
+        assert_eq!(
+            saved["readback"]["finalized_operation_id"],
+            "retained-save-next"
+        );
         assert_eq!(saved["readback"]["phase"], "idle");
         assert_eq!(saved["readback"]["generation"], 1);
         assert_eq!(saved["readback"]["recording_result"]["status"], "saved");
         for field in ["session_key", "condition_id", "non_audio_profile_sha256"] {
             assert!(saved["readback"][field].is_null());
         }
-        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
-        let scope = LocalTerminalScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
-            generation: 1, session_key: String::new(), condition_id: String::new(), profile_sha256: String::new(),
-            binding_sha256: binding["snapshot"]["activation_binding_sha256"].as_str().unwrap().to_owned() };
+        let binding: Value =
+            serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
+        let scope = LocalTerminalScope {
+            owner_identity: 1,
+            runtime_epoch: runtime.runtime_epoch,
+            generation: 1,
+            session_key: String::new(),
+            condition_id: String::new(),
+            profile_sha256: String::new(),
+            binding_sha256: binding["snapshot"]["activation_binding_sha256"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        };
         let raw = command("save-and-exit", "retained-idle-exit", 1, 3_000);
-        let mut partial = scope.clone(); partial.condition_id = "condition-a".to_owned();
-        assert!(runtime.apply_local_terminal(&raw, partial).contains("local-terminal-owner-fence-mismatch"));
-        let mut coerced = scope.clone(); coerced.generation = 0;
-        assert!(runtime.apply_local_terminal(&command("save-and-exit", "coerced-idle-exit", 0, 3_000), coerced)
+        let mut partial = scope.clone();
+        partial.condition_id = "condition-a".to_owned();
+        assert!(runtime
+            .apply_local_terminal(&raw, partial)
             .contains("local-terminal-owner-fence-mismatch"));
-        assert!(runtime.apply_local_terminal(&raw, scope).contains("\"command_status\":\"queued\""));
-        let closed: Value = serde_json::from_str(&wait_for(&runtime, "\"shutdown_status\":\"complete\"")).unwrap();
+        let mut coerced = scope.clone();
+        coerced.generation = 0;
+        assert!(runtime
+            .apply_local_terminal(
+                &command("save-and-exit", "coerced-idle-exit", 0, 3_000),
+                coerced
+            )
+            .contains("local-terminal-owner-fence-mismatch"));
+        assert!(runtime
+            .apply_local_terminal(&raw, scope)
+            .contains("\"command_status\":\"queued\""));
+        let closed: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"shutdown_status\":\"complete\"")).unwrap();
         assert_eq!(closed["readback"]["generation"], 1);
         assert_eq!(closed["readback"]["finalized_session_generation"], 1);
         assert_eq!(closed["readback"]["recording_result"]["status"], "saved");
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
-        let retirement = RendererRetirementScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
-            generation: 1, operation_id: "retained-idle-exit".to_owned(),
-            shutdown_ack_revision: closed["readback"]["shutdown_ack_revision"].as_u64().unwrap() };
-        assert!(runtime.retirement_json(retirement.clone(), true).contains("\"status\":\"pending\""));
+        while !runtime.worker_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let retirement = RendererRetirementScope {
+            owner_identity: 1,
+            runtime_epoch: runtime.runtime_epoch,
+            generation: 1,
+            operation_id: "retained-idle-exit".to_owned(),
+            shutdown_ack_revision: closed["readback"]["shutdown_ack_revision"]
+                .as_u64()
+                .unwrap(),
+        };
+        assert!(runtime
+            .retirement_json(retirement.clone(), true)
+            .contains("\"status\":\"pending\""));
         runtime.complete_renderer_retirement(1, Ok(()));
-        assert!(runtime.retirement_json(retirement, false).contains("\"status\":\"retired\""));
+        assert!(runtime
+            .retirement_json(retirement, false)
+            .contains("\"status\":\"retired\""));
         runtime.shutdown_captured_immersive_owner(1).unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
@@ -4593,7 +5270,9 @@ mod tests {
         let runtime = runtime(&root);
         struct JoinSessionOnDrop<'a>(&'a ExperimentSessionRuntime);
         impl Drop for JoinSessionOnDrop<'_> {
-            fn drop(&mut self) { let _ = self.0.shutdown_for_test(); }
+            fn drop(&mut self) {
+                let _ = self.0.shutdown_for_test();
+            }
         }
         // Join before restoring the outer breath fixture, even on assertion panic.
         let _session_cleanup = JoinSessionOnDrop(&runtime);
@@ -4601,28 +5280,54 @@ mod tests {
         runtime.claim_immersive_owner(1).unwrap();
         runtime.apply_command_json(&start_command(&root, "local-owner-start"));
         wait_for(&runtime, "\"phase\":\"active\"");
-        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
+        let binding: Value =
+            serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
         let projection = runtime.projection.read().unwrap();
         let generation = projection.generation;
-        let fence = LocalTerminalFence { scope: LocalTerminalScope {
-            owner_identity: 1, runtime_epoch: runtime.runtime_epoch, generation,
-            session_key: projection.session_key.clone().unwrap(),
-            condition_id: projection.condition_id.clone().unwrap(),
-            profile_sha256: projection.non_audio_profile_sha256.clone().unwrap(),
-            binding_sha256: binding["snapshot"]["activation_binding_sha256"].as_str().unwrap().to_owned(),
-        }, owner: Arc::clone(&runtime.immersive_owner_identity), gate: Arc::clone(&runtime.local_terminal_gate) };
-        assert!(fence.matches(&projection), "queued scope must be valid before owner replacement");
+        let fence = LocalTerminalFence {
+            scope: LocalTerminalScope {
+                owner_identity: 1,
+                runtime_epoch: runtime.runtime_epoch,
+                generation,
+                session_key: projection.session_key.clone().unwrap(),
+                condition_id: projection.condition_id.clone().unwrap(),
+                profile_sha256: projection.non_audio_profile_sha256.clone().unwrap(),
+                binding_sha256: binding["snapshot"]["activation_binding_sha256"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            },
+            owner: Arc::clone(&runtime.immersive_owner_identity),
+            gate: Arc::clone(&runtime.local_terminal_gate),
+        };
+        assert!(
+            fence.matches(&projection),
+            "queued scope must be valid before owner replacement"
+        );
         drop(projection);
         let (entered, entered_rx) = mpsc::sync_channel(1);
         let (resume, resume_rx) = mpsc::channel();
-        runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
+        runtime
+            .command_sender
+            .send(WorkerMessage::PauseForTest {
+                entered,
+                resume: resume_rx,
+            })
+            .unwrap();
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(runtime.apply_local_terminal(&command("save-and-exit", "stale-local", generation, 2_000), fence.scope.clone())
+        assert!(runtime
+            .apply_local_terminal(
+                &command("save-and-exit", "stale-local", generation, 2_000),
+                fence.scope.clone()
+            )
             .contains("\"command_status\":\"queued\""));
         {
             let gate = runtime.producer_gate.read().unwrap();
             assert_eq!(gate.terminal_claims, 1);
-            assert!(!gate.accepting, "actual terminal admission must establish the producer cutoff");
+            assert!(
+                !gate.accepting,
+                "actual terminal admission must establish the producer cutoff"
+            );
         }
         runtime.claim_immersive_owner(2).unwrap();
         assert!(!fence.matches(&runtime.projection.read().unwrap()));
@@ -4631,82 +5336,156 @@ mod tests {
         assert!(rejected.contains("\"shutdown_ack_revision\":0"));
         assert!(!runtime.worker_finished());
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !runtime.producer_gate.read().unwrap().accepting && Instant::now() < deadline { thread::yield_now(); }
+        while !runtime.producer_gate.read().unwrap().accepting && Instant::now() < deadline {
+            thread::yield_now();
+        }
         {
             let gate = runtime.producer_gate.read().unwrap();
-            assert!(gate.accepting, "rejected stale scope must release its own cutoff");
+            assert!(
+                gate.accepting,
+                "rejected stale scope must release its own cutoff"
+            );
             assert_eq!(gate.terminal_claims, 0);
             assert_eq!(gate.generation, generation);
         }
-        assert_eq!(runtime.active_generation.load(Ordering::Acquire), generation);
+        assert_eq!(
+            runtime.active_generation.load(Ordering::Acquire),
+            generation
+        );
         assert!(runtime.writer_slot.lock().unwrap().is_some());
-        assert!(matches!(runtime.try_offer(SessionRecord::Event(SessionEvent {
-            observed_at: MonotonicNanos::new(2_100), kind: SessionEventKind::ImmersiveActive,
-        })), OfferOutcome::Accepted { .. }), "the still-current writer must accept records after rejection");
-        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
+        assert!(
+            matches!(
+                runtime.try_offer(SessionRecord::Event(SessionEvent {
+                    observed_at: MonotonicNanos::new(2_100),
+                    kind: SessionEventKind::ImmersiveActive,
+                })),
+                OfferOutcome::Accepted { .. }
+            ),
+            "the still-current writer must accept records after rejection"
+        );
+        let binding: Value =
+            serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
         let projection = runtime.projection.read().unwrap();
         assert_eq!(projection.phase, SessionPhase::Active);
         let current_owner = runtime.immersive_owner_identity.load(Ordering::Acquire);
         assert_eq!(current_owner, 2);
-        let current_fence = LocalTerminalFence { scope: LocalTerminalScope {
-            owner_identity: current_owner, runtime_epoch: runtime.runtime_epoch, generation: projection.generation,
-            session_key: projection.session_key.clone().unwrap(),
-            condition_id: projection.condition_id.clone().unwrap(),
-            profile_sha256: projection.non_audio_profile_sha256.clone().unwrap(),
-            binding_sha256: binding["snapshot"]["activation_binding_sha256"].as_str().unwrap().to_owned(),
-        }, owner: Arc::clone(&runtime.immersive_owner_identity), gate: Arc::clone(&runtime.local_terminal_gate) };
-        assert!(current_fence.matches(&projection), "current active owner must have a valid terminal scope");
+        let current_fence = LocalTerminalFence {
+            scope: LocalTerminalScope {
+                owner_identity: current_owner,
+                runtime_epoch: runtime.runtime_epoch,
+                generation: projection.generation,
+                session_key: projection.session_key.clone().unwrap(),
+                condition_id: projection.condition_id.clone().unwrap(),
+                profile_sha256: projection.non_audio_profile_sha256.clone().unwrap(),
+                binding_sha256: binding["snapshot"]["activation_binding_sha256"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            },
+            owner: Arc::clone(&runtime.immersive_owner_identity),
+            gate: Arc::clone(&runtime.local_terminal_gate),
+        };
+        assert!(
+            current_fence.matches(&projection),
+            "current active owner must have a valid terminal scope"
+        );
         drop(projection);
         let session_key = current_fence.scope.session_key.clone();
         let operation_id = "current-owner-fenced-save-exit";
-        assert!(runtime.apply_local_terminal(&command("save-and-exit", operation_id, generation, 3_000), current_fence.scope)
+        assert!(runtime
+            .apply_local_terminal(
+                &command("save-and-exit", operation_id, generation, 3_000),
+                current_fence.scope
+            )
             .contains("\"command_status\":\"queued\""));
-        let closed: Value = serde_json::from_str(&wait_for(&runtime, "\"shutdown_status\":\"complete\"")).unwrap();
+        let closed: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"shutdown_status\":\"complete\"")).unwrap();
         assert_eq!(closed["readback"]["finalized_operation_id"], operation_id);
-        assert_eq!(closed["readback"]["finalized_session_generation"], generation);
+        assert_eq!(
+            closed["readback"]["finalized_session_generation"],
+            generation
+        );
         assert_eq!(closed["readback"]["recording_result"]["status"], "saved");
-        let ack = closed["readback"]["shutdown_ack_revision"].as_u64().unwrap();
+        let ack = closed["readback"]["shutdown_ack_revision"]
+            .as_u64()
+            .unwrap();
         assert!(ack > 0);
-        let durable: Value = serde_json::from_slice(&fs::read(root.join(session_key).join("final.json")).unwrap()).unwrap();
+        let durable: Value =
+            serde_json::from_slice(&fs::read(root.join(session_key).join("final.json")).unwrap())
+                .unwrap();
         assert_eq!(durable["saved"], true);
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
+        while !runtime.worker_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
         assert!(runtime.worker_finished());
-        let retirement = RendererRetirementScope { owner_identity: current_owner, runtime_epoch: runtime.runtime_epoch,
-            generation, operation_id: operation_id.to_owned(), shutdown_ack_revision: ack };
-        let pending: Value = serde_json::from_str(&runtime.retirement_json(retirement.clone(), true)).unwrap();
+        let retirement = RendererRetirementScope {
+            owner_identity: current_owner,
+            runtime_epoch: runtime.runtime_epoch,
+            generation,
+            operation_id: operation_id.to_owned(),
+            shutdown_ack_revision: ack,
+        };
+        let pending: Value =
+            serde_json::from_str(&runtime.retirement_json(retirement.clone(), true)).unwrap();
         assert_eq!(pending["status"], "pending");
         assert_eq!(pending["owner_identity"], current_owner);
         assert_eq!(pending["operation_id"], operation_id);
         runtime.complete_renderer_retirement(current_owner, Ok(()));
-        let retired: Value = serde_json::from_str(&runtime.retirement_json(retirement, false)).unwrap();
+        let retired: Value =
+            serde_json::from_str(&runtime.retirement_json(retirement, false)).unwrap();
         assert_eq!(retired["status"], "retired");
         assert_eq!(retired["shutdown_ack_revision"], ack);
         assert_eq!(retired["generation"], generation);
-        runtime.shutdown_captured_immersive_owner(current_owner).unwrap();
+        runtime
+            .shutdown_captured_immersive_owner(current_owner)
+            .unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]
     fn retirement_receipt_requires_saved_active_or_explicit_clean_idle_and_exact_tuple() {
-        let scope = RendererRetirementScope { owner_identity: 7, runtime_epoch: 3, generation: 9,
-            operation_id: "finish".to_owned(), shutdown_ack_revision: 2 };
-        let mut p = Projection { runtime_epoch: 3, generation: 9, phase: SessionPhase::Closed,
-            shutdown_status: "complete", shutdown_ack_revision: 2, finalized_session_generation: 9,
-            finalized_operation_id: Some("finish".to_owned()), recording_result: RecordingResult::Saved { completed: false }, ..Projection::default() };
+        let scope = RendererRetirementScope {
+            owner_identity: 7,
+            runtime_epoch: 3,
+            generation: 9,
+            operation_id: "finish".to_owned(),
+            shutdown_ack_revision: 2,
+        };
+        let mut p = Projection {
+            runtime_epoch: 3,
+            generation: 9,
+            phase: SessionPhase::Closed,
+            shutdown_status: "complete",
+            shutdown_ack_revision: 2,
+            finalized_session_generation: 9,
+            finalized_operation_id: Some("finish".to_owned()),
+            recording_result: RecordingResult::Saved { completed: false },
+            ..Projection::default()
+        };
         assert!(terminal_receipt_matches(&p, &scope));
         for damaged in 0..5 {
             let mut bad = scope.clone();
-            match damaged { 0 => bad.runtime_epoch += 1, 1 => bad.generation += 1,
-                2 => bad.operation_id.push('x'), 3 => bad.shutdown_ack_revision += 1, _ => bad.owner_identity = 0 }
+            match damaged {
+                0 => bad.runtime_epoch += 1,
+                1 => bad.generation += 1,
+                2 => bad.operation_id.push('x'),
+                3 => bad.shutdown_ack_revision += 1,
+                _ => bad.owner_identity = 0,
+            }
             assert!(!terminal_receipt_matches(&p, &bad));
         }
         p.recording_result = RecordingResult::None;
         assert!(!terminal_receipt_matches(&p, &scope));
-        let idle = RendererRetirementScope { generation: 0, ..scope };
-        p.generation = 0; p.finalized_session_generation = 0;
+        let idle = RendererRetirementScope {
+            generation: 0,
+            ..scope
+        };
+        p.generation = 0;
+        p.finalized_session_generation = 0;
         assert!(!terminal_receipt_matches(&p, &idle));
-        p.initialization_status = "ready"; p.inventory_status = "ready";
+        p.initialization_status = "ready";
+        p.inventory_status = "ready";
         assert!(terminal_receipt_matches(&p, &idle));
     }
 
@@ -4720,14 +5499,27 @@ mod tests {
         runtime.apply_command_json(&command("save-and-exit", "retire-error", 0, 1));
         wait_for(&runtime, "\"shutdown_status\":\"complete\"");
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
-        let scope = RendererRetirementScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
-            generation: 0, operation_id: "retire-error".to_owned(), shutdown_ack_revision: runtime.projection.read().unwrap().shutdown_ack_revision };
-        assert!(runtime.retirement_json(scope.clone(), true).contains("\"status\":\"pending\""));
+        while !runtime.worker_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let scope = RendererRetirementScope {
+            owner_identity: 1,
+            runtime_epoch: runtime.runtime_epoch,
+            generation: 0,
+            operation_id: "retire-error".to_owned(),
+            shutdown_ack_revision: runtime.projection.read().unwrap().shutdown_ack_revision,
+        };
+        assert!(runtime
+            .retirement_json(scope.clone(), true)
+            .contains("\"status\":\"pending\""));
         runtime.complete_renderer_retirement(1, Err("device-idle-failed".to_owned()));
         runtime.complete_renderer_retirement(1, Ok(()));
-        assert!(runtime.retirement_json(scope.clone(), false).contains("\"status\":\"error\""));
-        assert!(runtime.retirement_json(scope, true).contains("device-idle-failed"));
+        assert!(runtime
+            .retirement_json(scope.clone(), false)
+            .contains("\"status\":\"error\""));
+        assert!(runtime
+            .retirement_json(scope, true)
+            .contains("device-idle-failed"));
         runtime.shutdown_captured_immersive_owner(1).unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
@@ -4742,21 +5534,37 @@ mod tests {
         runtime.apply_command_json(&command("save-and-exit", "retire-idle", 0, 1));
         wait_for(&runtime, "\"shutdown_status\":\"complete\"");
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
+        while !runtime.worker_finished() && Instant::now() < deadline {
+            thread::yield_now();
+        }
         let p = runtime.projection.read().unwrap();
-        let scope = RendererRetirementScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
-            generation: 0, operation_id: "retire-idle".to_owned(), shutdown_ack_revision: p.shutdown_ack_revision };
+        let scope = RendererRetirementScope {
+            owner_identity: 1,
+            runtime_epoch: runtime.runtime_epoch,
+            generation: 0,
+            operation_id: "retire-idle".to_owned(),
+            shutdown_ack_revision: p.shutdown_ack_revision,
+        };
         drop(p);
-        assert!(runtime.retirement_json(scope.clone(), true).contains("\"status\":\"pending\""));
+        assert!(runtime
+            .retirement_json(scope.clone(), true)
+            .contains("\"status\":\"pending\""));
         assert!(runtime.renderer_retirement_pending(1));
         assert!(!runtime.renderer_retirement_pending(2));
         runtime.complete_renderer_retirement(2, Ok(()));
-        assert!(runtime.retirement_json(scope.clone(), false).contains("\"status\":\"pending\""));
+        assert!(runtime
+            .retirement_json(scope.clone(), false)
+            .contains("\"status\":\"pending\""));
         runtime.complete_renderer_retirement(1, Ok(()));
         runtime.shutdown_captured_immersive_owner(1).unwrap();
-        assert!(runtime.retirement_json(scope.clone(), false).contains("\"status\":\"retired\""));
-        let mut wrong = scope; wrong.operation_id.push('x');
-        assert!(runtime.retirement_json(wrong, false).contains("retirement-scope-mismatch"));
+        assert!(runtime
+            .retirement_json(scope.clone(), false)
+            .contains("\"status\":\"retired\""));
+        let mut wrong = scope;
+        wrong.operation_id.push('x');
+        assert!(runtime
+            .retirement_json(wrong, false)
+            .contains("retirement-scope-mismatch"));
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
@@ -4768,10 +5576,16 @@ mod tests {
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         let projection = runtime.projection.write().unwrap();
         let generation = projection.generation;
-        let response: Value = serde_json::from_str(&runtime.apply_command_json(&json!({
-            "schema": EXPERIMENT_SESSION_COMMAND_SCHEMA, "operation": "recordings",
-            "query": {"query":"list", "before":"", "limit":16}, "binding":"synthetic"
-        }).to_string())).unwrap();
+        let response: Value = serde_json::from_str(
+            &runtime.apply_command_json(
+                &json!({
+                    "schema": EXPERIMENT_SESSION_COMMAND_SCHEMA, "operation": "recordings",
+                    "query": {"query":"list", "before":"", "limit":16}, "binding":"synthetic"
+                })
+                .to_string(),
+            ),
+        )
+        .unwrap();
         assert_eq!(response["state"], "unavailable");
         assert!(response.get("command_status").is_none());
         assert!(!root.exists());
@@ -4800,25 +5614,34 @@ mod tests {
             provider_manifest_sha256: Some(&provider),
             provider_inventory_sha256: Some(&inventory),
         };
-        assert!(load_compiled_experiment_inventory(&root, anchors).unwrap().is_some());
+        assert!(load_compiled_experiment_inventory(&root, anchors)
+            .unwrap()
+            .is_some());
 
         // Preserve the verified Java output. Only this create-new negative fixture
         // is damaged; no recording history or accepted materialization is changed.
         let negative = PathBuf::from(std::env::var("RQ_TEST_COLD_NEGATIVE_ROOT").unwrap());
         fs::create_dir(&negative).unwrap();
-        let selected = negative.join("viscereality-recordings")
-            .join("packaged-closures").join(&profile);
+        let selected = negative
+            .join("viscereality-recordings")
+            .join("packaged-closures")
+            .join(&profile);
         fs::create_dir_all(&selected).unwrap();
         let good = materialization::selected_directory(&root, &profile).unwrap();
         let mut damaged = fs::read(good.join(EXPERIMENT_SESSION_PROFILE_FILE)).unwrap();
         damaged.push(b' ');
         fs::write(selected.join(EXPERIMENT_SESSION_PROFILE_FILE), damaged).unwrap();
-        assert_eq!(load_compiled_experiment_inventory(&negative, anchors).unwrap_err(),
-            "experiment-session-profile-digest-mismatch");
+        assert_eq!(
+            load_compiled_experiment_inventory(&negative, anchors).unwrap_err(),
+            "experiment-session-profile-digest-mismatch"
+        );
         fs::remove_file(selected.join(EXPERIMENT_SESSION_PROFILE_FILE)).unwrap();
-        assert!(load_compiled_experiment_inventory(&negative, anchors).unwrap_err()
+        assert!(load_compiled_experiment_inventory(&negative, anchors)
+            .unwrap_err()
             .starts_with("materialized-file:"));
-        println!("actual-java-cold-materialization accepted; tampered and missing profile rejected");
+        println!(
+            "actual-java-cold-materialization accepted; tampered and missing profile rejected"
+        );
     }
 
     #[test]
@@ -4887,7 +5710,11 @@ mod tests {
         // Tamper the selected original-key file. Materializing the altered text
         // would select its different digest and only test a missing directory.
         let selected = materialization::selected_directory(files_root, &digest).unwrap();
-        fs::write(selected.join(EXPERIMENT_SESSION_PROFILE_FILE), original + " ").unwrap();
+        fs::write(
+            selected.join(EXPERIMENT_SESSION_PROFILE_FILE),
+            original + " ",
+        )
+        .unwrap();
         assert!(
             load_compiled_experiment_inventory(files_root, compiled_anchors(&digest))
                 .unwrap_err()
@@ -4983,7 +5810,10 @@ mod tests {
         let profile_text = document.to_string();
         let profile_digest = rusty_quest_broker_authority::packaged_json_sha256(&profile_text);
         materialize_compiled_profile(files_root, &profile_text);
-        let guidance_root = recording_root.join("packaged-closures").join(&profile_digest).join("breath-guidance");
+        let guidance_root = recording_root
+            .join("packaged-closures")
+            .join(&profile_digest)
+            .join("breath-guidance");
         fs::create_dir_all(&guidance_root).unwrap();
         fs::write(guidance_root.join("condition-a.json"), &guidance_text).unwrap();
 
@@ -5078,16 +5908,30 @@ mod tests {
     }
 
     impl RecordingBackend for DamageBackend {
-        fn prepare_guided_breath(&mut self, at_ns: u64, generation: u64, operation_id: &str) -> Result<Value, String> {
+        fn prepare_guided_breath(
+            &mut self,
+            at_ns: u64,
+            generation: u64,
+            operation_id: &str,
+        ) -> Result<Value, String> {
             match self.guided_composition.as_mut() {
                 Some(runtime) => runtime.prepare_guided_arm(at_ns, generation, operation_id),
-                None => crate::breath_composition_runtime::prepare_guided_arm(at_ns, generation, operation_id),
-            }.map_err(|reason| format!("guided-breath-preparation:{reason}"))
+                None => crate::breath_composition_runtime::prepare_guided_arm(
+                    at_ns,
+                    generation,
+                    operation_id,
+                ),
+            }
+            .map_err(|reason| format!("guided-breath-preparation:{reason}"))
         }
         fn record_bias_change(&self, change: BiasChange) -> Result<(), String> {
-            if let Some(entered) = &self.bias_entered { entered.store(true, Ordering::Release); }
+            if let Some(entered) = &self.bias_entered {
+                entered.store(true, Ordering::Release);
+            }
             if let Some(release) = &self.bias_release {
-                while !release.load(Ordering::Acquire) { thread::sleep(Duration::from_millis(1)); }
+                while !release.load(Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(1));
+                }
             }
             thread::sleep(self.bias_delay);
             if self.fail_control_once.swap(false, Ordering::AcqRel) {
@@ -5210,31 +6054,42 @@ mod tests {
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         let query = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
             "operation":"breath-monitor","run":"","after":0});
-        let mut invalid = query.clone(); invalid["extra"] = json!(true);
-        let denied: Value = serde_json::from_str(&runtime.apply_command_json(&invalid.to_string())).unwrap();
+        let mut invalid = query.clone();
+        invalid["extra"] = json!(true);
+        let denied: Value =
+            serde_json::from_str(&runtime.apply_command_json(&invalid.to_string())).unwrap();
         assert_eq!(denied["reason"], "invalid-monitor-query");
         {
             let mut p = runtime.projection.write().unwrap();
-            p.generation = 9; p.phase = SessionPhase::Active;
+            p.generation = 9;
+            p.phase = SessionPhase::Active;
             p.control_state = crate::experiment_session::ExperimentControlState::Running;
             p.presentation = PresentationState::ImmersiveActive;
             p.active_time_ns = 2_000_000_000;
             p.active_interval_started_ns = Some(1_000_000_000);
         }
-        *runtime.monotonic_bridge.lock().unwrap() = Some((MonotonicNanos::new(1_000_000_000), Instant::now()));
-        runtime.submitted_frame_generation.store(9, Ordering::Release);
+        *runtime.monotonic_bridge.lock().unwrap() =
+            Some((MonotonicNanos::new(1_000_000_000), Instant::now()));
+        runtime
+            .submitted_frame_generation
+            .store(9, Ordering::Release);
         runtime.submitted_frame_sequence.store(1, Ordering::Release);
-        runtime.submitted_frame_elapsed_ns.store(1_000_000_000, Ordering::Release);
+        runtime
+            .submitted_frame_elapsed_ns
+            .store(1_000_000_000, Ordering::Release);
         runtime.observe_breath_monitor("polar-acc", "valid", "exhale", Some(0.4), 0.9, 1);
-        let data: Value = serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
+        let data: Value =
+            serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
         assert_eq!(data["available"], true);
         assert_eq!(data["running"], true);
         assert_eq!(data["samples"][0][2], 0.4);
         assert_eq!(data["samples"][0][3], "exhale");
         let time = data["active_ms"].as_u64().unwrap();
         assert!((2000..2100).contains(&time));
-        *runtime.monotonic_bridge.lock().unwrap() = Some((MonotonicNanos::new(2_000_000_000), Instant::now()));
-        let stale: Value = serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
+        *runtime.monotonic_bridge.lock().unwrap() =
+            Some((MonotonicNanos::new(2_000_000_000), Instant::now()));
+        let stale: Value =
+            serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
         let official: Value = serde_json::from_str(&runtime.status_json()).unwrap();
         assert_eq!(stale["active_ms"], official["readback"]["active_time_ms"]);
         assert_eq!(stale["active_ms"], 2500);
@@ -5242,16 +6097,20 @@ mod tests {
         {
             let mut p = runtime.projection.write().unwrap();
             p.control_state = crate::experiment_session::ExperimentControlState::Paused;
-            p.active_time_ns = time * 1_000_000; p.active_interval_started_ns = None;
+            p.active_time_ns = time * 1_000_000;
+            p.active_interval_started_ns = None;
         }
         runtime.observe_breath_monitor("polar-acc", "valid", "inhale", Some(0.9), 0.9, 1);
-        let paused: Value = serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
+        let paused: Value =
+            serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
         assert_eq!(paused["running"], false);
         assert_eq!(paused["active_ms"], time);
         assert_eq!(paused["samples"].as_array().unwrap().len(), 1);
         assert_eq!(runtime.projection.read().unwrap().last_operation_id, None);
         runtime.shutdown_for_test().unwrap();
-        if root.parent().unwrap().exists() { fs::remove_dir_all(root.parent().unwrap()).unwrap(); }
+        if root.parent().unwrap().exists() {
+            fs::remove_dir_all(root.parent().unwrap()).unwrap();
+        }
     }
 
     #[test]
@@ -5259,15 +6118,20 @@ mod tests {
         let root = temp_root("operator-arm-checkpoint");
         let runtime = runtime(&root);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
-        runtime.apply_command_json(&start_command(&root, "original-arm")
-            .replace("\"operation\":\"start\"", "\"operation\":\"arm\""));
-        let armed: Value = serde_json::from_str(&wait_for(&runtime, "\"arm_durable_checkpoint\":true")).unwrap();
+        runtime.apply_command_json(
+            &start_command(&root, "original-arm")
+                .replace("\"operation\":\"start\"", "\"operation\":\"arm\""),
+        );
+        let armed: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"arm_durable_checkpoint\":true")).unwrap();
         assert_eq!(armed["readback"]["arm_operation_id"], "original-arm");
         assert_eq!(armed["readback"]["arm_generation"], 1);
         assert_eq!(armed["readback"]["arm_runtime_epoch"], 1);
         assert_eq!(armed["readback"]["arm_condition"], "condition-a");
         runtime.apply_command_json(&command("audio-prepared", "later-audio", 1, 2_000));
-        let current: Value = serde_json::from_str(&wait_for(&runtime, "\"last_operation_id\":\"later-audio\"")).unwrap();
+        let current: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"last_operation_id\":\"later-audio\""))
+                .unwrap();
         assert_eq!(current["readback"]["last_operation_id"], "later-audio");
         assert_eq!(current["readback"]["arm_operation_id"], "original-arm");
         let mut valid = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
@@ -5284,32 +6148,54 @@ mod tests {
             ("expected_profile_sha256", json!("99".repeat(32))),
             ("expected_binding_sha256", json!("99".repeat(32))),
             ("expected_generation", json!(2)),
-        ].into_iter().enumerate() {
-            let mut bad = valid.clone(); bad[field] = wrong;
-            let id = format!("stale-operator-{index}"); bad["operation_id"] = json!(id);
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut bad = valid.clone();
+            bad[field] = wrong;
+            let id = format!("stale-operator-{index}");
+            bad["operation_id"] = json!(id);
             runtime.apply_command_json(&bad.to_string());
-            let status: Value = serde_json::from_str(&wait_for(&runtime, &format!("\"last_operation_id\":\"{id}\""))).unwrap();
+            let status: Value = serde_json::from_str(&wait_for(
+                &runtime,
+                &format!("\"last_operation_id\":\"{id}\""),
+            ))
+            .unwrap();
             assert_eq!(status["readback"]["last_operation_status"], "rejected");
             assert_eq!(status["readback"]["control_state"], "armed");
             assert_eq!(status["readback"]["operator_operation_id"], Value::Null);
         }
         runtime.note_submitted_frame(1, 1);
-        runtime.apply_command_json(&json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
+        runtime.apply_command_json(
+            &json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
             "operation":"presentation","operation_id":"actual-test-presentation",
-            "expected_generation":1,"elapsed_realtime_ns":7_000,"presentation":"immersive-active"}).to_string());
+            "expected_generation":1,"elapsed_realtime_ns":7_000,"presentation":"immersive-active"})
+            .to_string(),
+        );
         wait_for(&runtime, "\"presentation\":\"immersive-active\"");
         runtime.apply_command_json(&valid.to_string());
-        let started: Value = serde_json::from_str(&wait_for(&runtime, "\"operator_operation_status\":\"applied\"")).unwrap();
-        assert_eq!(started["readback"]["operator_operation_id"], "operator-start");
+        let started: Value = serde_json::from_str(&wait_for(
+            &runtime,
+            "\"operator_operation_status\":\"applied\"",
+        ))
+        .unwrap();
+        assert_eq!(
+            started["readback"]["operator_operation_id"],
+            "operator-start"
+        );
         assert_eq!(started["readback"]["control_state"], "running");
-        let duplicate: Value = serde_json::from_str(&runtime.apply_command_json(&valid.to_string())).unwrap();
+        let duplicate: Value =
+            serde_json::from_str(&runtime.apply_command_json(&valid.to_string())).unwrap();
         assert_eq!(duplicate["command_status"], "queued"); // worker owns replay admission, never synchronous applied.
         wait_for(&runtime, "\"last_operation_status\":\"duplicate\"");
-        valid["operation"] = json!("operator-pause"); valid["operation_id"] = json!("operator-pause");
+        valid["operation"] = json!("operator-pause");
+        valid["operation_id"] = json!("operator-pause");
         valid["elapsed_realtime_ns"] = json!(9_000);
         runtime.apply_command_json(&valid.to_string());
         wait_for(&runtime, "\"control_state\":\"paused\"");
-        valid["operation"] = json!("operator-resume"); valid["operation_id"] = json!("operator-resume");
+        valid["operation"] = json!("operator-resume");
+        valid["operation_id"] = json!("operator-resume");
         valid["elapsed_realtime_ns"] = json!(10_000);
         runtime.apply_command_json(&valid.to_string());
         wait_for(&runtime, "\"operator_operation_id\":\"operator-resume\"");
@@ -5322,16 +6208,28 @@ mod tests {
     #[test]
     fn remote_preparation_save_next_preserves_owner_and_recovered_recording() {
         let root = temp_root("remote-preparation-save-next");
-        let spawn_remote = |epoch| ExperimentSessionRuntime::spawn_with_preparation_mode(
-            root.clone(), Some(trusted_inventory()), epoch, PreparationMode::RemoteVr,
-            |slot, loss| Box::new(ActualRecordingBackend::new(slot, loss))).unwrap();
+        let spawn_remote = |epoch| {
+            ExperimentSessionRuntime::spawn_with_preparation_mode(
+                root.clone(),
+                Some(trusted_inventory()),
+                epoch,
+                PreparationMode::RemoteVr,
+                |slot, loss| Box::new(ActualRecordingBackend::new(slot, loss)),
+            )
+            .unwrap()
+        };
         let runtime = spawn_remote(1);
-        let initial: Value = serde_json::from_str(&wait_for(&runtime, "\"initialization_status\":\"ready\"")).unwrap();
+        let initial: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"initialization_status\":\"ready\""))
+                .unwrap();
         assert_eq!(initial["readback"]["preparation_mode"], "remote-vr");
         assert_eq!(initial["readback"]["generation"], 0);
         assert_eq!(initial["readback"]["active_time_ms"], 0);
         assert_eq!(initial["readback"]["vr_preparation"], false);
-        runtime.preparation_presentation_observation.store((1 << 63) | presentation_code(PresentationState::ImmersiveActive), Ordering::Release);
+        runtime.preparation_presentation_observation.store(
+            (1 << 63) | presentation_code(PresentationState::ImmersiveActive),
+            Ordering::Release,
+        );
         wait_for(&runtime, "\"vr_preparation\":true");
         runtime.apply_command_json(&start_command(&root, "remote-recording"));
         wait_for(&runtime, "\"phase\":\"active\"");
@@ -5339,14 +6237,28 @@ mod tests {
         // recording. Use the owner's actual clock for subsequent requests so
         // an automatic freshness reduction cannot make fixture timestamps stale.
         assert!(runtime.note_submitted_frame(1, 1));
-        let mut presented: Value = serde_json::from_str(&command("presentation", "remote-frame", 1,
-            runtime.current_elapsed_realtime_ns().unwrap())).unwrap();
+        let mut presented: Value = serde_json::from_str(&command(
+            "presentation",
+            "remote-frame",
+            1,
+            runtime.current_elapsed_realtime_ns().unwrap(),
+        ))
+        .unwrap();
         presented["presentation"] = json!("immersive-active");
         runtime.apply_command_json(&presented.to_string());
         wait_for(&runtime, "\"presentation\":\"immersive-active\"");
         let saved_at = runtime.current_elapsed_realtime_ns().unwrap();
-        runtime.apply_command_json(&command("restart-to-experimenter", "remote-save-next", 1, saved_at));
-        let saved: Value = serde_json::from_str(&wait_for(&runtime, "\"finalized_operation_id\":\"remote-save-next\"")).unwrap();
+        runtime.apply_command_json(&command(
+            "restart-to-experimenter",
+            "remote-save-next",
+            1,
+            saved_at,
+        ));
+        let saved: Value = serde_json::from_str(&wait_for(
+            &runtime,
+            "\"finalized_operation_id\":\"remote-save-next\"",
+        ))
+        .unwrap();
         assert_eq!(saved["readback"]["phase"], "idle");
         assert_eq!(saved["readback"]["route_action"], "none");
         assert_eq!(saved["readback"]["recording_result"]["status"], "saved");
@@ -5354,9 +6266,13 @@ mod tests {
         assert_eq!(saved["readback"]["shutdown_status"], "not-requested");
         assert_eq!(saved["readback"]["finalized_session_generation"], 1);
         assert!(!runtime.producer_gate.read().unwrap().accepting);
-        assert!(matches!(runtime.try_offer(SessionRecord::Event(SessionEvent {
-            observed_at: MonotonicNanos::new(saved_at + 1), kind: SessionEventKind::ImmersiveActive,
-        })), OfferOutcome::NotAccepting));
+        assert!(matches!(
+            runtime.try_offer(SessionRecord::Event(SessionEvent {
+                observed_at: MonotonicNanos::new(saved_at + 1),
+                kind: SessionEventKind::ImmersiveActive,
+            })),
+            OfferOutcome::NotAccepting
+        ));
         // The durable identity is published inside terminal effects. Wait for
         // the original operation's final acknowledgement before inspecting
         // worker-internal generation cleanup that follows those effects.
@@ -5365,7 +6281,9 @@ mod tests {
         assert!(!runtime.worker_finished());
         drop(runtime);
         let recovered = spawn_remote(2);
-        let ready: Value = serde_json::from_str(&wait_for(&recovered, "\"initialization_status\":\"ready\"")).unwrap();
+        let ready: Value =
+            serde_json::from_str(&wait_for(&recovered, "\"initialization_status\":\"ready\""))
+                .unwrap();
         assert_eq!(ready["readback"]["recovery_status"], "complete");
         assert_eq!(ready["readback"]["counts"]["stopped_early"], 1);
         assert_eq!(ready["readback"]["generation"], 0);
@@ -5624,10 +6542,19 @@ mod tests {
         assert_eq!(finalized_value["readback"]["storage_status"], "ready");
         assert_eq!(finalized_value["readback"]["recovery_status"], "complete");
         assert_eq!(finalized_value["readback"]["recovery_count"], 1);
-        assert_eq!(finalized_value["readback"]["recovery_work"]["validated_sessions"], 1);
-        assert_eq!(finalized_value["readback"]["recovery_work"]["reused_sessions"], 0);
+        assert_eq!(
+            finalized_value["readback"]["recovery_work"]["validated_sessions"],
+            1
+        );
+        assert_eq!(
+            finalized_value["readback"]["recovery_work"]["reused_sessions"],
+            0
+        );
         let timings = &finalized_value["readback"]["finalization_timings"];
-        assert!(timings["total_us"].as_u64().unwrap() >= timings["durable_finalize_us"].as_u64().unwrap());
+        assert!(
+            timings["total_us"].as_u64().unwrap()
+                >= timings["durable_finalize_us"].as_u64().unwrap()
+        );
 
         assert_eq!(
             finalized_value["readback"]["counts"]["by_condition"]["condition-a"]["stopped_early"],
@@ -5904,10 +6831,15 @@ mod tests {
         assert_eq!(pending["readback"]["arm_durable_checkpoint"], false);
         let armed: Value =
             serde_json::from_str(&wait_for(&runtime, "\"arm_durable_checkpoint\":true")).unwrap();
-        assert_eq!(armed["readback"]["arm_operation_id"], "pending-original-arm");
+        assert_eq!(
+            armed["readback"]["arm_operation_id"],
+            "pending-original-arm"
+        );
         assert_eq!(armed["readback"]["arm_generation"], 1);
         let directory = root.join("utc-ns-01725000000000000000");
-        assert!(directory.join("checkpoint-00000000000000000001.json").is_file());
+        assert!(directory
+            .join("checkpoint-00000000000000000001.json")
+            .is_file());
         runtime.apply_command_json(&command("save-and-exit", "pending-arm-exit", 1, 2_000));
         wait_for(&runtime, "\"shutdown_status\":\"complete\"");
         runtime.shutdown_for_test().unwrap();
@@ -5934,7 +6866,12 @@ mod tests {
         runtime.apply_command_json(&start_command(&root, "original-start-for-save"));
         wait_for(&runtime, "\"phase\":\"active\"");
         let submitted = Instant::now();
-        runtime.apply_command_json(&command("restart-to-experimenter", "original-save", 1, 2_000));
+        runtime.apply_command_json(&command(
+            "restart-to-experimenter",
+            "original-save",
+            1,
+            2_000,
+        ));
         assert!(submitted.elapsed() < Duration::from_millis(100));
         while !observed_entered.load(Ordering::Acquire) {
             assert!(submitted.elapsed() < Duration::from_secs(1));
@@ -5944,8 +6881,11 @@ mod tests {
         assert_eq!(pending["readback"]["generation"], 1);
         assert_eq!(pending["readback"]["phase"], "finalizing-restart");
         assert_ne!(pending["readback"]["recording_result"]["status"], "unsaved");
-        let saved: Value =
-            serde_json::from_str(&wait_for(&runtime, "\"last_operation_id\":\"original-save\"")).unwrap();
+        let saved: Value = serde_json::from_str(&wait_for(
+            &runtime,
+            "\"last_operation_id\":\"original-save\"",
+        ))
+        .unwrap();
         assert_eq!(saved["readback"]["last_operation_id"], "original-save");
         assert_eq!(saved["readback"]["recording_result"]["status"], "saved");
         assert_eq!(saved["readback"]["recording_result"]["completed"], false);
@@ -6015,21 +6955,43 @@ mod tests {
         wait_for(&runtime, "\"phase\":\"active\"");
         let (entered, entered_rx) = mpsc::sync_channel(1);
         let (resume, resume_rx) = mpsc::channel();
-        runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
+        runtime
+            .command_sender
+            .send(WorkerMessage::PauseForTest {
+                entered,
+                resume: resume_rx,
+            })
+            .unwrap();
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        let status = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        let status =
+            json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
         let mut regular_full = false;
         for index in 0..(COMMAND_QUEUE_CAPACITY * 2) {
-            regular_full |= runtime.apply_command_json(&command("tick", &format!("queued-tick-{index}"),
-                1, 2_000 + index as u64)).contains("command-queue-full");
+            regular_full |= runtime
+                .apply_command_json(&command(
+                    "tick",
+                    &format!("queued-tick-{index}"),
+                    1,
+                    2_000 + index as u64,
+                ))
+                .contains("command-queue-full");
         }
         assert!(regular_full);
-        assert!(runtime.apply_command_json(&status).contains("status-observation-unavailable"));
-        let terminal = runtime.apply_command_json(&command("restart-to-experimenter", "terminal-priority", 1, 2_000));
+        assert!(runtime
+            .apply_command_json(&status)
+            .contains("status-observation-unavailable"));
+        let terminal = runtime.apply_command_json(&command(
+            "restart-to-experimenter",
+            "terminal-priority",
+            1,
+            2_000,
+        ));
         assert!(terminal.contains("\"command_status\":\"queued\""));
         resume.send(()).unwrap();
         wait_for(&runtime, "\"route_action\":\"show-experimenter\"");
-        assert!(runtime.apply_command_json(&status).contains("\"command_status\":\"accepted\""));
+        assert!(runtime
+            .apply_command_json(&status)
+            .contains("\"command_status\":\"accepted\""));
         runtime.shutdown_for_test().unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
@@ -6046,13 +7008,19 @@ mod tests {
         assert!(!first.worker_finished());
         assert!(first.shutdown_captured_immersive_owner(11).unwrap());
         assert!(first.claim_immersive_owner(12).is_err());
-        let second = ExperimentSessionRuntime::spawn_with_epoch(root.clone(), Some(trusted_inventory()), 2,
-            |slot, loss| Box::new(DamageBackend::new(slot, loss))).unwrap();
+        let second = ExperimentSessionRuntime::spawn_with_epoch(
+            root.clone(),
+            Some(trusted_inventory()),
+            2,
+            |slot, loss| Box::new(DamageBackend::new(slot, loss)),
+        )
+        .unwrap();
         wait_for(&second, "\"initialization_status\":\"ready\"");
         second.claim_immersive_owner(12).unwrap();
         assert!(!first.shutdown_captured_immersive_owner(11).unwrap());
-        let status=json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
-        let read:Value=serde_json::from_str(&second.apply_command_json(&status)).unwrap();
+        let status =
+            json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        let read: Value = serde_json::from_str(&second.apply_command_json(&status)).unwrap();
         assert_eq!(read["command_status"], "accepted");
         assert_eq!(read["readback"]["runtime_epoch"], 2);
         assert!(second.shutdown_captured_immersive_owner(12).unwrap());
@@ -6061,25 +7029,41 @@ mod tests {
 
     #[test]
     fn native_owner_retirement_fences_replacement_before_worker_ack() {
-        let root=temp_root("native-owner-retirement");
+        let root = temp_root("native-owner-retirement");
         fs::create_dir_all(root.parent().unwrap()).unwrap();
-        let runtime=Arc::new(runtime(&root));
-        wait_for(&runtime,"\"initialization_status\":\"ready\"");
+        let runtime = Arc::new(runtime(&root));
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.claim_immersive_owner(1).unwrap();
-        let (entered,entered_rx)=mpsc::sync_channel(1);
-        let (resume,resume_rx)=mpsc::channel();
-        runtime.command_sender.send(WorkerMessage::PauseForTest { entered,resume:resume_rx }).unwrap();
+        let (entered, entered_rx) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::channel();
+        runtime
+            .command_sender
+            .send(WorkerMessage::PauseForTest {
+                entered,
+                resume: resume_rx,
+            })
+            .unwrap();
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        let captured=Arc::clone(&runtime);
-        let shutdown=thread::spawn(move||captured.shutdown_captured_immersive_owner(1));
-        let deadline=Instant::now()+Duration::from_secs(2);
-        while runtime.immersive_owner_identity.load(Ordering::Acquire)!=u64::MAX && Instant::now()<deadline {thread::yield_now();}
-        assert_eq!(runtime.immersive_owner_identity.load(Ordering::Acquire),u64::MAX);
+        let captured = Arc::clone(&runtime);
+        let shutdown = thread::spawn(move || captured.shutdown_captured_immersive_owner(1));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while runtime.immersive_owner_identity.load(Ordering::Acquire) != u64::MAX
+            && Instant::now() < deadline
+        {
+            thread::yield_now();
+        }
+        assert_eq!(
+            runtime.immersive_owner_identity.load(Ordering::Acquire),
+            u64::MAX
+        );
         assert!(runtime.claim_immersive_owner(2).is_err());
         // No mutex is retained across the shutdown wait: a current observation
         // reaches the bounded lane and fails honestly while the worker is paused.
-        let status=json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
-        assert!(runtime.apply_command_json(&status).contains("status-observation-unavailable"));
+        let status =
+            json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        assert!(runtime
+            .apply_command_json(&status)
+            .contains("status-observation-unavailable"));
         resume.send(()).unwrap();
         assert!(shutdown.join().unwrap().unwrap());
         assert!(runtime.worker_finished());
@@ -6092,17 +7076,27 @@ mod tests {
         fs::create_dir_all(root.parent().unwrap()).unwrap();
         let runtime = runtime(&root);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
-        let status = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        let status =
+            json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
         let before: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
         assert_eq!(before["command_status"], "accepted");
         let (entered, entered_rx) = mpsc::sync_channel(1);
         let (resume, resume_rx) = mpsc::channel();
-        runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
+        runtime
+            .command_sender
+            .send(WorkerMessage::PauseForTest {
+                entered,
+                resume: resume_rx,
+            })
+            .unwrap();
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(!runtime.worker_finished());
-        assert!(runtime.status_json().contains("\"command_status\":\"accepted\""));
+        assert!(runtime
+            .status_json()
+            .contains("\"command_status\":\"accepted\""));
         for _ in 0..5 {
-            let unavailable: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+            let unavailable: Value =
+                serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
             assert_eq!(unavailable["command_status"], "rejected");
             assert_eq!(unavailable["reason_code"], "status-observation-unavailable");
             assert_eq!(unavailable["readback"], before["readback"]);
@@ -6111,7 +7105,9 @@ mod tests {
         let after: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
         // The first call can find the bounded queue still draining. It cannot be
         // accepted until the worker actually acknowledges this request.
-        if after["command_status"] != "accepted" { thread::sleep(Duration::from_millis(60)); }
+        if after["command_status"] != "accepted" {
+            thread::sleep(Duration::from_millis(60));
+        }
         let after: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
         assert_eq!(after["command_status"], "accepted");
         assert_eq!(after["readback"], before["readback"]);
@@ -6576,7 +7572,12 @@ mod tests {
             runtime.apply_command_json(&start_command(&root, "start-threshold-fault"));
             wait_for(&runtime, "\"phase\":\"active\"");
             // Simulate retained diagnostic timing from an earlier successful save.
-            runtime.projection.write().unwrap().finalization_timings.total_us = 999;
+            runtime
+                .projection
+                .write()
+                .unwrap()
+                .finalization_timings
+                .total_us = 999;
 
             assert!(runtime.note_submitted_frame(1, 1));
             runtime.apply_command_json(
@@ -6602,12 +7603,14 @@ mod tests {
             assert!(failed.contains("\"status\":\"unsaved\""));
             assert!(failed.contains("\"error\":\"Finalize\""));
             let failed_value: Value = serde_json::from_str(&failed).unwrap();
-            assert_eq!(failed_value["readback"]["finalization_timings"]["total_us"], 0);
+            assert_eq!(
+                failed_value["readback"]["finalization_timings"]["total_us"],
+                0
+            );
 
             runtime.shutdown_for_test().unwrap();
             fs::remove_dir_all(root.parent().unwrap()).unwrap();
         }
     }
     include!("experiment_session_polar_tests.rs");
-
 }

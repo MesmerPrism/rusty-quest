@@ -1,0 +1,44 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.Transformer
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.*
+
+/** Exact source metadata is a packaging input, never an ambient version choice. */
+class SpatialSourceVersionName implements Transformer<String, String>, Serializable {
+    String transform(String fingerprint) {
+        if (!(fingerprint ==~ /[a-f0-9]{64}/)) throw new GradleException('source-version-fingerprint')
+        '0.1.0+src.' + fingerprint
+    }
+}
+
+abstract class WriteSpatialSourceVersion extends DefaultTask {
+    @Input abstract Property<String> getFingerprint()
+    @OutputDirectory abstract DirectoryProperty getOutputDirectory()
+
+    @TaskAction void writeStamp() {
+        def version = new SpatialSourceVersionName().transform(fingerprint.get())
+        def destination = outputDirectory.file('META-INF/rusty-quest/source-version.v1.txt').get().asFile
+        destination.parentFile.mkdirs()
+        byte[] bytes = (version + '\n').getBytes('US-ASCII')
+        if (!destination.isFile() || !Arrays.equals(destination.bytes, bytes)) destination.bytes = bytes
+    }
+}
+
+def selected = providers.gradleProperty('rqDeveloperSourceRuntimeStamp').orElse('false').get()
+if (!(selected in ['true', 'false'])) throw new GradleException('source-version-runtime-selection')
+if (selected == 'true') {
+    // The canonical producer selects this experiment only for opted-in DevFast debug.
+    if (gradle.startParameter.taskNames.any { it.toLowerCase(Locale.ROOT).contains('release') }) {
+        throw new GradleException('source-version-runtime-debug-only')
+    }
+    def fingerprint = providers.gradleProperty('rqDeveloperSourceCompositionFingerprint')
+    androidComponents.onVariants(androidComponents.selector().withBuildType('debug')) { variant ->
+        def stamp = tasks.register('write' + variant.name.capitalize() + 'SpatialSourceVersion', WriteSpatialSourceVersion) {
+            it.fingerprint.set(fingerprint)
+            it.outputDirectory.set(layout.buildDirectory.dir('generated/spatial-source-version/' + variant.name))
+        }
+        variant.outputs.each { it.versionName.set(fingerprint.map(new SpatialSourceVersionName())) }
+        variant.sources.resources.addGeneratedSourceDirectory(stamp, { it.outputDirectory })
+    }
+}

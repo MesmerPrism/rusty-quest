@@ -293,7 +293,7 @@ function Assert-PinnedDependencyCheckouts([string]$WorkflowText) {
             Name = 'Manifold'
             Path = 'rusty-manifold'
             Repository = 'MesmerPrism/rusty-manifold'
-            Ref = '947421a928889889e485006bcc0200e05c2394f9'
+            Ref = '847c320faba217708d38a9755a55efa5b3e43874'
         }
         [pscustomobject]@{
             Name = 'Lattice'

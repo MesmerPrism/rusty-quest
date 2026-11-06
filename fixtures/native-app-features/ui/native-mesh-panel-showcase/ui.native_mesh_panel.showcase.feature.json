@@ -82,6 +82,7 @@
     "dependencies": [],
     "source_files": [
       "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeMeshUiProducer.java",
+      "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeInputWidgetGeometry.java",
       "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativePageSnapshot.java",
       "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativePanelFont.java",
       "apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeSystemKeyboard.java",

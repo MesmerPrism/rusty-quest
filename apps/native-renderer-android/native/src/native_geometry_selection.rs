@@ -16,7 +16,9 @@ pub(crate) fn validate_render_mode(mode: NativeRendererRenderMode) -> Result<(),
 
 fn validate_selection(enabled: bool, mode: NativeRendererRenderMode) -> Result<(), String> {
     if !enabled && !matches!(mode, NativeRendererRenderMode::NativeWorldspaceIntegration) {
-        return Err("particles-only geometry selection requires native-worldspace-integration".into());
+        return Err(
+            "particles-only geometry selection requires native-worldspace-integration".into(),
+        );
     }
     Ok(())
 }
@@ -27,8 +29,13 @@ mod tests {
 
     #[test]
     fn particles_only_is_bound_to_the_native_scene_route() {
-        assert!(validate_selection(false, NativeRendererRenderMode::NativeWorldspaceIntegration).is_ok());
-        assert!(validate_selection(false, NativeRendererRenderMode::CustomStereoProjection).is_err());
+        assert!(
+            validate_selection(false, NativeRendererRenderMode::NativeWorldspaceIntegration)
+                .is_ok()
+        );
+        assert!(
+            validate_selection(false, NativeRendererRenderMode::CustomStereoProjection).is_err()
+        );
         assert!(validate_selection(true, NativeRendererRenderMode::CustomStereoProjection).is_ok());
     }
 }

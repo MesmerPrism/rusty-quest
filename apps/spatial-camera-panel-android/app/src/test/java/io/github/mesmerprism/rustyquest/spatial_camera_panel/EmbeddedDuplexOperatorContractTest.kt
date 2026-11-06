@@ -10,7 +10,71 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EmbeddedDuplexOperatorContractTest {
+  @Test fun policyMetadataReviewIsExplicitPersistentAndAcceptsNoCallerFields() {
+    val challenge = "a".repeat(32)
+    val request = EmbeddedDuplexOperatorContract.parseFields("review_policy_update", challenge, emptyMap())
+    assertEquals(EmbeddedDuplexOperatorContract.Route.REVIEW_POLICY_UPDATE, request.route)
+    for (fields in listOf(mapOf("max_token_ttl_ms" to 2_592_000_000L), mapOf("role_id" to "peer_a"),
+        mapOf("run_id" to "b".repeat(32)), mapOf("original_id" to "b".repeat(32)))) {
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields("review_policy_update", challenge, fields)
+      }
+    }
+  }
+
   private val nonce = "0123456789abcdef0123456789abcdef"
+  @Test fun explicitRunCallsAreClosedAndRetainActualOperation() {
+    val run="b".repeat(32); val original="c".repeat(32)
+    val create=EmbeddedDuplexOperatorContract.parseFields("new_run",nonce,mapOf("run_id" to run,"legacy_whole_original_id" to original))
+    assertEquals("NEW_RUN",create.route.name); assertEquals(run,create.runId);assertEquals(original,create.legacyWholeOriginalId)
+    assertEquals("RESUME_RUN",EmbeddedDuplexOperatorContract.parseFields("resume_run",nonce,mapOf("run_id" to run)).route.name)
+    assertEquals("RUN_STATUS",EmbeddedDuplexOperatorContract.parseFields("run_status",nonce,emptyMap()).route.name)
+    val start=EmbeddedDuplexOperatorContract.parseFields("start",nonce,mapOf("run_id" to run,"original_id" to original,"prepare_preflight" to true))
+    assertEquals("ORDINARY_START",start.route.name);assertEquals(run,start.runId);assertEquals(original,start.originalId)
+    assertEquals(run,EmbeddedDuplexOperatorContract.parseFields("operation_query",nonce,mapOf("run_id" to run,"original_id" to original)).runId)
+    assertEquals(run,EmbeddedDuplexOperatorContract.parseFields("operation_ack",nonce,mapOf("run_id" to run,"original_id" to original,
+        "request_sha256" to "d".repeat(64),"outcome_sha256" to "e".repeat(64),"consumer_receipt_sha256" to "f".repeat(64))).runId)
+    for(fields in listOf(mapOf("run_id" to "../escape"),mapOf("run_id" to run,"path" to "/outside"),emptyMap<String,Any>()))
+      assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("new_run",nonce,fields)}
+    assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("resume_run",nonce,mapOf("run_id" to run,"legacy_whole_original_id" to original))}
+    assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("run_status",nonce,mapOf("run_id" to run))}
+  }
+  @Test fun ordinaryStartUsesSelectedDepthPermissionDemand() {
+    for (layer in listOf(-1.0f, 0.0f, 5.0f, 6.0f)) {
+      assertFalse(embeddedDuplexStartNeedsScenePermission("disabled", layer))
+      assertTrue(embeddedDuplexStartNeedsScenePermission("legacy-native-sidecar", layer))
+      assertTrue(embeddedDuplexStartNeedsScenePermission("spatial-sdk-api-layer", layer))
+    }
+    for (layer in listOf(1.0f, 2.0f, 3.0f, 4.0f, 7.0f, 8.0f)) {
+      assertFalse(embeddedDuplexStartNeedsScenePermission("legacy-native-sidecar", layer))
+      assertFalse(embeddedDuplexStartNeedsScenePermission("spatial-sdk-api-layer", layer))
+    }
+  }
+  @Test fun ordinaryStartIsAnExplicitOwnedStartChoice() {
+    val original = "a".repeat(32)
+    val low = EmbeddedDuplexOperatorContract.parseFields("start", nonce, mapOf("original_id" to original))
+    val ordinary = EmbeddedDuplexOperatorContract.parseFields("start", nonce,
+        mapOf("original_id" to original, "prepare_preflight" to true))
+    assertEquals("START", low.route.name)
+    assertEquals("ORDINARY_START", ordinary.route.name)
+    assertEquals(original, ordinary.originalId)
+    assertEquals(nonce, ordinary.challenge)
+    for (invalid in listOf<Any?>(false, 1, "true", null)) assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("start", nonce,
+          mapOf("original_id" to original, "prepare_preflight" to invalid))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("start", nonce, mapOf("prepare_preflight" to true))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("peer_stop", nonce,
+          mapOf("original_id" to original, "prepare_preflight" to true))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("start", nonce,
+          mapOf("original_id" to original, "prepare_preflight" to true, "native_command" to "start"))
+    }
+  }
   private val fields = mapOf<String, Any?>(
       "role_id" to "peer_b",
       "remote_public_key_hex" to "ab".repeat(32),
@@ -20,6 +84,127 @@ class EmbeddedDuplexOperatorContractTest {
       "media_revoker_id" to "media.revoker",
       "admission_authority_id" to "admission.authority",
       "max_token_ttl_ms" to 60_000L)
+
+  @Test fun originalIdsOptInOnlyForTheEightClosedRuntimeMutators() {
+    val original = "a".repeat(32)
+    val policy = mapOf<String,Any?>("center" to 0,"middle" to 1,"outer" to 0,
+        "geometry" to 1,"brightness" to 2,"strength" to 0)
+    val blend = mapOf<String,Any?>("version" to 1,"enabled" to true,"threshold" to 0.25f,
+        "softness" to 0.125f,"amount" to 0.75f,"invert" to false,"diagnostic" to true)
+    for (method in listOf("start","renew_authority","peer_stop","peer_revoke","whole_app_close",
+        "concurrent_arm","policy_update","blend_update")) {
+      val fields = when (method) { "policy_update" -> policy; "blend_update" -> blend; else -> emptyMap() }
+      val direct = EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields)
+      val explicit = EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields + ("original_id" to original))
+      assertEquals(null, direct.originalId)
+      assertEquals(original, explicit.originalId)
+      assertEquals(direct.route, explicit.route)
+      assertEquals(direct.challenge, explicit.challenge)
+      if (method == "policy_update") assertTrue(direct.policy!!.contentEquals(explicit.policy!!))
+      if (method == "blend_update") {
+        assertTrue(direct.mask!!.contentEquals(explicit.mask!!))
+        assertTrue(explicit.mask!!.contentEquals(longArrayOf(1,1,0x3e800000,0x3e000000,0x3f400000,0,1)))
+      }
+      for (badId in listOf<Any?>(null, 12, "A".repeat(32), "a".repeat(31), "a".repeat(33))) {
+        assertThrows(IllegalArgumentException::class.java) {
+          EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields + ("original_id" to badId))
+        }
+      }
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields + ("original_id" to original) + ("json" to "{}"))
+      }
+    }
+    for (method in listOf("runtime_status","peer_status","concurrent_status","policy_read","blend_read",
+        "bootstrap_admission_status","close_no_media","pair_status","start_preflight",
+        "owner_failure_diagnostic","own_capture_diagnostic","stream_dropout_diagnostic")) {
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, mapOf("original_id" to original))
+      }
+    }
+    for ((method, base) in listOf("review" to fields, "status" to mapOf("role_id" to "peer_a"),
+        "confirm" to mapOf("review_sha256" to "b".repeat(64)))) {
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, base + ("original_id" to original))
+      }
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("blend_update", nonce,
+          blend + ("original_id" to original) + ("threshold" to -0.0f))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("policy_update", nonce,
+          policy + ("original_id" to original) + ("strength" to 3))
+    }
+  }
+
+  @Test fun originalQueryAndAcknowledgmentAreTypedAndClosed() {
+    val original = "a".repeat(32)
+    val queryFields = mapOf<String,Any?>("original_id" to original)
+    val ackFields = queryFields + mapOf("request_sha256" to "b".repeat(64),
+        "outcome_sha256" to "c".repeat(64), "consumer_receipt_sha256" to "d".repeat(64))
+    val query = EmbeddedDuplexOperatorContract.parseFields("operation_query", nonce, queryFields)
+    assertEquals(EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY, query.route)
+    assertEquals(original, query.originalId)
+    val ack = EmbeddedDuplexOperatorContract.parseFields("operation_ack", nonce, ackFields)
+    assertEquals(EmbeddedDuplexOperatorContract.Route.OPERATION_ACK, ack.route)
+    assertEquals(original, ack.originalId)
+    assertEquals("b".repeat(64), ack.requestSha256)
+    assertEquals("c".repeat(64), ack.outcomeSha256)
+    assertEquals("d".repeat(64), ack.consumerReceiptSha256)
+    for (method in listOf("operation_query", "operation_ack")) {
+      val selected = if (method == "operation_query") queryFields else ackFields
+      for (invalid in listOf(selected - "original_id", selected + ("original_id" to "a".repeat(31)),
+          selected + ("original_id" to 1), selected + ("operation" to "start"), selected + ("request" to "{}"))) {
+        assertThrows(IllegalArgumentException::class.java) {
+          EmbeddedDuplexOperatorContract.parseFields(method, nonce, invalid)
+        }
+      }
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, "A".repeat(32), selected)
+      }
+    }
+    for (key in listOf("request_sha256", "outcome_sha256", "consumer_receipt_sha256")) {
+      for (invalid in listOf(ackFields - key, ackFields + (key to "A".repeat(64)),
+          ackFields + (key to "e".repeat(63)), ackFields + (key to 12))) {
+        assertThrows(IllegalArgumentException::class.java) {
+          EmbeddedDuplexOperatorContract.parseFields("operation_ack", nonce, invalid)
+        }
+      }
+    }
+  }
+
+  @Test fun freshCallsKeepClosedOriginalAndContinuationShapes() {
+    val original = "a".repeat(32)
+    val selected = mapOf<String,Any?>("original_id" to original)
+    for (method in listOf("prepare_peer_start", "reestablish_peer_roots", "pair_session")) {
+      assertEquals(original, EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected).originalId)
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected + ("json" to "{}"))
+      }
+    }
+    val continued = selected + mapOf("prior_original_id" to "b".repeat(32), "prior_outcome_sha256" to "c".repeat(64))
+    val parsed = EmbeddedDuplexOperatorContract.parseFields("fresh_pair_continue", nonce, continued)
+    assertEquals("b".repeat(32), parsed.priorOriginalId)
+    assertEquals("c".repeat(64), parsed.priorOutcomeSha256)
+    for (bad in listOf(continued - "prior_outcome_sha256", continued + ("prior_outcome_sha256" to "C".repeat(64)),
+        continued + ("prior_original_id" to 1), continued + ("operation" to "arbitrary"))) {
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields("fresh_pair_continue", nonce, bad) }
+    }
+    for (method in listOf("operation_join_status", "operation_continuation_status", "operation_continuation_handoff")) {
+      assertEquals(original, EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected).originalId)
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields(method, nonce, emptyMap()) }
+    }
+    for (method in listOf("prepared_peer_start_status", "peer_root_status", "pair_setup_recovery_status")) {
+      EmbeddedDuplexOperatorContract.parseFields(method, nonce, emptyMap())
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected) }
+    }
+    val stop = selected + mapOf("request_sha256" to "d".repeat(64), "stop_intent_sha256" to "e".repeat(64))
+    assertEquals("e".repeat(64), EmbeddedDuplexOperatorContract.parseFields("operation_stop", nonce, stop).stopIntentSha256)
+    assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields("operation_stop", nonce, stop + ("stop_intent_sha256" to 1)) }
+    for (method in listOf("owner_succession_commit", "abandon_retained_scope", "new_run", "data")) {
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected) }
+    }
+  }
 
   @Test fun neutralMaskIsExplicitVersionedTypedAndClosed() {
     val selected = mapOf<String,Any?>("version" to 1,"enabled" to true,"threshold" to 0.5f,

@@ -169,6 +169,10 @@ impl<L> StereoInputSet<L> {
         Ok(())
     }
 
+    pub(crate) fn retired_or_unbound(&self, origin: StereoOrigin) -> bool {
+        let slot = self.slot(origin);
+        !slot.active && slot.latest.is_none()
+    }
     // Exact-owner retirement: stale retire callbacks cannot clear a successor.
     pub(crate) fn retire(&mut self, origin: StereoOrigin, epoch: SourceEpoch) -> bool {
         let slot = self.slot_mut(origin);

@@ -1,0 +1,2 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+package android.app.appfunctions; public class ExecuteAppFunctionRequest { public static class Builder { public Builder(String p,String f){if(!"com.oculus.vrshell".equals(p)||!"com.oculus.vrshell.appfunctions.ShellAppFunctions#recenterView".equals(f))throw new SecurityException();} public ExecuteAppFunctionRequest build(){return new ExecuteAppFunctionRequest();} } }

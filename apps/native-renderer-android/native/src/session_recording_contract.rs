@@ -12,21 +12,52 @@ use crate::session_recording_clock::{
 
 pub(crate) const DEFAULT_COMPLETION_THRESHOLD_NS: u64 = 30_000_000_000;
 
-pub(crate) fn validate_breath_polar_provenance(provenance: &Value, sampled_ns: u64, observed_ns: u64) -> Result<(), &'static str> {
+pub(crate) fn validate_breath_polar_provenance(
+    provenance: &Value,
+    sampled_ns: u64,
+    observed_ns: u64,
+) -> Result<(), &'static str> {
     crate::polar_composition_adapters::validate_polar_presentation_provenance(provenance)?;
-    let target=provenance["xr_target_ns"].as_u64().ok_or("polar-provenance-target-missing")?;
-    validate_polar_provenance_times(provenance["policy"].as_str().ok_or("polar-provenance-policy-missing")?, target, sampled_ns, observed_ns)
+    let target = provenance["xr_target_ns"]
+        .as_u64()
+        .ok_or("polar-provenance-target-missing")?;
+    validate_polar_provenance_times(
+        provenance["policy"]
+            .as_str()
+            .ok_or("polar-provenance-policy-missing")?,
+        target,
+        sampled_ns,
+        observed_ns,
+    )
 }
 
-fn validate_typed_breath_polar_provenance(provenance: crate::polar_composition_adapters::PolarPresentationProvenance, sampled_ns: u64, observed_ns: u64) -> Result<(), &'static str> {
+fn validate_typed_breath_polar_provenance(
+    provenance: crate::polar_composition_adapters::PolarPresentationProvenance,
+    sampled_ns: u64,
+    observed_ns: u64,
+) -> Result<(), &'static str> {
     provenance.validate()?;
-    validate_polar_provenance_times(provenance.policy, provenance.xr_target_ns, sampled_ns, observed_ns)
+    validate_polar_provenance_times(
+        provenance.policy,
+        provenance.xr_target_ns,
+        sampled_ns,
+        observed_ns,
+    )
 }
 
-fn validate_polar_provenance_times(policy: &str, target: u64, sampled_ns: u64, observed_ns: u64) -> Result<(), &'static str> {
-    let sample=if policy == "java-delayed-interpolation-at-xr-delayed-target" {
-        target.checked_sub(crate::polar_composition_adapters::POLAR_ACC_PRESENTATION_DELAY_NS).ok_or("polar-provenance-target-invalid")?
-    } else {target};
+fn validate_polar_provenance_times(
+    policy: &str,
+    target: u64,
+    sampled_ns: u64,
+    observed_ns: u64,
+) -> Result<(), &'static str> {
+    let sample = if policy == "java-delayed-interpolation-at-xr-delayed-target" {
+        target
+            .checked_sub(crate::polar_composition_adapters::POLAR_ACC_PRESENTATION_DELAY_NS)
+            .ok_or("polar-provenance-target-invalid")?
+    } else {
+        target
+    };
     if sampled_ns != sample / 1_000 * 1_000 || observed_ns != target / 1_000 * 1_000 {
         return Err("recording-polar-provenance-observation-mismatch");
     }
@@ -93,7 +124,10 @@ impl SessionStartSpec {
         self.experiment_identity.validate_for(&self.condition)?;
         if let Some(configuration) = &self.breath_tracking_configuration {
             crate::breath_composition_runtime::validate_tracking_configuration(configuration)?;
-            if configuration["prepared_monotonic_ns"].as_u64().is_none_or(|at| at < self.clock_anchor.monotonic.get()) {
+            if configuration["prepared_monotonic_ns"]
+                .as_u64()
+                .is_none_or(|at| at < self.clock_anchor.monotonic.get())
+            {
                 return Err("tracking-prepared-time-before-arm");
             }
         }
@@ -565,7 +599,8 @@ impl BreathPhase {
 pub(crate) struct BreathObservation {
     pub(crate) assessment_source: Option<&'static str>,
     pub(crate) tracking_status: Option<&'static str>,
-    pub(crate) polar_source_provenance: Option<crate::polar_composition_adapters::PolarPresentationProvenance>,
+    pub(crate) polar_source_provenance:
+        Option<crate::polar_composition_adapters::PolarPresentationProvenance>,
     pub(crate) guidance_bias_revision: u64,
     pub(crate) source_sequence: u64,
     pub(crate) sampled_at: SourceTimestamp,
@@ -642,10 +677,18 @@ impl SessionRecord {
     pub(crate) fn floats_are_finite(&self) -> bool {
         let optional_finite = |value: Option<f32>| value.map_or(true, f32::is_finite);
         match self {
-            Self::BiasChange(value) => value.generation > 0 && value.bias_revision > 0
-                && value.old_bias_percent <= 100 && value.new_bias_percent <= 100
-                && !value.operation_id.is_empty() && value.operation_id.len() <= 96
-                && matches!(value.operator_origin.as_str(), "shell-experiment-operator-v1" | "ble-session-v2" | "ui-session-v2"),
+            Self::BiasChange(value) => {
+                value.generation > 0
+                    && value.bias_revision > 0
+                    && value.old_bias_percent <= 100
+                    && value.new_bias_percent <= 100
+                    && !value.operation_id.is_empty()
+                    && value.operation_id.len() <= 96
+                    && matches!(
+                        value.operator_origin.as_str(),
+                        "shell-experiment-operator-v1" | "ble-session-v2" | "ui-session-v2"
+                    )
+            }
             Self::Event(_) | Self::PolarEcg(_) => true,
             Self::PolarAcc(value) => value
                 .samples
@@ -654,15 +697,42 @@ impl SessionRecord {
             Self::PolarHeartRate(value) => optional_finite(value.rr_interval_ms),
             Self::Breath(value) => {
                 optional_finite(value.volume01)
-                    && value.assessment_source.is_none_or(|source| matches!(source,"controller"|"polar-acc"))
+                    && value
+                        .assessment_source
+                        .is_none_or(|source| matches!(source, "controller" | "polar-acc"))
                     && (value.assessment_source.is_some() == value.tracking_status.is_some())
-                    && value.tracking_status.is_none_or(|status| matches!(status,"disabled"|"calibrating"|"valid"|"missing"|"stale"|"malformed"|"out-of-order"|"rejected-motion"|"rejected-rotation"))
-                    && (value.assessment_source != Some("polar-acc") || value.tracking_status != Some("valid") || value.polar_source_provenance.is_some())
-                    && (value.assessment_source.is_none() || (value.sampled_at.clock == SourceClock::OpenXrTime
-                        && value.observed_source.clock == SourceClock::OpenXrTime))
-                    && value.polar_source_provenance.as_ref().is_none_or(|provenance|
-                        value.assessment_source == Some("polar-acc")
-                            && validate_typed_breath_polar_provenance(*provenance,value.sampled_at.value_ns,value.observed_source.value_ns).is_ok())
+                    && value.tracking_status.is_none_or(|status| {
+                        matches!(
+                            status,
+                            "disabled"
+                                | "calibrating"
+                                | "valid"
+                                | "missing"
+                                | "stale"
+                                | "malformed"
+                                | "out-of-order"
+                                | "rejected-motion"
+                                | "rejected-rotation"
+                        )
+                    })
+                    && (value.assessment_source != Some("polar-acc")
+                        || value.tracking_status != Some("valid")
+                        || value.polar_source_provenance.is_some())
+                    && (value.assessment_source.is_none()
+                        || (value.sampled_at.clock == SourceClock::OpenXrTime
+                            && value.observed_source.clock == SourceClock::OpenXrTime))
+                    && value
+                        .polar_source_provenance
+                        .as_ref()
+                        .is_none_or(|provenance| {
+                            value.assessment_source == Some("polar-acc")
+                                && validate_typed_breath_polar_provenance(
+                                    *provenance,
+                                    value.sampled_at.value_ns,
+                                    value.observed_source.value_ns,
+                                )
+                                .is_ok()
+                        })
                     && value.quality01.is_finite()
                     && value.guidance_bias_percent <= 100
                     && match (value.guidance_phase, value.guidance_active_time_ms) {
@@ -708,7 +778,9 @@ impl SessionRecord {
     pub(crate) fn queued_payload_bytes(&self) -> usize {
         let base = std::mem::size_of::<Self>();
         match self {
-            Self::Breath(value) if value.polar_source_provenance.is_some() => base.saturating_add(2_048),
+            Self::Breath(value) if value.polar_source_provenance.is_some() => {
+                base.saturating_add(2_048)
+            }
             Self::PolarAcc(value) => base.saturating_add(
                 value
                     .samples
@@ -808,9 +880,15 @@ impl SessionRecord {
             }
             Self::Breath(value) => {
                 let mut row = common("breath", value.observed_at);
-                if let Some(source) = value.assessment_source { row["assessment_source"] = json!(source); }
-                if let Some(status) = value.tracking_status { row["tracking_status"] = json!(status); }
-                if let Some(provenance) = &value.polar_source_provenance { row["polar_source_provenance"] = provenance.encoded_value(); }
+                if let Some(source) = value.assessment_source {
+                    row["assessment_source"] = json!(source);
+                }
+                if let Some(status) = value.tracking_status {
+                    row["tracking_status"] = json!(status);
+                }
+                if let Some(provenance) = &value.polar_source_provenance {
+                    row["polar_source_provenance"] = provenance.encoded_value();
+                }
                 row["source_sequence"] = json!(value.source_sequence);
                 row["sampled_clock"] = json!(value.sampled_at.clock.as_str());
                 row["sampled_time_ns"] = json!(value.sampled_at.value_ns);

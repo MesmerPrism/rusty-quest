@@ -1,5 +1,98 @@
 # Native worldspace integration probe
 
+## Dedicated development hotload consumer
+
+`fixtures/native-app-builds/native-development-hotload.app.json` selects the
+separate package
+`io.github.mesmerprism.rustyquest.native_renderer.development_hotload`.
+Its six-feature closure includes the native scene, Android mesh panel, optional
+controller/hand input and explicit `native.development_feedback`. Camera,
+private particles, scientific payloads, broker and bilateral streaming are
+denied. Other app defaults do not enable the developer route.
+
+The visible scene contains a public procedural cube with a checker material,
+64 moving procedural particles, and the real Android panel texture sampled by
+Vulkan. The panel starts visible, is placed once from a valid tracked head
+pose, and offers text, scrolling, a text-input field, animation and particle
+controls, panel distance/size/reset, plus a button to compute with the active
+CPU generation. Controls requiring denied camera/hand/private features are
+disabled. Actual keyboard, tracking-loss and headset behavior require device
+qualification; the presence of an EditText is not proof of system IME support.
+
+The application-owned Rust frame thread holds the shared resident CPU host.
+The panel button and fixed app-private file transport enter the same typed
+dispatch. A compute result changes cube/particle color and spacing from its
+actual delta while the cumulative value, counter, allocation token and buffer
+continue. With the public conformance producer and input `4`, A/B/fresh-A give
+deltas `5/10/5`, cumulative values `5/15/20`, and blue/orange/blue material
+selection. An activation alone does not count as visible adoption: the scene's
+effective CPU generation changes only after successful computation.
+
+Each native render owner creates a fresh session directory under
+`files/development-feedback-native/<session>/`; atomic `current-session.json`
+advertises its PID/session/owner. The app never scans older sessions. Stage
+immutable, read-only `generation-<n>.so` with a fresh filename, positive ABI
+generation and unique Android SONAME. Stage create-new
+`command-<request_id>.json` there using `rusty.quest.hotload_command.v1`:
+
+| Method | Exact string arguments | Boundary |
+| --- | --- | --- |
+| `native_status` | none | Observation |
+| `native_activate` | `generation`, `sha256`, `probe_result` | Trusted CPU code replacement |
+| `native_compute` | `input` | Stateful dispatch / visible scene update |
+| `native_shader_activate` | `generation`, `vertex_sha256`, `fragment_sha256` | Shader pipeline replacement |
+
+JNI initialization and DEX methods are unsupported by this native host and are
+refused. Numbers have one canonical decimal spelling; hashes are lowercase
+SHA-256. Duplicate JSON keys, unknown fields and non-string arguments are
+rejected. The queue admits one command per frame and polls disk at most every
+100 ms; it remembers at most 512 request IDs and never replays a known request.
+The shared CPU host separately bounds attempts to 64, each image to 4 MiB and
+staged bytes to 64 MiB. All opened CPU images remain resident until process
+exit, including images whose ABI/semantic probe was refused. This trusted
+developer interface is not a native-code sandbox.
+
+Shader requests use fixed read-only `shader-<n>.vert.spv` and
+`shader-<n>.frag.spv`, each at most 256 KiB. The scene admits exactly its existing
+vertex/fragment stages, `main`, Shader capability, logical GLSL memory model,
+no descriptor resources, exact stage I/O and seven vec4 vertex push members
+at offsets 0–96 (112 bytes). This is a closed interface preflight, not a full
+SPIR-V verifier or a sandbox. The candidate pipeline is created first. Only
+an explicit reload waits, bounded to one second, for the other referencing
+frame slots; the current slot has already retired. Failure preserves the old
+pipeline. On success the old pipeline is destroyed after all referencing
+fences retire. Shader attempts are limited to 32 and staged shader bytes to
+16 MiB. Shader identity is reported independently of CPU module identity.
+
+Atomic `observation-<request_id>.json` uses
+`rusty.quest.hotload_observation.v1`. State is app-owned; effective scene and
+shader generations are acknowledged after successful `xrEndFrame`. Physical
+pixels remain separate evidence. CPU hotloads retain the current Activity,
+scene and frame owner. Activity recreation creates fresh native host/session
+state; process-wide continuity across recreation is not claimed.
+
+Resolve the dedicated fixture with the existing resolver, then pass its exact
+feature lock to the canonical builder:
+
+```powershell
+pwsh -NoProfile -File tools/Resolve-NativeAppBuild.ps1 `
+  -AppSpec fixtures/native-app-builds/native-development-hotload.app.json -DryRun
+pwsh -NoProfile -File tools/Build-NativeRendererAndroid.ps1 `
+  -AppBuildLock <resolved-feature-lock> -AndroidHome <sdk> -JavaHome <jdk17> `
+  -NdkHome <ndk> -OpenXrLoader <owned-arm64-loader> -Keystore <debug-keystore>
+cargo test --manifest-path apps/native-renderer-android/tests/development-feedback/Cargo.toml --locked
+```
+
+The focused host harness imports the exact production transport and shared
+resident host sources. Its ignored real-image test requires
+`FEEDBACK_NATIVE_MANIFEST` and `FEEDBACK_TEST_OUTPUT`, then `cargo test` with
+`-- --ignored --nocapture`. Those host results explicitly do not establish
+device pixels, Vulkan pipeline replacement or physical tracking. The
+`validate_shader` harness binary checks actual compiler-produced SPIR-V and
+supports `--exercise-refusals` for stage/header/location/push/descriptor and
+truncation mutations. Use the common hotload scenario/operator for full
+saved-edit A/B/fresh-A timing and device observations.
+
 ## Hands or controllers
 
 Worldspace mode uses one input owner at a time. A recognized controller
@@ -15,6 +108,8 @@ or pose-publisher feature. Missing controller tracking releases UI ownership.
 The right hand takes priority over a valid left-hand fallback. When available,
 `XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace and
 explicitly selected original mesh UI request OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
+`XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace alone
+requests OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
 an unsupported API fails explicitly without a silent downgrade. Computed + valid
 runtime aim, an active hand and a tracked wrist are required; system gestures
 cancel input. If the extension is unavailable, the ray runs from wrist toward
@@ -68,6 +163,15 @@ features, but omit
 `input.simultaneous_hands_and_controllers`. Remove its enabled property and
 resolver-derived activation binding from the private runtime closure. Worldspace
 policy rejects an accidentally selected simultaneous adapter. The manifest resolver
+When controller input owns the worldspace frame, live hand visuals, diagnostic
+hand overlays and graft copies are suppressed. Ordinary controller actions remain
+available; events captured by the panel are consumed before world controls.
+
+The app feature closure should retain `input.controllers_and_hands_optional`
+and the selected live-hand/visual features, but omit
+`input.simultaneous_hands_and_controllers`. Remove its enabled property and
+resolver-derived activation binding from the private runtime closure. Worldspace
+mode rejects an accidentally selected simultaneous adapter. The manifest resolver
 emits `com.oculus.handtracking.support=HANDS_AND_CONTROLLERS` and hand version
 `V2.0` only when both the optional hand feature and hand permission are selected.
 This permits either input mode at launch without claiming simultaneous tracking.
@@ -102,6 +206,7 @@ on the right rig and never promotes right poses into the left bind mesh. Other
 render modes keep their existing replay policies. The short `worldspace-hand-input`
 marker reports per-hand active/ready/source/locate state, shape counts and reason
 every 120 frames and on state changes; raw pointer input remains rig-independent.
+hand-adapter lock. The pointer feature never substitutes for that lock.
 
 Pure host tests cover bounded ray construction, pinch hysteresis, controller
 priority, hand switching and tracking loss. Resolver tests cover manifest
@@ -116,6 +221,8 @@ particle and camera-layer modes keep their own composition rules.
 The public `native-worldspace-panel-test.app.json` selects the scene, UI and
 neutral visible pointer foundation, with compact rig input disabled and no
 private payload. A downstream composition can select
+The public `native-worldspace-panel-test.app.json` selects only the scene and UI
+foundation. A downstream composition can select
 `renderer.private_particles.composable` and `render.private_layer.composable`
 alongside the existing hand features. Private payloads and shader formulas remain
 inputs supplied by their owners; the public renderer owns frame scheduling,

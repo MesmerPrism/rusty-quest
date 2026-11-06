@@ -58,7 +58,7 @@ foreach ($method in @('applyConditionAudioControlReceipt','applyBreathPhaseAudio
 if (-not $standaloneJava.Contains('EXPERIMENT_SESSION_ANCHORS, true)') -or -not $javaByVariant['legacy'].Contains('EXPERIMENT_SESSION_ANCHORS, false)')) { throw 'Profile route is not compile-selected.' }
 
 # Prepare the same closed base family as the production builder; no remote or media sources.
-$base = @('NativeAppSettingsReader','NativeMeshUiProducer','NativePageSnapshot','NativeSystemKeyboard','NativePanelFont','NativeRendererActivityComponents','NativeRendererExperimentLaunchAuthority',
+$base = @('NativeAppSettingsReader','NativeMeshUiProducer','NativeInputWidgetGeometry','NativePageSnapshot','NativeSystemKeyboard','NativePanelFont','NativeRendererActivityComponents','NativeRendererExperimentLaunchAuthority',
     'NativeRendererExperimentLauncherPolicy','NativeRendererBootObservation','NativeRendererWriterAcknowledgedExitPolicy',
     'PanelImmersiveHandoff','PanelImmersiveHandoffLifecyclePolicy','PanelImmersiveHandoffProofPolicy',
     'PanelModule','PanelModuleRegistry')

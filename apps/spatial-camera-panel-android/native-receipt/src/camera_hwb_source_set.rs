@@ -4,16 +4,22 @@ unsafe fn render_source_set_common_graph(
     requested_width: u32,
     requested_height: u32,
     max_frames: u32,
+    admitted_own_epoch: crate::stereo_input_set::SourceEpoch,
     cancellation: Arc<AtomicBool>,
+    readiness: &crate::source_graph_startup::Readiness,
     ready_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
     if cancellation.load(Ordering::Acquire) {
         return Err("source-set-session-cancelled-before-wsi".to_string());
     }
-    let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create(
+
+    let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create_with_startup(
         window,
         requested_width,
         requested_height,
+        max_frames == 0,
+        &cancellation,
+        Some(OwnedRendererStartupSource::Own(admitted_own_epoch)),
     )?);
     let run_result = (|| -> Result<(), String> {
         if cancellation.load(Ordering::Acquire) {
@@ -21,15 +27,25 @@ unsafe fn render_source_set_common_graph(
         }
 
         let deadline = Instant::now() + Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS);
+        let mut seed_estimate_warned = false;
         let mut first_frame = loop {
             if cancellation.load(Ordering::Acquire) {
                 return Err("source-set-cancelled-before-seed".into());
+            }
+            if !crate::own_stereo_capture_runtime::capture_epoch_is_current(admitted_own_epoch) {
+                return Err("source-set-admitted-own-epoch-lost-before-seed".into());
             }
             if let Some(seed) = crate::spatial_stereo_source_import::source_carrier_seed()? {
                 break seed;
             }
             if Instant::now() >= deadline {
-                return Err("source-set-real-seed-timeout".into());
+                if max_frames > 0 {
+                    return Err("source-set-real-seed-timeout".into());
+                }
+                if !seed_estimate_warned {
+                    seed_estimate_warned = true;
+                    log_marker("status=source-set-seed-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                }
             }
             thread::yield_now();
         };
@@ -238,7 +254,13 @@ unsafe fn render_source_set_common_graph(
                 None
             };
         first_frame.release_seed_content();
-        let _ = ready_tx.send(Ok(()));
+        if cancellation.load(Ordering::Acquire) || !readiness.publish_ready() {
+            return Err("source-set-startup-closed-before-ready".into());
+        }
+        if ready_tx.send(Ok(())).is_err() {
+            readiness.fail();
+            return Err("source-set-startup-receiver-closed".into());
+        }
         while max_frames == 0 || frames_presented < max_frames {
             if cancellation.load(Ordering::Acquire) {
                 break;
@@ -253,7 +275,7 @@ unsafe fn render_source_set_common_graph(
             if let Some(imports) = stereo_source_imports.as_mut() {
                 imports.retire_after_fence(device)?;
                 crate::spatial_stereo_source_import::synchronize_peer_source()?;
-                imports.refresh(
+                if !imports.refresh(
                     device,
                     &memory_properties,
                     ahb_device,
@@ -261,8 +283,43 @@ unsafe fn render_source_set_common_graph(
                     CameraHwbProbeMode::RawColorProjection,
                     1_000_000_000,
                     crate::spatial_public_multistack_runtime::read_mask_policy().1,
-                )?;
+                )? {
+                    thread::yield_now();
+                    continue;
+                }
             }
+            // Admit a coherent policy while the retired fence is still signaled
+            // and no WSI image/semaphore has been acquired for this iteration.
+            let stereo_admission = if let Some(imports) = stereo_source_imports.as_ref() {
+                let (words, revision, mask) =
+                    crate::spatial_public_multistack_runtime::read_mask_policy();
+                let policy = crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
+                    region_origins: [words[0], words[1], words[2], words[3]],
+                    guide_origins: [words[4], words[5], mask[0], mask[1]],
+                    source_state: [0, 0, 1, mask[2]],
+                };
+                let mut prefixes = [0usize; 2];
+                for &origin in &words[..4] {
+                    prefixes[origin as usize] = 6;
+                }
+                for &origin in &words[4..] {
+                    if origin < 2 {
+                        prefixes[origin as usize] = 6;
+                    }
+                }
+                if crate::stereo_bank_mask_v1::validate(mask)? {
+                    prefixes = [6, 6];
+                }
+                match imports.recording_admission(policy, revision, frame_fence)? {
+                    Some(admission) => Some((admission, prefixes)),
+                    None => {
+                        thread::yield_now();
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
             device
                 .reset_fences(&[frame_fence])
                 .map_err(|error| format!("peer-reset-fence-{error:?}"))?;
@@ -298,33 +355,12 @@ unsafe fn render_source_set_common_graph(
             } else {
                 None
             };
-            let mut stereo_inputs = if let Some(imports) = stereo_source_imports.as_mut() {
-                let (words, revision, mask) =
-                    crate::spatial_public_multistack_runtime::read_mask_policy();
-                let policy = crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
-                    region_origins: [words[0], words[1], words[2], words[3]],
-                    guide_origins: [words[4], words[5], mask[0], mask[1]],
-                    source_state: [0, 0, 1, mask[2]],
-                };
-                // Conservative neutral demand covers every selected guide stage;
-                // private effect demand may later reduce this prefix explicitly.
-                let mut prefixes = [0usize; 2];
-                for &origin in &words[..4] {
-                    prefixes[origin as usize] = 6;
-                }
-                for &origin in &words[4..] {
-                    if origin < 2 {
-                        prefixes[origin as usize] = 6;
-                    }
-                }
-                if crate::stereo_bank_mask_v1::validate(mask)? {
-                    prefixes = [6, 6];
-                }
+            let mut stereo_inputs = if let (Some(imports), Some((admission, prefixes))) =
+                (stereo_source_imports.as_mut(), stereo_admission)
+            {
                 Some(imports.recording_inputs(
-                    policy,
-                    revision,
+                    admission,
                     prefixes,
-                    frame_fence,
                     u64::from(frames_presented) + 1,
                     surface_generation,
                 )?)
@@ -547,6 +583,7 @@ unsafe fn render_source_set_common_graph(
                     return Err(format!("peer-spatial-sdk-enqueue-{enqueue}"));
                 }
                 let retirement_deadline = Instant::now() + Duration::from_secs(2);
+                let mut retirement_estimate_warned = false;
                 let mut retirement =
                     crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState::new_bound(
                         request_id,
@@ -555,9 +592,16 @@ unsafe fn render_source_set_common_graph(
                     );
                 let mut shutdown_reason = None;
                 loop {
+                    if max_frames == 0
+                        && !retirement_estimate_warned
+                        && Instant::now() >= retirement_deadline
+                    {
+                        retirement_estimate_warned = true;
+                        log_marker("status=peer-spatial-sdk-retirement-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                    }
                     if shutdown_reason.is_none()
                         && (cancellation.load(Ordering::Acquire)
-                            || Instant::now() >= retirement_deadline)
+                            || max_frames > 0 && Instant::now() >= retirement_deadline)
                     {
                         shutdown_reason = Some(if cancellation.load(Ordering::Acquire) {
                             "source-set-session-cancelled-during-sdk-retirement"
@@ -796,6 +840,8 @@ pub(crate) unsafe fn start_source_set_common_graph(
     let window_address = window as usize;
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
     let cancellation = Arc::new(AtomicBool::new(false));
+    let readiness = Arc::new(crate::source_graph_startup::Readiness::default());
+    let startup_started = Instant::now();
     {
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
@@ -810,7 +856,17 @@ pub(crate) unsafe fn start_source_set_common_graph(
             let same_window =
                 owner.window_address == window_address && owner.own_epoch == Some(admitted_epoch);
             ACameraNativeWindow_release(window);
-            return if same_window { 1 } else { 0 };
+            let ready = owner.startup_readiness.as_ref().is_some_and(|ready| {
+                ready.reusable(
+                    same_window,
+                    true,
+                    owner
+                        .cancellation
+                        .as_ref()
+                        .is_none_or(|cancel| cancel.load(Ordering::Acquire)),
+                )
+            });
+            return if ready { 1 } else { 0 };
         }
         if owner.claim.generation() == Some(route_generation) {
             // Recover only this finished actor and physical carrier, while its independent Own producer lives.
@@ -842,6 +898,7 @@ pub(crate) unsafe fn start_source_set_common_graph(
                 return 0;
             }
             owner.cancellation = None;
+            owner.startup_readiness = None;
             if !owner.claim.release(route_generation) {
                 ACameraNativeWindow_release(window);
                 return 0;
@@ -851,10 +908,20 @@ pub(crate) unsafe fn start_source_set_common_graph(
             ACameraNativeWindow_release(window);
             return 0;
         }
+        let Some(next) = owner.construction_attempts.checked_add(1) else {
+            owner.claim.release(route_generation);
+            ACameraNativeWindow_release(window);
+            return 0;
+        };
+        owner.construction_attempts = next;
+        // Diagnostic reset follows the actual existing physical claim/release gate.
+
         owner.window_address = window_address;
         owner.own_epoch = Some(admitted_epoch);
         owner.cancellation = Some(cancellation.clone());
+        owner.startup_readiness = Some(readiness.clone());
         let worker_cancellation = cancellation.clone();
+        let worker_readiness = readiness.clone();
         ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);
         let spawn = thread::Builder::new()
             .name(format!("spatial-peer-common-graph-{route_generation}"))
@@ -866,11 +933,20 @@ pub(crate) unsafe fn start_source_set_common_graph(
                         requested_width.max(64),
                         requested_height.max(64),
                         max_frames,
+                        admitted_epoch,
                         worker_cancellation,
+                        &worker_readiness,
                         ready_tx,
                     )
                 })
                 .unwrap_or_else(|_| Err("panic".to_string()));
+                if result.is_err() { worker_readiness.fail(); } else { worker_readiness.close(); }
+                // A deadline cannot become startup success when late setup retires
+                // cleanly during the caller's mandatory physical join.
+                let result = if result.is_ok()
+                    && worker_readiness.state() == crate::source_graph_startup::State::Failed {
+                    Err("source-set-startup-failed".to_string())
+                } else { result };
                 unsafe {
                     ACameraNativeWindow_release(window.cast::<ANativeWindow>());
                 }
@@ -891,27 +967,69 @@ pub(crate) unsafe fn start_source_set_common_graph(
                 ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_sub(1, Ordering::AcqRel);
                 publish_acquisition_stopped_if_quiescent();
                 owner.cancellation = None;
+                readiness.fail();
+                owner.startup_readiness = None;
                 let released = owner.claim.release(route_generation);
                 debug_assert!(released);
                 ACameraNativeWindow_release(window);
+
                 return 0;
             }
         }
     }
-    if matches!(
-        ready_rx.recv_timeout(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS * 2)),
-        Ok(Ok(()))
-    ) {
-        return 1;
+    let mut outcome = if max_frames == 0 {
+        readiness.wait_owned(&ready_rx,crate::source_graph_startup::READY_WAIT,&cancellation,||{
+            log_marker("status=source-set-startup-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());Ok(())
+        })
+    } else {
+        readiness.wait(&ready_rx, crate::source_graph_startup::READY_WAIT)
+    };
+    if outcome == crate::source_graph_startup::WaitOutcome::Ready {
+        let owner = PEER_COMMON_GRAPH_SESSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if owner.claim.generation() == Some(route_generation)
+            && owner
+                .startup_readiness
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &readiness))
+            && crate::own_stereo_capture_runtime::own_image_fresh_observed().ok()
+                == Some(admitted_epoch)
+            && readiness.reusable(
+                owner.window_address == window_address && owner.own_epoch == Some(admitted_epoch),
+                owner
+                    .worker
+                    .as_ref()
+                    .is_some_and(|worker| !worker.is_finished()),
+                cancellation.load(Ordering::Acquire),
+            )
+        {
+            return 1;
+        }
+        drop(owner);
+        readiness.close();
+        outcome = if readiness.state() == crate::source_graph_startup::State::Failed {
+            crate::source_graph_startup::WaitOutcome::Failed
+        } else {
+            crate::source_graph_startup::WaitOutcome::Closed
+        };
     }
+    log_marker(format!("status=peer-common-graph-startup-refused routeGeneration={} outcome={} elapsedMs={} physicalJoinRequired=true",
+        route_generation, outcome.marker(), startup_started.elapsed().as_millis()));
     let worker = {
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if owner.claim.generation() != Some(route_generation) {
+        if owner.claim.generation() != Some(route_generation)
+            || !owner
+                .startup_readiness
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &readiness))
+        {
             None
         } else {
             cancellation.store(true, Ordering::Release);
+            readiness.close();
             owner.worker.take()
         }
     };
@@ -920,8 +1038,14 @@ pub(crate) unsafe fn start_source_set_common_graph(
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if owner.claim.generation() == Some(route_generation) {
+        if owner.claim.generation() == Some(route_generation)
+            && owner
+                .startup_readiness
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &readiness))
+        {
             owner.cancellation = None;
+            owner.startup_readiness = None;
             let released = owner.claim.release(route_generation);
             debug_assert!(released);
         }

@@ -1,15 +1,22 @@
 //! JNI projection of the existing session owner's local terminal and retirement seams.
 //! No inventory, recording owner, or command wire schema is introduced here.
 
-use jni::{objects::{JClass, JString}, sys::{jlong, jstring}, EnvUnowned, Outcome};
 use crate::experiment_session_runtime::{self, LocalTerminalScope, RendererRetirementScope};
+use jni::{
+    objects::{JClass, JString},
+    sys::{jlong, jstring},
+    EnvUnowned, Outcome,
+};
 
 // A transport text bound only. The existing command parser and exact
 // worker fence retain all semantic admission and identity validation.
 const MAX_TRANSPORT_TEXT_BYTES: usize = 32 * 1024;
 
 fn response(mut env: EnvUnowned, wire: String) -> jstring {
-    match env.with_env(|env| env.new_string(wire).map(|s| s.into_raw())).into_outcome() {
+    match env
+        .with_env(|env| env.new_string(wire).map(|s| s.into_raw()))
+        .into_outcome()
+    {
         Outcome::Ok(value) => value,
         Outcome::Err(_) | Outcome::Panic(_) => std::ptr::null_mut(),
     }
@@ -17,12 +24,20 @@ fn response(mut env: EnvUnowned, wire: String) -> jstring {
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeReadExperimentSessionImmersiveOwnerIdentity(
-    mut env: EnvUnowned, _class: JClass,
+    mut env: EnvUnowned,
+    _class: JClass,
 ) -> jlong {
-    match env.with_env(|_| -> jni::errors::Result<jlong> {
-        let identity = experiment_session_runtime::immersive_owner_identity();
-        Ok(if identity > 0 && identity < i64::MAX as u64 { identity as jlong } else { 0 })
-    }).into_outcome() {
+    match env
+        .with_env(|_| -> jni::errors::Result<jlong> {
+            let identity = experiment_session_runtime::immersive_owner_identity();
+            Ok(if identity > 0 && identity < i64::MAX as u64 {
+                identity as jlong
+            } else {
+                0
+            })
+        })
+        .into_outcome()
+    {
         Outcome::Ok(identity) => identity,
         Outcome::Err(_) | Outcome::Panic(_) => 0,
     }
@@ -30,9 +45,16 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeApplyExperimentSessionTerminalWithFence(
-    mut env: EnvUnowned, _class: JClass, command: JString,
-    owner: jlong, epoch: jlong, generation: jlong, session_key: JString,
-    condition: JString, profile_sha256: JString, binding_sha256: JString,
+    mut env: EnvUnowned,
+    _class: JClass,
+    command: JString,
+    owner: jlong,
+    epoch: jlong,
+    generation: jlong,
+    session_key: JString,
+    condition: JString,
+    profile_sha256: JString,
+    binding_sha256: JString,
 ) -> jstring {
     if owner <= 0 || owner == i64::MAX || epoch <= 0 || generation < 0 {
         return response(env, "{\"schema\":\"rusty.quest.experiment_session.response.v1\",\"command_status\":\"rejected\",\"reason_code\":\"terminal-jni-scope-invalid\",\"readback\":{}}".to_owned());
@@ -59,8 +81,15 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
     }
 }
 
-fn retirement(mut env: EnvUnowned, owner: jlong, epoch: jlong, generation: jlong,
-        operation: JString, acknowledgement: jlong, request: bool) -> jstring {
+fn retirement(
+    mut env: EnvUnowned,
+    owner: jlong,
+    epoch: jlong,
+    generation: jlong,
+    operation: JString,
+    acknowledgement: jlong,
+    request: bool,
+) -> jstring {
     if owner <= 0 || owner == i64::MAX || epoch <= 0 || generation < 0 || acknowledgement <= 0 {
         return response(env, "{\"schema\":\"rusty.quest.native_renderer_retirement.v1\",\"status\":\"error\",\"reason_code\":\"terminal-jni-scope-invalid\"}".to_owned());
     }
@@ -83,12 +112,42 @@ fn retirement(mut env: EnvUnowned, owner: jlong, epoch: jlong, generation: jlong
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeRequestExperimentSessionRendererRetirement(
-    env: EnvUnowned, _class: JClass, owner: jlong, epoch: jlong, generation: jlong,
-    operation: JString, acknowledgement: jlong,
-) -> jstring { retirement(env, owner, epoch, generation, operation, acknowledgement, true) }
+    env: EnvUnowned,
+    _class: JClass,
+    owner: jlong,
+    epoch: jlong,
+    generation: jlong,
+    operation: JString,
+    acknowledgement: jlong,
+) -> jstring {
+    retirement(
+        env,
+        owner,
+        epoch,
+        generation,
+        operation,
+        acknowledgement,
+        true,
+    )
+}
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeReadExperimentSessionRendererRetirement(
-    env: EnvUnowned, _class: JClass, owner: jlong, epoch: jlong, generation: jlong,
-    operation: JString, acknowledgement: jlong,
-) -> jstring { retirement(env, owner, epoch, generation, operation, acknowledgement, false) }
+    env: EnvUnowned,
+    _class: JClass,
+    owner: jlong,
+    epoch: jlong,
+    generation: jlong,
+    operation: JString,
+    acknowledgement: jlong,
+) -> jstring {
+    retirement(
+        env,
+        owner,
+        epoch,
+        generation,
+        operation,
+        acknowledgement,
+        false,
+    )
+}

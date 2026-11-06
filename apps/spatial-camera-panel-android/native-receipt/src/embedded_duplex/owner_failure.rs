@@ -69,11 +69,21 @@ pub(crate) fn observe<T>(
     if let Err(error) = &result {
         if let Ok(mut first) = slot.lock() {
             if first.is_none() {
-                *first = Some(if matches!(stage, Stage::OrdinaryCallback) {
+                let code = if matches!(stage, Stage::OrdinaryCallback) {
                     ordinary_cause(error).unwrap_or(stage.code())
                 } else {
                     stage.code()
-                });
+                };
+                *first = Some(code);
+                drop(first);
+                #[cfg(target_os = "android")]
+                {
+                    let error_sha256 = rusty_quest_broker_authority::packaged_json_sha256(error);
+                    let error_bytes = error.len();
+                    crate::camera_hwb_marker::log_camera_hwb_marker(format!(
+                        "status=owner-effect-failed stage={code} error_sha256={error_sha256} error_bytes={error_bytes}"
+                    ));
+                }
             }
         }
     }
@@ -90,10 +100,19 @@ fn ordinary_cause(error: &str) -> Option<&'static str> {
         "verified readback JSON is invalid" => "ORDINARY_READBACK_INVALID",
         "runtime busy" => "ORDINARY_RUNTIME_BUSY",
         "runtime slot poisoned" => "ORDINARY_RUNTIME_POISONED",
+        "executor generation mismatch" => "ORDINARY_TARGET_EXECUTOR_GENERATION",
+        "authenticated target executor generation unavailable"
+        | "prepared target actor binding differs"
+        | "prepared target actor absent"
+        | "actual prepared owner absent"
+        | "actual prepared held actor differs" => "ORDINARY_TARGET_GENERATION_PROOF",
         "java_bridge.execute_call" | "java_bridge.execute_call.exception" => {
             "ORDINARY_JAVA_CALLBACK_REJECTED"
         }
         "java_bridge.attach" => "ORDINARY_JAVA_ATTACH_UNAVAILABLE",
+        "java_bridge.exchange_call" | "java_bridge.exchange_call.exception" => {
+            "ORDINARY_JAVA_EXCHANGE_REJECTED"
+        }
         _ => return None,
     })
 }
@@ -136,6 +155,14 @@ mod tests {
             "java_bridge.execute_call",
             "java_bridge.execute_call.exception",
             "java_bridge.attach",
+            "java_bridge.exchange_call",
+            "java_bridge.exchange_call.exception",
+            "executor generation mismatch",
+            "authenticated target executor generation unavailable",
+            "prepared target actor binding differs",
+            "prepared target actor absent",
+            "actual prepared owner absent",
+            "actual prepared held actor differs",
         ] {
             let slot = Mutex::new(None);
             assert_eq!(

@@ -8,6 +8,8 @@ use std::process::Command;
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
     emit_environment_depth_owner_cfg();
+    emit_embedded_duplex_fresh_build_policy();
+    emit_embedded_duplex_lifetime_policy();
     write_spatial_presentation_policy(&out_dir);
     write_own_capture_hold_contract(&out_dir);
     write_recorded_hand_replay_source(&out_dir);
@@ -135,6 +137,26 @@ fn main() {
         "fragment",
         &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string()],
     );
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI");
+    let source_bank_abi =
+        match env::var("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI").as_deref() {
+            Err(env::VarError::NotPresent) | Ok("1") => 1,
+            Ok("2") => 2,
+            _ => panic!("source bank final ABI must be explicit 1 or 2"),
+        };
+    let primary_input = compile_optional_shader_env_with_args(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER",
+        "spatial_primary_input.frag.spv",
+        "fragment",
+        &[],
+    );
+    assert_eq!(
+        primary_input.compiled,
+        source_bank_abi == 2,
+        "primary input provider and final ABI2 must be selected together"
+    );
     let source_bank_vertex = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
@@ -144,6 +166,7 @@ fn main() {
         &[
             "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
             "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+            format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
         ],
     );
     let source_bank_fragment = compile_optional_shader_env_with_args(
@@ -155,13 +178,18 @@ fn main() {
         &[
             "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
             "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+            format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
         ],
+    );
+    assert!(
+        source_bank_abi == 1 || (source_bank_vertex.compiled && source_bank_fragment.compiled),
+        "ABI2 requires both exact final shader providers"
     );
     fs::write(
         out_dir.join("spatial_source_bank_build.rs"),
         format!(
-            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};",
-            source_bank_vertex.compiled && source_bank_fragment.compiled
+            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};\npub(crate) const SOURCE_BANK_ABI: u32 = {};\npub(crate) const PRIMARY_INPUT_SHADER_COMPILED: bool = {};",
+            source_bank_vertex.compiled && source_bank_fragment.compiled, source_bank_abi, primary_input.compiled
         ),
     )
     .expect("write source bank shader metadata");
@@ -1258,4 +1286,58 @@ fn write_own_capture_hold_contract(out_dir: &Path) {
     fs::write(out_dir.join("own_capture_build.rs"),format!(
         "pub(crate) const OWN_CAPTURE_PROVIDER_SELECTED: bool = {selected};\npub(crate) const OWN_CAPTURE_HOLD_LIMITS: Option<(usize,u64,usize)> = {limits};\n"))
         .expect("write explicit Own capture hold contract");
+}
+
+fn emit_embedded_duplex_fresh_build_policy() {
+    let names = [
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY",
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256",
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256",
+    ];
+    for name in names {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY");
+    let selection = env::var(names[0]).unwrap_or_else(|_| "none".into());
+    let policy = env::var(names[1]).unwrap_or_default();
+    let target = env::var(names[2]).unwrap_or_default();
+    let valid = |v: &str| {
+        v.len() == 71
+            && v.starts_with("sha256:")
+            && v[7..]
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    match selection.as_str() {
+        "none" => assert!(
+            policy.is_empty() && target.is_empty(),
+            "unselected fresh build has pins"
+        ),
+        "source-bound-v2" => {
+            assert_eq!(
+                env::var("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY").as_deref(),
+                Ok("ongoing-v2"),
+                "fresh build requires ongoing policy"
+            );
+            assert!(
+                valid(&policy) && valid(&target),
+                "fresh build requires exact policy/target pins"
+            );
+        }
+        _ => panic!("unsupported fresh build selection"),
+    }
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY={selection}");
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256={policy}");
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256={target}");
+}
+
+fn emit_embedded_duplex_lifetime_policy() {
+    const NAME: &str = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY";
+    println!("cargo:rerun-if-env-changed={NAME}");
+    let selection = env::var(NAME).unwrap_or_else(|_| "finite".into());
+    assert!(
+        matches!(selection.as_str(), "finite" | "development-v1"),
+        "unsupported lifetime selection"
+    );
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_LIFETIME_POLICY={selection}");
 }

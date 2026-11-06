@@ -1,0 +1,6 @@
+{
+  "schema": "rusty.quest.embedded_duplex.guarded_mode.v1",
+  "provider_class": "io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexOperatorProvider",
+  "methods": ["guarded_policy_update", "guarded_blend_update", "guarded_blend_read", "guarded_operation_ack"],
+  "debug_only": true
+}

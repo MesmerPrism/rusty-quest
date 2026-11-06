@@ -1,0 +1,27 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "debug.meta_xr_operator",
+  "module_path": "development/meta-xr-operator",
+  "module_kind": "developer-input-api-layer",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile" },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit debug-only external Meta XR Operator layer and read-only original-widget input geometry.",
+  "provides": ["development.agent_input", "development.input_geometry"],
+  "depends_on": ["native.development_feedback"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": ["android.permission.INTERNET"],
+    "uses_features": ["com.oculus.experimental.enabled"],
+    "activities": [], "services": [], "queries": []
+  },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": ["native-worldspace-integration"] },
+  "build_inputs": {
+    "env": [{ "name": "RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED", "value": "true" }],
+    "assets": [], "shaders": []
+  },
+  "markers": { "required": [], "forbidden": [] },
+  "validation": { "quick": [], "standard": [], "device": [] },
+  "public_private_boundary": "External vendor binaries remain hash-pinned local build inputs; no binaries, machine paths, private product or bilateral authority is packaged by this descriptor."
+}

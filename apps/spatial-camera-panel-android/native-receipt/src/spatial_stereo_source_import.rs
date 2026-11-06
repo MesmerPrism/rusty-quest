@@ -25,6 +25,11 @@ use ash::vk;
 type Frame = RetainedStereoFrame<StereoSourceLease<PackedLease, SpatialVideoProjectionFrame>>;
 fn normalizer_processing_policy() -> [u32; 4] {
     let policy = crate::spatial_guide_processing::current_spatial_guide_processing_policy();
+    normalizer_processing_policy_codes(policy)
+}
+fn normalizer_processing_policy_codes(
+    policy: crate::spatial_guide_processing::SpatialGuideProcessingPolicy,
+) -> [u32; 4] {
     [
         policy.preblur_kernel as u32,
         policy.preblur_input as u32,
@@ -193,6 +198,15 @@ struct ImportedSource {
     image: AhbVulkanSampledImage,
     frame: Frame,
 }
+// A coherent frame selection, admitted before resetting/acquiring WSI resources.
+// It owns no GPU resource or submission lease and does not mark imports pending.
+pub(crate) struct StereoRecordingAdmission {
+    policy: StereoBankPolicyUniformV1,
+    control_revision: u64,
+    normalizer_policy: [u32; 4],
+    processing_policy: crate::spatial_guide_processing::SpatialGuideProcessingPolicy,
+    fence: vk::Fence,
+}
 pub(crate) struct StereoSourceImports {
     pool: vk::DescriptorPool,
     sets: [vk::DescriptorSet; 2],
@@ -201,6 +215,7 @@ pub(crate) struct StereoSourceImports {
     foreign_queue_family: Option<u32>,
     control_revision: u64,
     processing_policy: [u32; 4],
+    processing_snapshot: crate::spatial_guide_processing::SpatialGuideProcessingPolicy,
 }
 impl StereoSourceImports {
     pub(crate) unsafe fn create(
@@ -249,6 +264,8 @@ impl StereoSourceImports {
             foreign_queue_family,
             control_revision: 0,
             processing_policy: [0; 4],
+            processing_snapshot:
+                crate::spatial_guide_processing::SpatialGuideProcessingPolicy::default(),
         })
     }
     pub(crate) unsafe fn retire_after_fence(&mut self, device: &ash::Device) -> Result<(), String> {
@@ -282,6 +299,7 @@ impl StereoSourceImports {
     }
     /// Refresh only after actual common fence retirement; snapshot owns bytes
     /// before releasing source lock. Never cache an AHB pointer as frame content.
+    /// False means control/processing changes superseded this retired refresh.
     pub(crate) unsafe fn refresh(
         &mut self,
         device: &ash::Device,
@@ -291,12 +309,12 @@ impl StereoSourceImports {
         mode: CameraHwbProbeMode,
         maximum_age_ns: u64,
         control_revision: u64,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if self.pending.is_some() {
             return Err("stereo-import-replacement-before-retirement".into());
         }
-        // The caller has proven common-fence retirement. Any refresh failure
-        // clears both bindings rather than leaving a partial stale source set.
+        // The caller has proven common-fence retirement. A failed or superseded
+        // refresh clears both bindings rather than leaving a partial source set.
         let result = self.refresh_retired(
             device,
             memory,
@@ -306,7 +324,7 @@ impl StereoSourceImports {
             maximum_age_ns,
             control_revision,
         );
-        if result.is_err() {
+        if !matches!(result, Ok(true)) {
             self.clear_retired_sources(device);
         }
         result
@@ -330,11 +348,13 @@ impl StereoSourceImports {
         mode: CameraHwbProbeMode,
         maximum_age_ns: u64,
         control_revision: u64,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if control_revision == 0 {
             return Err("stereo-normalizer-control-unavailable".into());
         }
-        let processing_policy = normalizer_processing_policy();
+        let processing_snapshot =
+            crate::spatial_guide_processing::current_spatial_guide_processing_policy();
+        let processing_policy = normalizer_processing_policy_codes(processing_snapshot);
         if mode.descriptor_binding_count() != 2 || resources.sampler_ycbcr_conversion.is_some() {
             return Err("stereo-normalized-layout-invalid".into());
         }
@@ -469,35 +489,78 @@ impl StereoSourceImports {
                 frame,
             });
         }
-        if normalizer_processing_policy() != processing_policy
-            || crate::spatial_public_multistack_runtime::read_mask_policy().1 != control_revision
-        {
+        let current_revision = crate::spatial_public_multistack_runtime::read_mask_policy().1;
+        if current_revision < control_revision {
             return Err("stereo-normalizer-control-changed-during-refresh".into());
+        }
+        if normalizer_processing_policy() != processing_policy
+            || current_revision > control_revision
+        {
+            return Ok(false);
         }
         self.control_revision = control_revision;
         self.processing_policy = processing_policy;
-        Ok(())
+        self.processing_snapshot = processing_snapshot;
+        Ok(true)
     }
-    pub(crate) fn recording_inputs(
-        &mut self,
+    /// None abandons a superseded selection before fence reset/WSI acquisition.
+    pub(crate) fn recording_admission(
+        &self,
         policy: StereoBankPolicyUniformV1,
         processing_revision: u64,
-        demanded_prefixes: [usize; 2],
         fence: vk::Fence,
-        frame_ordinal: u64,
-        surface_generation: u64,
-    ) -> Result<StereoRecordingInputs<'_>, String> {
+    ) -> Result<Option<StereoRecordingAdmission>, String> {
         if self.pending.is_some()
             || fence == vk::Fence::null()
             || processing_revision == 0
-            || processing_revision != self.control_revision
-            || normalizer_processing_policy() != self.processing_policy
+            || self.control_revision == 0
         {
             return Err("stereo-recording-admission-invalid".into());
         }
+        // The imported/normalized bytes keep their successful refresh snapshot.
+        // A subsequent processing update belongs to the next refresh/frame.
+        let processing_policy = self.processing_snapshot;
+        let normalizer_policy = normalizer_processing_policy_codes(processing_policy);
+        if normalizer_policy != self.processing_policy
+            || processing_revision < self.control_revision
+        {
+            return Err("stereo-recording-admission-invalid".into());
+        }
+        if processing_revision > self.control_revision {
+            return Ok(None);
+        }
+        Ok(Some(StereoRecordingAdmission {
+            policy,
+            control_revision: processing_revision,
+            normalizer_policy,
+            processing_policy,
+            fence,
+        }))
+    }
+    pub(crate) fn recording_inputs(
+        &mut self,
+        admission: StereoRecordingAdmission,
+        demanded_prefixes: [usize; 2],
+        frame_ordinal: u64,
+        surface_generation: u64,
+    ) -> Result<StereoRecordingInputs<'_>, String> {
+        // Only the admitted snapshot enters this frame. A later UI update is
+        // observed next iteration; it cannot fail after WSI acquisition here.
+        if self.pending.is_some()
+            || admission.fence == vk::Fence::null()
+            || admission.control_revision != self.control_revision
+            || admission.normalizer_policy != self.processing_policy
+        {
+            return Err("stereo-recording-admission-invalid".into());
+        }
+        let StereoRecordingAdmission {
+            policy,
+            control_revision: processing_revision,
+            processing_policy,
+            fence,
+            ..
+        } = admission;
         self.pending = Some(fence);
-        let processing_policy =
-            crate::spatial_guide_processing::current_spatial_guide_processing_policy();
         let [own, peer] = &mut self.sources;
         let sources=[own,peer].into_iter().enumerate().map(|(origin,slot)|slot.as_mut().map(|source|
             StereoRecordingSource{key:StereoGuideKey {origin,frame:source.frame.identity,geometry_revision:None,processing_revision,processing_policy},

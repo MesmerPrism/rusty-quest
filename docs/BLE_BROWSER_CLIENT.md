@@ -133,3 +133,7 @@ operation without replacing that acknowledgement. Confirmation still requires
 the exact matching live Armed state. A checkpoint is not a saved or finalized
 recording receipt. Absent, mismatched or malformed acknowledgement keeps the
 original command pending/unknown; no automatic Arm replay is permitted.
+The optional [read-only native status diagnostic](../tools/diagnostics/experiment-ble-status/README.md)
+uses an explicit peer address and fresh discovery/GATT membership per connection.
+It qualifies only its selected transport and optional native read observation;
+it supplies no browser, command, physical readiness or other-bridge authority.

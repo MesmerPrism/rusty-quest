@@ -525,6 +525,7 @@ fn command_capabilities(policy: &ManifoldLocalControlPolicy) -> Vec<DottedId> {
 
 fn admission(policy: &ManifoldLocalControlPolicy) -> Result<ManifoldAdmissionAuthority, String> {
     ManifoldAdmissionAuthority::from_snapshot(ManifoldAdmissionSnapshot {
+        root_renewal_policies: Vec::new(),
         schema_id: schema(ADMISSION_SNAPSHOT_SCHEMA),
         authority_id: id("authority.quest.local_control.admission"),
         authority_revision: Revision::INITIAL,

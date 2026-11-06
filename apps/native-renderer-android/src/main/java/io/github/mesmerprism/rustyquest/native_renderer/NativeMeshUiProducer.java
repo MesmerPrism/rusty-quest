@@ -266,6 +266,10 @@ static final class VisibilityReadback {
     private AutoCloseable panelAttachment;
     private View cursor;
     private TextView status;
+    private Button computeButton;
+    private NativeInputWidgetGeometry inputGeometry;
+    private ViewTreeObserver.OnPreDrawListener inputGeometryListener;
+    private long publishedInputRevision;
     private long downTime;
     private boolean down;
     private long lastMove;
@@ -1356,6 +1360,23 @@ static final class VisibilityReadback {
         frame.removeView(layout);
         ScrollView scroll=new ScrollView(context);scroll.setFillViewport(true);scroll.addView(layout);
         frame.addView(scroll,0,new FrameLayout.LayoutParams(-1,-1));
+        if (nativeFeedbackSelected()) {
+            title.setText("Native development hotload");
+            final TextView feedback = text(context, "Waiting for render owner", 18);
+            layout.addView(feedback);
+            button(context, layout, "Compute with current CPU generation (input 4)", 14);
+            EditText notes = new EditText(context);
+            notes.setHint("Retained UI text / focus test");
+            notes.setTextColor(Color.WHITE);
+            notes.setSingleLine(true);
+            layout.addView(notes, new LinearLayout.LayoutParams(-1, 76));
+            feedback.post(new Runnable() { @Override public void run() {
+                if (current != NativeMeshUiProducer.this || root == null) return;
+                String value = nativeFeedbackStatus(generation);
+                feedback.setText(value == null ? "Native readback unavailable" : value);
+                feedback.postDelayed(this, 500);
+            }});
+        }
         button(context, layout, "Start / stop diagnostic animation", 1);
         button(context, layout, "Recorded reference overlay (not selected in this test)", 2);
         button(context, layout, "Toggle joint and wireframe diagnostics", 3);
@@ -1379,6 +1400,7 @@ static final class VisibilityReadback {
         layout.addView(text(context, "Graft size", 18));
         SeekBar graft = new SeekBar(context);
         graft.setMax(1000); graft.setProgress(474);
+        if (nativeFeedbackSelected()) graft.setEnabled(false);
         graft.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar, int value, boolean user) { if (user) submit(12, value / 1000.0f); }
             public void onStartTrackingTouch(SeekBar bar) {}
@@ -1387,6 +1409,13 @@ static final class VisibilityReadback {
         layout.addView(graft, new LinearLayout.LayoutParams(-1, 76));
         button(context, layout, "Reset panel pose and size", 13);
         layout.addView(text(context, "Hand pinch or controller trigger: click / drag.", 16));
+        if (nativeInputSelected()) {
+            inputGeometry = new NativeInputWidgetGeometry();
+            inputGeometryListener = new ViewTreeObserver.OnPreDrawListener() {
+                @Override public boolean onPreDraw() { publishInputGeometry(); return true; }
+            };
+            root.getViewTreeObserver().addOnPreDrawListener(inputGeometryListener);
+        }
     }
 
     private void observeOwnerLifecycle() {
@@ -1599,10 +1628,12 @@ static final class VisibilityReadback {
 
     private void button(Context context, LinearLayout parent, String label, int code) {
         Button button = new Button(context);
+        if (code == 14 && nativeInputSelected()) computeButton = button;
         button.setText(label);
         button.setAllCaps(false);
         // This combined test is locked to live hands; no unselected replay feature is activated.
         if (code == 2) button.setEnabled(false);
+        if (nativeFeedbackSelected() && (code == 3 || code == 4 || code == 8 || code == 10 || code == 11)) button.setEnabled(false);
         button.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { submit(code, 1.0f); }
         });
@@ -1620,6 +1651,25 @@ static final class VisibilityReadback {
         if(NativeRendererActivityComponents.showcaseSelected(activity)){selectedAttachmentFailure("diagnostic-controls-unselected");return;}
         boolean accepted = nativeControl(generation, code, value);
         status.setText("Control " + code + (accepted ? " accepted by native state" : " rejected") + " • value " + value);
+    }
+
+    private void publishInputGeometry() {
+        if (current != this || root == null || computeButton == null || inputGeometry == null) return;
+        int[] origin = new int[2], location = new int[2];
+        root.getLocationOnScreen(origin); computeButton.getLocationOnScreen(location);
+        int[] bounds = {location[0]-origin[0],location[1]-origin[1],location[0]-origin[0]+computeButton.getWidth(),location[1]-origin[1]+computeButton.getHeight()};
+        Rect visible = new Rect();
+        boolean shown = computeButton.isAttachedToWindow() && computeButton.isShown() && computeButton.getGlobalVisibleRect(visible);
+        int[] clipped = shown ? new int[]{visible.left-origin[0],visible.top-origin[1],visible.right-origin[0],visible.bottom-origin[1]} : new int[4];
+        NativeInputWidgetGeometry.Snapshot measured = inputGeometry.observe(true,true,generation,root.getWidth(),root.getHeight(),bounds,clipped,computeButton.isEnabled(),shown);
+        if(measured == null || measured.revision == publishedInputRevision) return;
+        try {
+            JSONObject widget = new JSONObject().put("id","compute").put("enabled",measured.enabled).put("visible",measured.visible)
+                .put("bounds_pixels",new JSONArray(measured.bounds)).put("clipped_bounds_pixels",new JSONArray(measured.clipped));
+            JSONObject body = new JSONObject().put("panel_generation",generation).put("layout_revision",measured.revision)
+                .put("surface_width_pixels",measured.width).put("surface_height_pixels",measured.height).put("widget",widget);
+            if(nativePublishInputGeometry(generation,body.toString())) publishedInputRevision = measured.revision;
+        } catch (org.json.JSONException invalid) { Log.e(TAG,"event=input-geometry-unavailable",invalid); }
     }
 
     /** All events are generation-bound and delivered on the Android UI thread. */
@@ -1748,6 +1798,8 @@ static final class VisibilityReadback {
 
     private boolean close() {
         boolean released = true;
+        if(root != null && inputGeometryListener != null && root.getViewTreeObserver().isAlive()) root.getViewTreeObserver().removeOnPreDrawListener(inputGeometryListener);
+        inputGeometryListener = null; inputGeometry = null; computeButton = null;
         stopNativePage();
         stopResizeObservation();
 
@@ -1787,6 +1839,10 @@ static final class VisibilityReadback {
     }
 
     private static native boolean nativeControl(long generation, int code, float value);
+    private static native boolean nativeFeedbackSelected();
+    private static native boolean nativeInputSelected();
+    private static native boolean nativePublishInputGeometry(long generation, String body);
+    private static native String nativeFeedbackStatus(long generation);
     private static native long nativeSetPanelVisible(long generation, boolean visible);
     private static native String nativeReadPanelVisibility(long generation, long requestRevision);
     private static native String nativeReadPanelGeometry(long generation);

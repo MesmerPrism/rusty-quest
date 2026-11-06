@@ -24,6 +24,10 @@ final class EmbeddedDuplexActivationGate {
         long[] currentIncomingFrame(long maxAgeNs);
         /** New v2 Surface evidence. Defaults fail closed for older test adapters. */
         default void awaitFirstSurfaceImage() throws Exception { awaitFirstRenderedFrame(); }
+        default void awaitFirstSurfaceImage(java.util.function.BooleanSupplier currentAuthority)throws Exception{
+            if(!currentAuthority.getAsBoolean())throw new IllegalStateException("activation authority no longer current");
+            awaitFirstSurfaceImage();
+        }
         default long[] currentIncomingAcquiredFrame(long maxAgeNs) { return null; }
         default long[] currentIncomingEffectiveFrame(long maxAgeNs) { return null; }
         long routeGeneration();
@@ -41,6 +45,10 @@ final class EmbeddedDuplexActivationGate {
         /** Diagnostic only; production logs the same closed record. */
         default void logActivationFailure(String closedRecord) {
             android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-rejected " + closedRecord);
+        }
+        default void logActivationPending(String stage, long elapsedMs) {
+            android.util.Log.w("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-pending stage="
+                    + stage + " elapsedMs=" + elapsedMs);
         }
     }
 
@@ -154,7 +162,8 @@ final class EmbeddedDuplexActivationGate {
                 || !ticket.clientId.equals(armed.clientId) || !ticket.leaseId.equals(armed.leaseId)) {
             return; // Verified physical cleanup is not a grant to reopen this arm lineage.
         }
-        boolean retained = "rusty.quest.android.media.retained_cleanup_projection.v2".equals(
+        boolean ownedCleanup="rusty.quest.android.media.retained_cleanup_projection.v3".equals(authority.getString("$schema"));
+        boolean retained = ownedCleanup || "rusty.quest.android.media.retained_cleanup_projection.v2".equals(
                 authority.getString("$schema"));
         String epoch = authority.getString(retained ? "provider_epoch_id" : "authority_provider_epoch_id");
         String client = authority.getString(retained ? "target_client_id" : "authority_client_id");
@@ -166,7 +175,7 @@ final class EmbeddedDuplexActivationGate {
         if (!epoch.equals(armed.providerEpochId) || !client.equals(armed.clientId)
                 || !lease.equals(armed.leaseId)
                 || !target.incomingRuntimeSpecId().equals(authority.getString("platform_runtime_spec_id"))
-                || authority.getLong("expires_at_ms") <= clock.wallTimeMillis()
+                || !ownedCleanup&&authority.getLong("expires_at_ms") <= clock.wallTimeMillis()
                 || !"rusty.quest.android.media.verified_owner_effect.v1".equals(verified.getString("$schema"))
                 || verified.getLong("executor_generation") != target.generation()
                 || !verified.getBoolean("terminal") || !"stopped".equals(verified.getString("observed_state"))
@@ -204,6 +213,7 @@ final class EmbeddedDuplexActivationGate {
     private static final class ActivationAttempt {
         ActivationStage stage = ActivationStage.ARM_PROOF;
         final long startedNs = System.nanoTime();
+        boolean readinessWarned;
         long elapsedMs() { return Math.max(0L, (System.nanoTime() - startedNs) / 1_000_000L); }
     }
 
@@ -268,11 +278,14 @@ final class EmbeddedDuplexActivationGate {
 
         // Display and native callbacks can reenter the process. Keep the claim
         // uncertain until readback succeeds, without holding the state lock.
-        long readinessDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        long readinessEstimate = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         attempt.stage = ActivationStage.FIRST_SURFACE_IMAGE;
-        target.awaitFirstSurfaceImage();
-        long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessDeadline,
-                false, 0L);
+        target.awaitFirstSurfaceImage(()->{
+            requireCurrentClaim(current,claimedRevision);
+            return clock.wallTimeMillis()<current.expiresAtMs;
+        });
+        long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessEstimate,
+                false, 0L, attempt);
         if (!acquiredFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
             throw new IllegalStateException("fresh incoming frame unavailable");
         }
@@ -281,7 +294,7 @@ final class EmbeddedDuplexActivationGate {
         target.activateIncomingProjection();
         attempt.stage = ActivationStage.NATIVE_EFFECTIVE;
         long[] effectiveFrame = awaitCurrentIncomingFrame(current, claimedRevision,
-                readinessDeadline, true, frame[17]);
+                readinessEstimate, true, frame[17], attempt);
         long[] projection = target.currentProjection();
         if (!effectiveFrame(effectiveFrame, frame) || !effectiveProjection(projection)
                 || clock.wallTimeMillis() >= current.expiresAtMs) {
@@ -305,7 +318,8 @@ final class EmbeddedDuplexActivationGate {
     }
 
     private long[] awaitCurrentIncomingFrame(ArmEvidence current, long claimedRevision,
-            long deadlineNs, boolean effective, long minimumGpuRetiredNs) throws Exception {
+            long estimateNs, boolean effective, long minimumGpuRetiredNs,
+            ActivationAttempt attempt) throws Exception {
         while (true) {
             requireCurrentClaim(current, claimedRevision);
             if (clock.wallTimeMillis() >= current.expiresAtMs) {
@@ -325,8 +339,11 @@ final class EmbeddedDuplexActivationGate {
                         || frame[4] != target.decoderToken() || frame[5] != target.readerGeneration()
                         || frame[17] <= 0L || frame[17] >= minimumGpuRetiredNs) return frame;
             }
-            if (System.nanoTime() >= deadlineNs) {
-                throw new IllegalStateException("fresh incoming frame unavailable");
+            if (!attempt.readinessWarned && System.nanoTime() >= estimateNs) {
+                attempt.readinessWarned = true;
+                // An estimate cannot revoke this arm or manufacture fresh evidence.
+                try { target.logActivationPending(attempt.stage.name(), attempt.elapsedMs()); }
+                catch (RuntimeException ignored) { }
             }
             Thread.sleep(5L);
         }
@@ -508,4 +525,14 @@ final class EmbeddedDuplexActivationGate {
     }
 
     private static boolean empty(String value) { return value == null || value.isEmpty(); }
-}
+
+
+    boolean freshSetupQuiescent(){
+        lock.lock();try{
+            if(pendingFreshArm!=null)return false;
+            if(armed==null)return !cleanupStarted && !activationUncertain && !activated && pendingTerminal==null;
+            // Only the actual verified current Sink Stop makes the previous activation an earned stopped scope.
+            return cleanupStarted && terminalArm==armed && pendingTerminal!=null
+                && terminalProviderRevision>armed.providerStateRevision;
+        }finally{lock.unlock();}
+    }}

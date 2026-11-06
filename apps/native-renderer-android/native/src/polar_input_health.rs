@@ -45,7 +45,12 @@ impl Status {
     /// Diagnostic time passing must not churn the session controller projection.
     pub(crate) fn same_readiness(self, other: Self) -> bool {
         (self.required, self.fresh, self.pause_latched, self.reason)
-            == (other.required, other.fresh, other.pause_latched, other.reason)
+            == (
+                other.required,
+                other.fresh,
+                other.pause_latched,
+                other.reason,
+            )
     }
 
     pub(crate) fn json(self) -> serde_json::Value {
@@ -128,7 +133,9 @@ pub(crate) fn commit_acc(token: AcquisitionToken, accept: impl FnOnce() -> bool)
     let committed_at = Instant::now();
     state.accepted_count = state.accepted_count.saturating_add(1);
     state.last_commit = Some(committed_at);
-    state.ingress_to_commit_ms = committed_at.checked_duration_since(token.entered_at).map(duration_ms);
+    state.ingress_to_commit_ms = committed_at
+        .checked_duration_since(token.entered_at)
+        .map(duration_ms);
     if state.required && state.last_sample.is_none_or(|at| token.received_at >= at) {
         if let Some(previous) = state
             .last_sample
@@ -204,8 +211,14 @@ impl Acquisition {
                 pause_latched,
                 reason,
                 accepted_age_ms: age.map(duration_ms),
-                ingress_age_ms: self.last_ingress.and_then(|at| now.checked_duration_since(at)).map(duration_ms),
-                commit_age_ms: self.last_commit.and_then(|at| now.checked_duration_since(at)).map(duration_ms),
+                ingress_age_ms: self
+                    .last_ingress
+                    .and_then(|at| now.checked_duration_since(at))
+                    .map(duration_ms),
+                commit_age_ms: self
+                    .last_commit
+                    .and_then(|at| now.checked_duration_since(at))
+                    .map(duration_ms),
                 ingress_to_commit_ms: self.ingress_to_commit_ms,
                 ingress_count: self.ingress_count,
                 accepted_count: self.accepted_count,
@@ -268,13 +281,22 @@ mod tests {
         }));
         assert!(status(false, false).0.fresh);
         let observed = status(false, false).0.json();
-        assert_eq!(observed["ingress_count"].as_u64().unwrap(), before["ingress_count"].as_u64().unwrap() + 1);
-        assert_eq!(observed["accepted_count"].as_u64().unwrap(), before["accepted_count"].as_u64().unwrap() + 1);
+        assert_eq!(
+            observed["ingress_count"].as_u64().unwrap(),
+            before["ingress_count"].as_u64().unwrap() + 1
+        );
+        assert_eq!(
+            observed["accepted_count"].as_u64().unwrap(),
+            before["accepted_count"].as_u64().unwrap() + 1
+        );
         let denied = acquisition_token();
         assert!(!commit_acc(denied, || false));
         let rejected = status(false, false).0.json();
         assert_eq!(rejected["accepted_count"], observed["accepted_count"]);
-        assert_eq!(rejected["rejected_count"].as_u64().unwrap(), observed["rejected_count"].as_u64().unwrap() + 1);
+        assert_eq!(
+            rejected["rejected_count"].as_u64().unwrap(),
+            observed["rejected_count"].as_u64().unwrap() + 1
+        );
         assert!(rejected["ingress_age_ms"].is_u64());
         assert!(rejected["commit_age_ms"].is_u64());
     }
@@ -285,7 +307,10 @@ mod tests {
         let token = acquisition_token_entered(Instant::now() - Duration::from_secs(2));
         assert!(commit_acc(token, || true));
         let (current, _) = status(false, false);
-        assert!(current.fresh, "diagnostic entry cannot backdate acceptance freshness");
+        assert!(
+            current.fresh,
+            "diagnostic entry cannot backdate acceptance freshness"
+        );
         let observed = current.json();
         assert!(observed["ingress_age_ms"].as_u64().unwrap() >= 2000);
         assert!(observed["ingress_to_commit_ms"].as_u64().unwrap() >= 2000);
@@ -293,7 +318,10 @@ mod tests {
         let mut later = current;
         later.accepted_age_ms = Some(900);
         later.ingress_count += 1;
-        assert!(current.same_readiness(later), "diagnostics must not churn readiness transitions");
+        assert!(
+            current.same_readiness(later),
+            "diagnostics must not churn readiness transitions"
+        );
     }
 
     #[test]
@@ -316,7 +344,11 @@ mod tests {
         assert!(!stale.fresh);
         assert_eq!(stale.reason, "acc-stale");
         assert_eq!(stale.json()["accepted_age_ms"], 1000);
-        assert!(state.status(now - Duration::from_millis(1), false, false).0.json()["accepted_age_ms"].is_null());
+        assert!(state
+            .status(now - Duration::from_millis(1), false, false)
+            .0
+            .json()["accepted_age_ms"]
+            .is_null());
         assert_eq!(overdue.overdue, Duration::from_nanos(1));
         assert!(
             !state

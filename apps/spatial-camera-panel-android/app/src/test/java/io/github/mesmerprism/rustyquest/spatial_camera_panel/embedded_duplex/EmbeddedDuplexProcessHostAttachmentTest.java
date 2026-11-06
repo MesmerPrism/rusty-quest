@@ -6,6 +6,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.concurrent.ExecutionException;
@@ -75,6 +76,18 @@ public final class EmbeddedDuplexProcessHostAttachmentTest {
         ExecutionException stale = assertThrows(ExecutionException.class,
                 () -> host.closeRealPeerNoMedia(first + 1L).get());
         assertTrue(stale.getCause().getMessage().contains("unavailable"));
+        if (!"none".equals(BuildConfig.EMBEDDED_DUPLEX_FRESH_SETUP_POLICY)) {
+            // Fresh close requires the actual Context-backed Original and Native
+            // retirement owners; this deliberately Context-null fixture has neither.
+            ExecutionException missingContext = assertThrows(ExecutionException.class,
+                    () -> host.closeRealPeerNoMedia(first).get());
+            assertEquals("fresh no-media application context unavailable",
+                    missingContext.getCause().getMessage());
+            assertTrue(host.runtimeStatus().get().displayAttached);
+            assertThrows(IllegalStateException.class,
+                    () -> host.attachDisplay(new FakeDisplay()));
+            return;
+        }
         assertEquals("uninitialized-display-detached", host.closeRealPeerNoMedia(first).get());
         assertFalse(host.runtimeStatus().get().displayAttached);
         assertEquals(first + 1L, host.attachDisplay(new FakeDisplay()));

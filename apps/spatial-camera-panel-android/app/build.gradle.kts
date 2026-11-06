@@ -1,8 +1,64 @@
+import java.util.Base64
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.jetbrains.kotlin.android)
   alias(libs.plugins.meta.spatial.plugin)
   alias(libs.plugins.compose.compiler)
+}
+
+// One semantic policy is resolved from the selected Manifold source dependency.
+// Values stay Long through BuildConfig; development horizons exceed signed32.
+val embeddedDuplexDevelopmentLifetimeJson = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_BASE64")
+  .orElse("").map { encoded -> if (encoded.isEmpty()) "" else String(Base64.getDecoder().decode(encoded), Charsets.UTF_8) }
+val embeddedDuplexDevelopmentHorizonMs = embeddedDuplexDevelopmentLifetimeJson.map { raw ->
+  if (raw.isEmpty()) 0L else {
+    val policy = groovy.json.JsonSlurper().parseText(raw) as Map<*, *>
+    require(policy.keys == setOf("$" + "schema", "policy_id", "delegated_authority_horizon_ms") &&
+      policy["$" + "schema"] == "rusty.manifold.development.lifetime_policy.v1" &&
+      policy["policy_id"] == "policy.manifold.development-lifetime.v1") { "Invalid development lifetime policy" }
+    val value = policy["delegated_authority_horizon_ms"].toString().toLong()
+    require(value > 3_600_000L && value % 60_000L == 0L) { "Invalid development authority horizon" }
+    value
+  }
+}
+val embeddedDuplexSetupHorizonMs = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS")
+  .orElse("300000").map { raw ->
+    require(raw.matches(Regex("[0-9]+"))) { "Invalid embedded duplex setup horizon" }
+    val value = raw.toLongOrNull() ?: error("Embedded duplex setup horizon overflow")
+    val selected = embeddedDuplexDevelopmentHorizonMs.get()
+    require(value % 60_000L == 0L && (if (selected == 0L) value in 300_000L..3_600_000L else value == selected)) { "Embedded duplex setup horizon differs from selected source policy" }
+    value
+  }
+
+// Explicit app artifact policy, independent of expiring setup credentials.
+val embeddedDuplexMediaPolicy = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY")
+  .orElse("finite").map { raw ->
+    require(raw == "finite" || raw == "ongoing-v2") { "Invalid embedded duplex media policy" }
+    raw
+  }
+
+// Independent build-fixed fresh policy. Existing finite/ongoing-v2 selection
+// alone never enables this new source-bound authority route.
+val embeddedDuplexFreshSetupPolicy = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY")
+  .orElse("none").map { raw -> require(raw == "none" || raw == "source-bound-v2"); raw }
+val embeddedDuplexFreshPolicySha256 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256").orElse("")
+val embeddedDuplexFreshTargetSha256 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256").orElse("")
+val embeddedDuplexFreshTargetRawSha256 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256").orElse("")
+val embeddedDuplexFreshTargetBase64 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64").orElse("")
+val embeddedDuplexFreshInputs = providers.provider {
+  val selected = embeddedDuplexFreshSetupPolicy.get()
+  val policy = embeddedDuplexFreshPolicySha256.get()
+  val target = embeddedDuplexFreshTargetSha256.get()
+  val raw = embeddedDuplexFreshTargetRawSha256.get()
+  val encoded = embeddedDuplexFreshTargetBase64.get()
+  if (selected == "none") require(policy.isEmpty() && target.isEmpty() && raw.isEmpty() && encoded.isEmpty())
+  else {
+    require(embeddedDuplexMediaPolicy.get() == "ongoing-v2")
+    require(policy.matches(Regex("sha256:[0-9a-f]{64}")) && target.matches(Regex("sha256:[0-9a-f]{64}")))
+    require(raw.matches(Regex("[0-9a-f]{64}")) && encoded.matches(Regex("[A-Za-z0-9+/]+={0,2}")))
+  }
+  selected
 }
 
 val spatialApplicationId =
@@ -254,8 +310,19 @@ fun sourceCompositionVersionName(fingerprint: String?): String {
   }
   return "0.1.0+src.$fingerprint"
 }
-val spatialSourceVersionName = sourceCompositionVersionName(
+val spatialSourceRuntimeStamp = providers.gradleProperty("rqDeveloperSourceRuntimeStamp")
+  .orElse("false").get().toBooleanStrict()
+val spatialSourceVersionName = if (spatialSourceRuntimeStamp) "0.1.0" else sourceCompositionVersionName(
   providers.gradleProperty("rqDeveloperSourceCompositionFingerprint").orNull)
+if (spatialSourceRuntimeStamp) {
+  androidComponents.onVariants(androidComponents.selector().withBuildType("debug")) { variant ->
+    requireNotNull(variant.buildConfigFields).put("VERSION_NAME", com.android.build.api.variant.BuildConfigField(
+      "String",
+      "io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialSourceVersion.read(BuildConfig.class.getClassLoader())",
+      "Exact packaged source version; deliberately not a compile-time constant.",
+    ))
+  }
+}
 
 android {
   namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
@@ -264,6 +331,14 @@ android {
 
   defaultConfig {
     applicationId = spatialApplicationId.get()
+    buildConfigField("String", "EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_JSON", buildConfigString(embeddedDuplexDevelopmentLifetimeJson.get()))
+    buildConfigField("long", "EMBEDDED_DUPLEX_SETUP_HORIZON_MS", "${embeddedDuplexSetupHorizonMs.get()}L")
+    buildConfigField("String", "EMBEDDED_DUPLEX_MEDIA_POLICY", "\"${embeddedDuplexMediaPolicy.get()}\"")
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_SETUP_POLICY", buildConfigString(embeddedDuplexFreshInputs.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_POLICY_SHA256", buildConfigString(embeddedDuplexFreshPolicySha256.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256", buildConfigString(embeddedDuplexFreshTargetSha256.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256", buildConfigString(embeddedDuplexFreshTargetRawSha256.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64", buildConfigString(embeddedDuplexFreshTargetBase64.get()))
     minSdk = 34
     targetSdk = 34
     versionCode = 1
@@ -416,6 +491,10 @@ android {
       cmake {
         path = file("src/main/cpp/spatial_depth_layer/CMakeLists.txt")
         version = "3.22.1"
+        val staging = providers.gradleProperty("rqCmakeStagingDirectory").orNull
+        require(!staging.isNullOrBlank()) { "Select CMake staging through Build-SpatialCameraPanelAndroid.ps1 and an explicit short BuildCacheRoot" }
+        require(file(staging).isAbsolute) { "CMake staging must be absolute" }
+        buildStagingDirectory = file(staging)
       }
     }
   }
@@ -517,6 +596,8 @@ android {
   kotlinOptions { jvmTarget = "17" }
 }
 
+apply(from = rootProject.file("../../tools/gradle/spatial-source-version.gradle"))
+
 val embeddedMediaBuildDir = providers.gradleProperty("mediaBuildDir").orNull
   ?.let { file(it) }
   ?: project(":media-stream-android").layout.buildDirectory.get().asFile
@@ -590,3 +671,32 @@ spatial {
     sources.add(project.layout.projectDirectory.dir("src/shaders"))
   }
 }
+
+// Resident API/loader files only. AndroidSourceDirectorySet has no exclusion API;
+// attach the exact same seven files to the actual Kotlin and Java compiler tasks.
+if (providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR").orNull
+    ?.isNotBlank() == true) {
+  val feedbackRoot = rootProject.file("../../android/development-feedback/src")
+  val feedbackSources = files(listOf(
+    "main/java/org/rusty/quest/feedback/api/FeedbackModule.java",
+    "main/java/org/rusty/quest/feedback/ArtifactStore.java",
+    "main/java/org/rusty/quest/feedback/DexDefinitions.java",
+    "main/java/org/rusty/quest/feedback/GenerationLoader.java",
+    "main/java/org/rusty/quest/feedback/ModuleHost.java",
+    "main/java/org/rusty/quest/feedback/ConnectionObservationController.java",
+    "android/java/org/rusty/quest/feedback/AndroidDexLoader.java",
+  ).map { feedbackRoot.resolve(it) })
+  // AGP installs each task's source convention after task registration. Apply
+  // these additions after that setup and before the component observer binds it.
+  afterEvaluate {
+    tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
+      source(feedbackSources)
+    }
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+      source(feedbackSources)
+    }
+  }
+}
+
+// Optional typed selected-component closure; compatibility callers remain unverified.
+apply(from = rootProject.file("../../tools/gradle/android-component-closure.gradle"))

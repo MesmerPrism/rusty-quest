@@ -1,4 +1,4 @@
-param([string]$RepoRoot)
+param([string]$RepoRoot, [string]$EvidenceRoot)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -19,6 +19,7 @@ function Invoke-ExpectedFailure {
 function Get-MutexName { param([string]$Serial) $sha = [Security.Cryptography.SHA256]::Create(); try { $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Serial)))).Replace('-', '').ToLowerInvariant() } finally { $sha.Dispose() }; return "Local\RustyMorphospaceQuestRun-" + $hash.Substring(0, 24) }
 
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('rusty-quest-recording-host-reliability-' + [guid]::NewGuid().ToString('N'))
+if ($EvidenceRoot) { $temporary = Join-Path ([IO.Path]::GetFullPath($EvidenceRoot)) ('recording-' + [guid]::NewGuid().ToString('N')) }
 try {
     New-Item -ItemType Directory -Force -Path $temporary | Out-Null
     $fakeAdb = Join-Path $temporary 'fake-adb.ps1'
@@ -199,13 +200,90 @@ exit 23
         try { $mutex.ReleaseMutex() } catch {}
         $mutex.Dispose()
     }
+
+    Import-Module (Join-Path $repo 'tools/lib/QuestRunIsolation.psm1') -Force -DisableNameChecking
+    # Preserve ordinary nonempty Enter/Clear/Exit, in addition to recovery above.
+    $legacy = Enter-QuestRunIsolation -Adb $fakeAdb -Serial legacy-enter -PackageName $package -PropertyNames @('debug.recovery.one','debug.recovery.two') -ReceiptPath (Join-Path $temporary 'legacy-enter.json')
+    try { Clear-QuestRunIsolationProperties -Context $legacy }
+    finally { $legacyCleaned = Exit-QuestRunIsolation -Context $legacy }
+    Assert-True ($legacyCleaned.status -eq 'pass' -and $legacyCleaned.property_restore.Count -eq 2) 'Legacy nonempty transaction changed.'
+
+    $neutralSource = Join-Path $temporary 'neutral-source'; New-Item -ItemType Directory -Path $neutralSource | Out-Null
+    $null = & git -C $neutralSource init -q
+    [IO.File]::WriteAllText((Join-Path $neutralSource 'source.txt'),'neutral source')
+    $null = & git -C $neutralSource add source.txt
+    $null = & git -C $neutralSource -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m fixture
+    if ($LASTEXITCODE -ne 0) { throw 'Neutral recovery source fixture commit failed.' }
+    $neutralPackage = 'io.github.mesmerprism.rustyquest.development_feedback'
+    $neutralProfile = Join-Path $temporary 'neutral-runtime.json'
+    [ordered]@{schema='rusty.quest.development_feedback.runtime_profile.v1';app_lane='development-feedback-android';owner_package=$neutralPackage;property_policy='none';properties=@()} | ConvertTo-Json | Set-Content -LiteralPath $neutralProfile
+    $neutralInput = Join-Path $temporary 'synthetic-build-input.txt'; [IO.File]::WriteAllText($neutralInput,'host fixture only, no APK/build provenance')
+    $neutralCapsule = Join-Path $temporary 'neutral-capsule.json'
+    $null = New-QuestRunCapsule -Path $neutralCapsule -RepoRoot $neutralSource -CapsuleId neutral-recovery-fixture -BuildLockPath $neutralInput -BuildManifestPath $neutralInput -ApkPath $neutralInput -RuntimeProfilePath $neutralProfile
+    Remove-Item -LiteralPath $fakeLogPath -Force
+    $neutralContext = Enter-QuestRunIsolation -Adb $fakeAdb -Serial neutral-normal -PackageName $neutralPackage -RunCapsulePath $neutralCapsule -ReceiptPath (Join-Path $temporary 'neutral-normal.json') -AdbServerPort 5039
+    try { Clear-QuestRunIsolationProperties -Context $neutralContext }
+    finally { $neutralCleaned = Exit-QuestRunIsolation -Context $neutralContext }
+    Assert-True ($neutralCleaned.status -eq 'pass' -and $neutralCleaned.complete_property_clear -and $neutralCleaned.property_restore.Count -eq 0) 'Explicit-none normal cleanup failed.'
+    $child = Join-Path $temporary 'enter-none-child.ps1'
+    @'
+param($Module,$Adb,$Capsule,$Receipt,$Package)
+$ErrorActionPreference='Stop'
+Import-Module $Module -Force -DisableNameChecking
+$context=Enter-QuestRunIsolation -Adb $Adb -Serial neutral-recovery -PackageName $Package -RunCapsulePath $Capsule -ReceiptPath $Receipt -AdbServerPort 5039
+Clear-QuestRunIsolationProperties -Context $context
+# Process exit models lost host ownership after the actual entered receipt.
+'@ | Set-Content -LiteralPath $child
+    $noneEntered = Join-Path $temporary 'neutral-entered.json'
+    & pwsh -NoProfile -File $child -Module (Join-Path $repo 'tools/lib/QuestRunIsolation.psm1') -Adb $fakeAdb -Capsule $neutralCapsule -Receipt $noneEntered -Package $neutralPackage *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'Causal explicit-none entered child failed.'
+    $noneReceipt = Get-Content -LiteralPath $noneEntered -Raw | ConvertFrom-Json
+    Assert-True ($noneReceipt.property_snapshot -is [array] -and $noneReceipt.property_snapshot.Count -eq 0 -and $noneReceipt.property_policy_binding.property_policy -ceq 'none') 'Entered none receipt lacks exact empty/bound declaration.'
+    $noneTerminal = Join-Path $temporary 'neutral-recovered.json'
+    & pwsh -NoProfile -File (Join-Path $repo 'tools/Recover-QuestRunIsolation.ps1') -ExpectedSerial neutral-recovery -ExpectedPackageName $neutralPackage -EnteredReceiptPath $noneEntered -TerminalReceiptPath $noneTerminal -Adb $fakeAdb -AdbServerPort 5039 *> $null
+    Assert-True ($LASTEXITCODE -eq 0) 'Cross-process explicit-none recovery failed.'
+    $recoveredNone = Get-Content -LiteralPath $noneTerminal -Raw | ConvertFrom-Json
+    Assert-True ($recoveredNone.status -eq 'pass' -and $recoveredNone.property_restore.Count -eq 0 -and $recoveredNone.property_policy_binding.capsule_sha256 -ceq $noneReceipt.property_policy_binding.capsule_sha256) 'Explicit-none recovery lost original binding.'
+    $rows = @(Get-Content -LiteralPath $fakeLogPath | ForEach-Object { $_ | ConvertFrom-Json })
+    $stops = @($rows | Where-Object { $_.arguments -contains "am force-stop '$neutralPackage'" })
+    Assert-True ($stops.Count -eq 2) 'Zero-property normal/recovery did not stop only their actual capsule package.'
+    foreach ($row in $rows) {
+        Assert-True (($row.arguments -join ' ') -notmatch 'getprop|setprop') 'Explicit-none transaction queried or modified properties.'
+        Assert-True ($row.arguments[0] -eq '-P' -and $row.arguments[1] -eq '5039' -and $row.arguments[2] -eq '-s' -and $row.arguments[3] -in @('neutral-normal','neutral-recovery')) 'Explicit-none ADB lost exact port/serial binding.'
+    }
+    $beforeRefusal = @(Get-Content -LiteralPath $fakeLogPath).Count
+    foreach ($damage in @('unexplained','package','profile','capsule','binding','nonempty','cleanup')) {
+        $candidate = Get-Content -LiteralPath $noneEntered -Raw | ConvertFrom-Json
+        $profileBytes = [IO.File]::ReadAllBytes($neutralProfile); $capsuleBytes = [IO.File]::ReadAllBytes($neutralCapsule)
+        try {
+            switch ($damage) {
+                unexplained { $candidate.PSObject.Properties.Remove('property_policy_binding') }
+                package { $candidate.package_name='io.github.mesmerprism.rustyquest.other' }
+                profile { Add-Content -LiteralPath $neutralProfile -Value changed }
+                capsule { Add-Content -LiteralPath $neutralCapsule -Value ' ' }
+                binding { $candidate.property_policy_binding.runtime_profile_sha256='0'*64 }
+                nonempty { $candidate.property_snapshot=@([pscustomobject]@{name='debug.invalid';value='changed'}) }
+                cleanup {
+                    $changedCapsule=Get-Content -LiteralPath $neutralCapsule -Raw | ConvertFrom-Json
+                    $changedCapsule.cleanup.restore_on_failure=$false
+                    $changedCapsule | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $neutralCapsule
+                    $candidate.property_policy_binding.capsule_sha256=(Get-FileHash -LiteralPath $neutralCapsule -Algorithm SHA256).Hash.ToLowerInvariant()
+                }
+            }
+            $damagedNone = Join-Path $temporary ("none-$damage.json"); $candidate | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath $damagedNone
+            & pwsh -NoProfile -File (Join-Path $repo 'tools/Recover-QuestRunIsolation.ps1') -ExpectedSerial neutral-recovery -ExpectedPackageName $neutralPackage -EnteredReceiptPath $damagedNone -TerminalReceiptPath (Join-Path $temporary ("none-$damage-terminal.json")) -Adb $fakeAdb -AdbServerPort 5039 *> $null
+            Assert-True ($LASTEXITCODE -ne 0) "Recovery accepted $damage explicit-none evidence."
+            Assert-True (@(Get-Content -LiteralPath $fakeLogPath).Count -eq $beforeRefusal) 'Damaged explicit-none receipt reached ADB effects.'
+        } finally { [IO.File]::WriteAllBytes($neutralProfile,$profileBytes); [IO.File]::WriteAllBytes($neutralCapsule,$capsuleBytes) }
+    }
 } finally {
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_STATE -ErrorAction SilentlyContinue
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_LOG -ErrorAction SilentlyContinue
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_FAIL_PROPERTY -ErrorAction SilentlyContinue
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_MISMATCH_READBACK_NAME -ErrorAction SilentlyContinue
     Remove-Item Env:RUSTY_QUEST_FAKE_ADB_OMIT_READBACK_NAME -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }
+    if (-not $EvidenceRoot -and (Test-Path -LiteralPath $temporary)) { Remove-Item -LiteralPath $temporary -Recurse -Force }
+    if ($EvidenceRoot) { Write-Host "Recording fixture evidence: $temporary" }
 }
 
 Write-Host 'Rusty Quest recording host reliability validation passed'

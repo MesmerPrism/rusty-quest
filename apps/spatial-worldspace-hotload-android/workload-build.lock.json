@@ -1,0 +1,45 @@
+{
+  "schema": "rusty.quest.spatial_worldspace_hotload.build_contract.v1",
+  "app_id": "spatial-worldspace-hotload",
+  "package_name": "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload",
+  "activity": ".SpatialWorldspaceHotloadActivity",
+  "sdk": "0.14.0",
+  "sdk_plugin": "0.14.0",
+  "gradle": "9.4.1",
+  "agp": "8.11.1",
+  "kotlin": "2.2.0",
+  "java_major": 17,
+  "android_api": 34,
+  "build_tools": "35.0.0",
+  "ndk": "27.2.12479018",
+  "cmake": "3.22.1",
+  "abi": "arm64-v8a",
+  "variant": "debug",
+  "selected_features": [
+    "sdk-scene-mesh",
+    "rgba8-workload-atlas-v4",
+    "compose-control-panel",
+    "explicit-external-gpu-compute",
+    "borrowed-sdk-xr-hand-input",
+    "debug-shell-workload-controls",
+    "debug-sdk-named-shader-reload",
+    "debug-native-stateless-compute-reload",
+    "fixed-spv-abi-validated-presets"
+  ],
+  "denied_features": [
+    "camera",
+    "environment-depth",
+    "external-task-embedding",
+    "runtime-property-activation",
+    "cpu-dynamic-position-readback"
+  ],
+  "permission_allowlist": [
+    "com.oculus.permission.HAND_TRACKING",
+    "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+  ],
+  "runtime_properties": [],
+  "scene_export_default": false,
+  "usage_data_collection": false,
+  "formal_lifecycle_adoption": false,
+  "expected_signer_sha256": "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
+}

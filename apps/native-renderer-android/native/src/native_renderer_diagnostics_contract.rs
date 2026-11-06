@@ -182,8 +182,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).expect("create isolated test directory");
 
-        write_renderer_focus_state_file(&directory, 4242, Some("android.app.NativeActivity"), "FOCUSED", 73, true, 9001)
-            .expect("write renderer focus state");
+        write_renderer_focus_state_file(
+            &directory,
+            4242,
+            Some("android.app.NativeActivity"),
+            "FOCUSED",
+            73,
+            true,
+            9001,
+        )
+        .expect("write renderer focus state");
 
         let target = directory.join(RENDERER_FOCUS_STATUS_FILE);
         let value: serde_json::Value =
@@ -201,8 +209,16 @@ mod tests {
         assert_eq!(value["updated_at_unix_ms"], 9001);
         assert!(!directory.join(RENDERER_FOCUS_STAGING_FILE).exists());
 
-        write_renderer_focus_state_file(&directory, 4243, Some("example.product.ImmersiveActivity"), "VISIBLE", 74, false, 9002)
-            .expect("atomically replace renderer focus state");
+        write_renderer_focus_state_file(
+            &directory,
+            4243,
+            Some("example.product.ImmersiveActivity"),
+            "VISIBLE",
+            74,
+            false,
+            9002,
+        )
+        .expect("atomically replace renderer focus state");
         let replacement: serde_json::Value = serde_json::from_slice(
             &std::fs::read(&target).expect("read replacement renderer focus state"),
         )
@@ -221,9 +237,10 @@ mod tests {
     #[test]
     fn unknown_activity_never_claims_the_stock_native_activity() {
         for unknown in [None, Some("")] {
-            let value: serde_json::Value = serde_json::from_str(
-                &renderer_focus_state_json(4242, unknown, "FOCUSED", 73, true, 9001),
-            ).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&renderer_focus_state_json(
+                4242, unknown, "FOCUSED", 73, true, 9001,
+            ))
+            .unwrap();
             assert!(value["activity"].is_null());
         }
     }

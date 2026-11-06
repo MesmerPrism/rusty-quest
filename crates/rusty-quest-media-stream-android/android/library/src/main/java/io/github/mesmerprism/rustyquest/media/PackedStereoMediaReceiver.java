@@ -54,6 +54,9 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private volatile String failure = "";
     private volatile boolean stopRequested;
     private volatile boolean liveRequested;
+    private volatile boolean preparedMode,preparedDeliveryOpen;
+    private org.json.JSONObject preparedPeerFormat;
+    private long preparedConnection;
     private volatile Thread worker;
     private volatile Socket socket;
     private volatile MediaCodec decoder;
@@ -129,9 +132,77 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         this.handleId = "packed-receiver-" + NEXT_HANDLE.getAndIncrement() + ":g" + generation;
     }
 
+    /** SDK decoder and listener earned before authority; no packet can enter the decoder yet. */
+    public void prepareDormantDecoder(org.json.JSONObject peerFormat)throws Exception {
+        synchronized(lock) {
+            if(!"new".equals(state) || decoder!=null || worker!=null || renderThread!=null)
+                throw new IllegalStateException("decoder preparation already entered");
+            preparedMode=true;preparedPeerFormat=new org.json.JSONObject(peerFormat.toString());
+            state="preparing_decoder";ready=new CountDownLatch(1);revision.incrementAndGet();
+        }
+        // Publish every owner before the next fallible SDK call. Failure never retries SDK allocation.
+        if(!"rusty.quest.android.media.prepared_encoded_format.v1".equals(peerFormat.getString("$schema"))
+            ||!MIME_H264.equals(peerFormat.getString("mime")))throw new IOException("prepared peer codec format");
+        int width=peerFormat.getInt("width"),height=peerFormat.getInt("height");
+        if(width<=0 || height<=0 || width>bounds.maxWidth || height>bounds.maxHeight)
+            throw new IOException("prepared peer dimensions exceed actual receiver target");
+        renderThread=new HandlerThread("rusty-packed-prepared-render-callback");renderThread.start();
+        MediaFormat format=MediaFormat.createVideoFormat(MIME_H264,width,height);
+        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE,bounds.maxPacketBytes);
+        format.setByteBuffer("csd-0",ByteBuffer.wrap(preparedCsd(peerFormat.getString("csd_0_hex"))));
+        if(!peerFormat.isNull("csd_1_hex"))format.setByteBuffer("csd-1",ByteBuffer.wrap(preparedCsd(peerFormat.getString("csd_1_hex"))));
+        if(!peerFormat.isNull("profile"))format.setInteger(MediaFormat.KEY_PROFILE,peerFormat.getInt("profile"));
+        if(!peerFormat.isNull("level"))format.setInteger(MediaFormat.KEY_LEVEL,peerFormat.getInt("level"));
+        MediaCodec held=MediaCodec.createDecoderByType(MIME_H264);decoder=held;
+        synchronized(lock){decoderClass=closedDecoderClass(held);preparedConnection=++connectionGeneration;}
+        held.configure(format,surface,null,0);
+        final long connection=preparedConnection;
+        held.setOnFrameRenderedListener((codec,pts,nano)->rendered(codec,connection,pts),new Handler(renderThread.getLooper()));
+        held.start(); // This potentially slow SDK stage is inside PREPARE, never final ticket execution.
+        if(expectedSourceHost==null)throw new IOException("prepared duplex receiver requires actual accepted source route");
+        ServerSocket listening=new ServerSocket();incomingListener=listening;
+        listening.setReuseAddress(true);listening.bind(new InetSocketAddress(InetAddress.getByName(host),port));listening.setSoTimeout(1000);
+        synchronized(lock){
+            if(stopRequested || decoder!=held)throw new IOException("prepared decoder superseded");
+            state="prepared_decoder_ready";connectionState="listening";revision.incrementAndGet();
+            worker=new Thread(this::receiveLoop,"rusty-packed-prepared-stereo-receiver");worker.setDaemon(true);worker.start();
+        }
+    }
+    private static byte[] preparedCsd(String value)throws IOException {
+        if(value.isEmpty() || value.length()>65536 || value.length()%2!=0 || !value.matches("[0-9a-f]+"))
+            throw new IOException("actual prepared CSD bounds");
+        byte[] result=new byte[value.length()/2];for(int i=0;i<result.length;i++)result[i]=(byte)Integer.parseInt(value.substring(i*2,i*2+2),16);
+        return result;
+    }
+    public void requestPreparedStop() {
+        synchronized(lock){if(!preparedMode)return;stopRequested=true;lock.notifyAll();}
+        closeSocket();closeListener(); // Same held sockets only. Real worker/codec joins remain stopAndVerify's job.
+    }
+    public long preparedPeerDeliveryCount(){synchronized(lock){return receivedPackets;}}
+    public boolean preparedDeliveryOpened(){return preparedMode&&preparedDeliveryOpen;}
+    public boolean preparedDecoderOwned(){synchronized(lock){return preparedMode&&!stopRequested&&decoder!=null&&worker!=null&&worker.isAlive()
+        &&renderThread!=null&&renderThread.isAlive()&&connectionGeneration==preparedConnection;}}
+    public boolean preparedDecoderHeld() {
+        synchronized(lock){return preparedMode && !preparedDeliveryOpen && !stopRequested && decoder!=null
+            && worker!=null && worker.isAlive() && renderThread!=null && renderThread.isAlive()
+            && incomingListener!=null && !incomingListener.isClosed() && receivedPackets==0 && inputsQueued==0 && renderedFrames==0;}
+    }
+    /** Same live prepared decoder may already serve the authenticated incoming direction. */
+    public boolean preparedDecoderStartable() {
+        synchronized(lock) {
+            if(!preparedDecoderOwned() || preparedConnection<=0L || !failure.isEmpty() || !"NONE".equals(firstFailureCode))return false;
+            if(!preparedDeliveryOpen)return ("prepared_decoder_ready".equals(state)||"receiver_armed".equals(state))&&preparedDecoderHeld();
+            return liveRequested && ("receiver_armed".equals(state)||"receiving".equals(state));
+        }
+    }
+
     /** Arms a bounded connection worker without waiting for the remote sender. */
     public void arm() {
         synchronized (lock) {
+            if(preparedMode) {
+                if(!"prepared_decoder_ready".equals(state) || !preparedDecoderHeld())throw new IllegalStateException("actual prepared decoder unavailable");
+                state="receiver_armed";revision.incrementAndGet();return; // No SDK allocation/start here.
+            }
             if (!"new".equals(state)) throw new IllegalStateException("receiver is not startable");
             if (expectedSourceHost != null) {
                 ServerSocket next = null;
@@ -160,51 +231,6 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }, "rusty-packed-stereo-receiver");
             worker.setDaemon(true);
             worker.start();
-        }
-    }
-
-    /** Arms if needed, then waits for an exact rendered callback or opt-in Surface acquisition. */
-    public void start() throws Exception {
-        requireNotMainThread("start");
-        CountDownLatch startReady;
-        synchronized (lock) {
-            if ("new".equals(state)) arm();
-            if ("receiving".equals(state)) return;
-            if (!("receiver_armed".equals(state))) {
-                throw new IllegalStateException("receiver is not startable");
-            }
-            liveRequested = true;
-            if ("receiving".equals(connectionState)) {
-                state = "receiving";
-                revision.incrementAndGet();
-                return;
-            }
-            startReady = ready;
-        }
-        boolean witnessed;
-        if (acquisitionProbe == null) {
-            witnessed = startReady.await(bounds.startupTimeoutMs, TimeUnit.MILLISECONDS);
-        } else {
-            long deadline = SystemClock.elapsedRealtime() + bounds.startupTimeoutMs;
-            witnessed = false;
-            while (!stopRequested && SystemClock.elapsedRealtime() < deadline) {
-                if (startReady.await(5L, TimeUnit.MILLISECONDS)) {
-                    witnessed = true;
-                    break;
-                }
-                MediaCodec current = decoder;
-                long connection;
-                synchronized (lock) { connection = connectionGeneration; }
-                if (current != null && connection > 0L) pollSurfaceAcquisition(current, connection);
-            }
-        }
-        if (!witnessed || !"receiving".equals(connectionState)) {
-            String reason = failure.isEmpty() ? "receiver startup timed out" : failure;
-            stopAndVerify();
-            throw new IOException(reason);
-        }
-        if (!"receiving".equals(state)) {
-            throw new IOException(failure.isEmpty() ? "receiver did not enter live state" : failure);
         }
     }
 
@@ -240,6 +266,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         Thread active;
         synchronized (lock) {
             stopRequested = true;
+            lock.notifyAll();
             if (!"stopped".equals(state) && !"failed".equals(state)) {
                 state = "stopping";
                 revision.incrementAndGet();
@@ -250,11 +277,9 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         closeListener();
         if (active != null && active != Thread.currentThread()) {
             active.interrupt();
-            try {
-                active.join(bounds.shutdownTimeoutMs);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-            }
+            if (preparedMode) awaitPreparedRetirement(active);
+            else try { active.join(bounds.shutdownTimeoutMs); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
         // A prior worker may have ended with retained decoder/socket ownership.
         // Retry physical release only after its death is positively observed.
@@ -272,7 +297,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         // Retain ownership while it drains; joining under the monitor fences it out.
         if (callbacks != null) {
             callbacks.quitSafely();
-            try { callbacks.join(bounds.shutdownTimeoutMs); }
+            if (preparedMode) awaitPreparedRetirement(callbacks);
+            else try { callbacks.join(bounds.shutdownTimeoutMs); }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
         synchronized (lock) {
@@ -293,6 +319,29 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         }
     }
 
+    /** A prepared owner cannot leave a live SDK thread behind because an estimate elapsed. */
+    private void awaitPreparedRetirement(Thread held) {
+        if (held == Thread.currentThread()) throw new IllegalStateException("receiver retirement cannot join its own thread");
+        long estimate = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bounds.shutdownTimeoutMs);
+        boolean warned = false, interrupted = false;
+        try {
+            while (held.isAlive()) {
+                try {
+                    if (warned) held.join();
+                    else held.join(Math.max(1L, TimeUnit.NANOSECONDS.toMillis(estimate - System.nanoTime())));
+                } catch (InterruptedException request) {
+                    // Keep the same join and resource custody, then restore the
+                    // caller's interrupt status after actual thread retirement.
+                    interrupted = true;
+                }
+                if (!warned && held.isAlive() && System.nanoTime() >= estimate) {
+                    warned = true;
+                    warnPreparedWait("same receiver retirement remains Pending");
+                }
+            }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
+    }
+
     @Override public void close() { stopAndVerify(); }
 
     private void receiveLoop() {
@@ -300,10 +349,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         try {
             for (int attempt = 0; !stopRequested; attempt++) {
                 synchronized (lock) {
-                    if (socket != null || decoder != null || !pendingFrames.isEmpty()) {
+                    if (socket != null || (!preparedMode && decoder != null) || !pendingFrames.isEmpty()) {
                         throw new IOException("prior receiver connection cleanup unresolved");
                     }
                 }
+                if(preparedMode && attempt>0)throw new IOException("prepared connection ended; same owner cannot replay SDK");
                 if (attempt > bounds.maxReconnectAttempts) {
                     throw new IOException("receiver reconnect bound exhausted");
                 }
@@ -423,6 +473,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             transportStage = "CONNECT";
             connection.connect(new InetSocketAddress(host, port), bounds.connectTimeoutMs);
         }
+        synchronized(lock) {
+            while(preparedMode && !preparedDeliveryOpen && !stopRequested)lock.wait();
+            if(stopRequested)return;
+        }
         connection.setSoTimeout(bounds.readTimeoutMs);
         connection.setTcpNoDelay(true);
         RmanvidPacketReader reader = new RmanvidPacketReader(
@@ -435,12 +489,23 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         transportStage = "HEADER";
         RmanvidPacketReader.Header header = reader.readHeader();
         transportStage = "DECODER_CONFIG";
+        MediaCodec codec;
+        final long activeConnection;
+        if(preparedMode) {
+            synchronized(lock) {
+                if(!preparedDeliveryOpen || decoder==null || preparedPeerFormat==null
+                    ||header.width!=preparedPeerFormat.getInt("width") ||header.height!=preparedPeerFormat.getInt("height")
+                    ||connectionGeneration!=preparedConnection)
+                    throw new IOException("prepared decoder/source header identity differs");
+                codec=decoder;activeConnection=preparedConnection;
+            }
+        } else {
         MediaFormat format = MediaFormat.createVideoFormat(MIME_H264, header.width, header.height);
         // The reader already bounds packets by maxPacketBytes; make the decoder
         // allocate input buffers for that same bound instead of a codec default
         // (a 2560x1280 IDR can exceed a default-sized input buffer).
         format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, bounds.maxPacketBytes);
-        MediaCodec codec;
+
         try { codec = MediaCodec.createDecoderByType(MIME_H264); }
         catch (IOException | RuntimeException create) { throw closed("DECODER_CREATE", create); }
         decoder = codec;
@@ -451,7 +516,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         if (callbacks == null || !callbacks.isAlive()) {
             throw new IOException("render callback thread is unavailable");
         }
-        final long activeConnection;
+
         synchronized (lock) { activeConnection = ++connectionGeneration; }
         codec.setOnFrameRenderedListener(new MediaCodec.OnFrameRenderedListener() {
             @Override public void onFrameRendered(MediaCodec callbackCodec, long mediaTimeUs,
@@ -461,6 +526,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         }, new Handler(callbacks.getLooper()));
         try { codec.start(); }
         catch (RuntimeException start) { throw closed("DECODER_START", start); }
+        }
         connectionState = "decoder_configured";
         synchronized (lock) {
             if (decoder == codec && !stopRequested && retiredConnectionGeneration < activeConnection)
@@ -854,7 +920,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         HandlerThread callbacks = renderThread;
         if (callbacks == null) return;
         callbacks.quitSafely();
-        try { callbacks.join(bounds.shutdownTimeoutMs); }
+        if (preparedMode) awaitPreparedRetirement(callbacks);
+        else try { callbacks.join(bounds.shutdownTimeoutMs); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         if (!callbacks.isAlive()) renderThread = null;
         else recordCleanupFailure("render callback thread did not terminate");
@@ -1094,7 +1161,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         private void count(int n) { synchronized (lock) { bytesRead += n; connectionBytesSeen = true; } }
     }
 
-    /** Explicit allocation and time bounds supplied by the embedding host. */
+    /** Host allocation/transport bounds; prepared startup and retirement times are advisory estimates. */
     public static final class Bounds {
         final int maxHeaderBytes;
         final int maxPacketBytes;
@@ -1195,5 +1262,96 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
             cancellation.requireCurrent(generation);
         }
+    }
+
+    public void start() throws Exception { start(()->true); }
+
+
+    /** Arms if needed, then waits for an exact rendered callback or opt-in Surface acquisition. */
+    public void start(java.util.function.BooleanSupplier currentAuthority) throws Exception {
+        if (!currentAuthority.getAsBoolean()) throw new IllegalStateException("receiver startup authority no longer current");
+        requireNotMainThread("start");
+        CountDownLatch startReady;
+        synchronized (lock) {
+            if (preparedMode && stopRequested) throw new IOException("prepared receiver startup no longer current");
+            if ("new".equals(state)) arm();
+            if ("receiving".equals(state)) return;
+            if (!("receiver_armed".equals(state))) {
+                throw new IllegalStateException("receiver is not startable");
+            }
+            liveRequested = true;
+            if (preparedMode) { preparedDeliveryOpen=true; lock.notifyAll(); }
+            if ("receiving".equals(connectionState)) {
+                state = "receiving";
+                revision.incrementAndGet();
+                return;
+            }
+            startReady = ready;
+        }
+        if (preparedMode) {
+            long estimate = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bounds.startupTimeoutMs);
+            boolean warned = false;
+            while (true) {
+                if (!currentAuthority.getAsBoolean()) {
+                    throw new IllegalStateException("receiver startup authority no longer current");
+                }
+                synchronized (lock) {
+                    if (stopRequested || ready != startReady
+                            || !("receiver_armed".equals(state) || "receiving".equals(state))) {
+                        throw new IOException(failure.isEmpty() ? "prepared receiver startup no longer current" : failure);
+                    }
+                }
+                if (startReady.await(5L, TimeUnit.MILLISECONDS)) {
+                    if (!currentAuthority.getAsBoolean()) {
+                        throw new IllegalStateException("receiver startup authority no longer current");
+                    }
+                    synchronized (lock) {
+                        if (!stopRequested && ready == startReady && "receiving".equals(state)
+                                && "receiving".equals(connectionState)) return;
+                    }
+                    throw new IOException(failure.isEmpty() ? "prepared receiver did not enter live state" : failure);
+                }
+                MediaCodec current = decoder;
+                long connection;
+                synchronized (lock) { connection = connectionGeneration; }
+                if (acquisitionProbe != null && current != null && connection > 0L) {
+                    pollSurfaceAcquisition(current, connection);
+                }
+                if (!warned && System.nanoTime() >= estimate) {
+                    warned = true;
+                    warnPreparedWait("same prepared receiver startup remains Pending");
+                }
+            }
+        }
+        boolean witnessed;
+        if (acquisitionProbe == null) {
+            witnessed = startReady.await(bounds.startupTimeoutMs, TimeUnit.MILLISECONDS);
+        } else {
+            long deadline = SystemClock.elapsedRealtime() + bounds.startupTimeoutMs;
+            witnessed = false;
+            while (!stopRequested && SystemClock.elapsedRealtime() < deadline) {
+                if (startReady.await(5L, TimeUnit.MILLISECONDS)) {
+                    witnessed = true;
+                    break;
+                }
+                MediaCodec current = decoder;
+                long connection;
+                synchronized (lock) { connection = connectionGeneration; }
+                if (current != null && connection > 0L) pollSurfaceAcquisition(current, connection);
+            }
+        }
+        if (!witnessed || !"receiving".equals(connectionState)) {
+            String reason = failure.isEmpty() ? "receiver startup timed out" : failure;
+            stopAndVerify();
+            throw new IOException(reason);
+        }
+        if (!"receiving".equals(state)) {
+            throw new IOException(failure.isEmpty() ? "receiver did not enter live state" : failure);
+        }
+    }
+
+    private static void warnPreparedWait(String message) {
+        try { android.util.Log.w("RQSpatialCameraPanel", message); }
+        catch (RuntimeException ignored) { /* A diagnostic cannot retire the held owner. */ }
     }
 }

@@ -9,6 +9,12 @@ param(
     [string]$RetainedCargoTargetDirectory = "",
     [string]$Keystore = "",
     [string]$AppBuildLock = "",
+    [Alias("EnableMetaXrOperatorDebugLayer")]
+    [switch]$EnableMetaXrOperator,
+    [string]$MetaXrOperatorLibrary = "",
+    [string]$MetaXrOperatorLibrarySha256 = "",
+    [string]$MetaXrOperatorManifest = "",
+    [string]$MetaXrOperatorManifestSha256 = "",
     [string]$RecordedHandCaptureDir = "",
     # An explicitly admitted pre-generated source avoids opening raw capture inputs.
     [string]$PreparedHandRigSource = "",
@@ -16,11 +22,6 @@ param(
     [int]$RecordedHandFrameLimit = 12,
     [switch]$RequireRecordedHandCapture,
     [switch]$AllowUnlockedDevelopmentBuild,
-    [switch]$EnableMetaXrOperatorDebugLayer,
-    [string]$MetaXrOperatorLibrary = '',
-    [string]$MetaXrOperatorLibrarySha256 = '',
-    [string]$MetaXrOperatorManifest = '',
-    [string]$MetaXrOperatorManifestSha256 = '',
     [switch]$ReplaceExistingOutput
 )
 
@@ -391,7 +392,7 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
             $relativeSource = ([string]$sourceRecord.path).Replace('\', '/')
             if ([string]::IsNullOrWhiteSpace($relativeSource) -or
                 (-not $relativeSource.StartsWith('apps/native-renderer-android/panel-modules/', [System.StringComparison]::Ordinal) -and
-                 -not ($showcaseVulkanSelected -and [string]$sourceRecord.module_id -ceq 'showcase-native-presentation' -and $relativeSource -cin @('NativeMeshUiProducer.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' | ForEach-Object { 'apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/' + $_ })) -and
+                 -not ($showcaseVulkanSelected -and [string]$sourceRecord.module_id -ceq 'showcase-native-presentation' -and $relativeSource -cin @('NativeMeshUiProducer.java','NativeInputWidgetGeometry.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' | ForEach-Object { 'apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/' + $_ })) -and
                  -not (@($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider' -and $relativeSource -ceq 'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java')) -or
                 -not $relativeSource.EndsWith('.java', [System.StringComparison]::Ordinal)) {
                 throw "Native panel source is outside the owned panel-module root: $relativeSource"
@@ -473,6 +474,12 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         }
         $appBuildEnvByName[$name] = if ($null -ne $entry.PSObject.Properties["value"]) { [string]$entry.value } else { "" }
     }
+    $nativeFeedbackFlag = 'RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED'
+    $nativeFeedbackSelected = @($appBuildLockObject.selected_feature_ids) -ccontains 'native.development_feedback'
+    if ($appBuildEnvByName.ContainsKey($nativeFeedbackFlag) -ne $nativeFeedbackSelected -or
+        ($nativeFeedbackSelected -and [string]$appBuildEnvByName[$nativeFeedbackFlag] -cne 'true')) {
+        throw 'Native development feedback must match its explicit selected feature and build input.'
+    }
     $breathExpectedBindingEnvName = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
     $breathActivation = $appBuildLockObject.PSObject.Properties["breath_composition_activation"]
     if ($null -ne $breathActivation -and $null -ne $breathActivation.Value) {
@@ -528,11 +535,6 @@ if ($inputSelection.controller_only) {
         throw 'Controller-only input requires a manifest without hand permissions, features or support metadata.'
     }
 }
-Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererMetaXrOperator.psm1') -Force
-$metaXrOperator = Get-NativeRendererMetaXrOperatorSelection -FeatureLock $appBuildLockObject `
-    -AndroidManifestPath $manifestInputPath -Enable:$EnableMetaXrOperatorDebugLayer `
-    -LibraryPath $MetaXrOperatorLibrary -LibrarySha256 $MetaXrOperatorLibrarySha256 `
-    -LayerManifestPath $MetaXrOperatorManifest -LayerManifestSha256 $MetaXrOperatorManifestSha256
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererHandGeometrySelection.psm1') -Force
 $handGeometrySelection = Get-NativeRendererHandGeometrySelection -FeatureLock $appBuildLockObject `
     -BuildEnvByName $appBuildEnvByName -PreparedHandRigSource $PreparedHandRigSource `
@@ -540,6 +542,27 @@ $handGeometrySelection = Get-NativeRendererHandGeometrySelection -FeatureLock $a
     -RecordedHandCaptureDir $RecordedHandCaptureDir -RequireRecordedHandCapture:$RequireRecordedHandCapture
 
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib\MetaXrOperatorPackaging.psm1") -Force
+$operatorSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'debug.meta_xr_operator'
+$operatorFlag = 'RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED'
+if ($operatorSelected -ne [bool]$EnableMetaXrOperator -or
+    $appBuildEnvByName.ContainsKey($operatorFlag) -ne $operatorSelected -or
+    ($operatorSelected -and [string]$appBuildEnvByName[$operatorFlag] -cne 'true')) {
+    throw 'Operator feature, explicit switch and app build input must match.'
+}
+# The compatibility switch alias uses the same closed development-host route.
+if ($operatorSelected -and (@($appBuildLockObject.selected_feature_ids) -cnotcontains 'native.development_feedback' -or
+    [string]$appBuildEnvByName['RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED'] -cne 'true')) {
+    throw 'Operator requires the selected development-feedback host; original mesh debug-layer packaging is unsupported.'
+}
+$operatorOptions = @{}
+if ($operatorSelected) {
+    $operatorOptions = @{Enable=$true;FeatureLockPath=$appBuildLockPath;FeatureLockSha256=$appBuildLockSha256;
+        AndroidManifestPath=$manifestInputPath;PackageName=$packageName;Consumer='NativeOpenXr'}
+}
+$operatorSelection = Get-QuestMetaXrOperatorSelection @operatorOptions `
+    -LibraryPath $MetaXrOperatorLibrary -LibrarySha256 $MetaXrOperatorLibrarySha256 `
+    -LayerManifestPath $MetaXrOperatorManifest -LayerManifestSha256 $MetaXrOperatorManifestSha256
 $sourceComposition = Get-QuestBuildSourceComposition `
     -RepoRoot ([string]$repoRoot) `
     -PackageName @("rusty-quest-native-renderer-android-native", "rusty-quest-broker-authority")
@@ -564,11 +587,10 @@ $packaging = New-NativeRendererAndroidPackagingInput `
     -SourceCommit $sourceHead -SourceTree $sourceTree -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) `
     -VersionCode $androidVersion.code -VersionName $androidVersion.name
 $OutDir = Get-NativeRendererAndroidPackagingOutputDirectory -BaseDirectory $OutDir -Packaging $packaging
+$operatorSuffix = if ($operatorSelection.enabled) { 'operator-' + $operatorSelection.fingerprint.Substring(0,16) } else { '' }
+$operatorCapsuleSuffix = if ($operatorSelection.enabled) { '-' + $operatorSuffix } else { '' }
+if ($operatorSelection.enabled) { $OutDir = Join-Path $OutDir $operatorSuffix }
 $resolvedOutParent = Split-Path -Parent $OutDir
-if ($metaXrOperator.enabled -and [string]::IsNullOrWhiteSpace($requestedOutDir)) {
-    $OutDir = Join-Path $OutDir ('operator-' + $metaXrOperator.fingerprint.Substring(0,16))
-    $resolvedOutParent = Split-Path -Parent $OutDir
-}
 New-Item -ItemType Directory -Force -Path $targetRoot, $resolvedOutParent | Out-Null
 $resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd("\")
 $resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd("\")
@@ -626,6 +648,15 @@ if ([string]::IsNullOrWhiteSpace($Keystore)) {
 }
 
 New-Item -ItemType Directory -Force -Path $assetsDir, $classesDir, $dexDir, $nativeLibDir | Out-Null
+if ($operatorSelection.enabled) {
+    $operatorAssets = Join-Path $OutDir 'operator-assets'
+    $operatorNative = Join-Path $OutDir 'operator-native'
+    Copy-QuestMetaXrOperatorLayer -Selection $operatorSelection -OutputRoot $operatorAssets -NativeStageRoot $operatorNative
+    $layerTarget = Join-Path $OutDir $operatorSelection.layer_manifest.apk_path
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $layerTarget) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $operatorAssets $operatorSelection.layer_manifest.apk_path) -Destination $layerTarget
+    Copy-Item -LiteralPath (Join-Path $operatorNative $operatorSelection.library.apk_path) -Destination (Join-Path $nativeStageRoot $operatorSelection.library.apk_path)
+}
 if (-not (Test-Path $Keystore)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Keystore) | Out-Null
     Invoke-Checked "keytool" $keytool @(
@@ -2003,7 +2034,7 @@ if ($showcaseSelected) {
     if ($sourceFiles.Count -ne 2) { throw 'Showcase base Java source closure is incomplete.' }
 }
 if ($standaloneExperimentOwner) {
-    $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java','NativePageSnapshot.java','NativeSystemKeyboard.java','NativePanelFont.java',
+    $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java','NativeInputWidgetGeometry.java','NativePageSnapshot.java','NativeSystemKeyboard.java','NativePanelFont.java',
         'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java','NativeRendererActivityComponents.java','NativeRendererBootObservation.java',
         'NativeRendererWriterAcknowledgedExitPolicy.java','PanelImmersiveHandoff.java',
         'PanelImmersiveHandoffLifecyclePolicy.java','PanelImmersiveHandoffProofPolicy.java',
@@ -2071,7 +2102,7 @@ if ($showcaseSelected) {
     $allowedShowcaseJava = @('PanelModule.java','NativeAppSettingsReader.java','ControlPanelActivity.java','NativeRendererAppStatusBridge.java',
         'ShowcaseNativeBridge.java','ShowcasePanelModule.java','ShowcaseVisualForm.java','ShowcaseGateway.java','ShowcaseControls.java',
         'ShowcaseDiscoveryServer.java','ShowcaseGatewayProtocol.java','ShowcaseGatewayHttpServer.java','ShowcaseGuestRegistry.java',
-        'PolarSensorPanel.java','PolarSensorRuntime.java','PolarBleRuntimeSupport.java') + @(if ($showcaseVulkanSelected) { 'ShowcaseNativeActivity.java','NativeMeshUiProducer.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' })
+        'PolarSensorPanel.java','PolarSensorRuntime.java','PolarBleRuntimeSupport.java') + @(if ($showcaseVulkanSelected) { 'ShowcaseNativeActivity.java','NativeMeshUiProducer.java','NativeInputWidgetGeometry.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' })
     if ($sourceFiles.Count -ne $allowedShowcaseJava.Count) { throw 'Showcase selected Java inventory differs from the closed composition.' }
     $selectedJavaRecords = @()
     foreach ($source in $sourceFiles) {
@@ -2121,6 +2152,7 @@ if ($showcaseVulkanSelected) {
 } elseif ($showcaseSelected) {
     $cargoBuildArguments += @('--features', 'showcase')
 }
+if ($operatorSelection.enabled) { $cargoBuildArguments += @('--features', 'meta-xr-operator') }
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
@@ -2234,7 +2266,6 @@ $packagingInputPath = Join-Path $OutDir 'packaging-input-lock.json'
 # Public build identity only: no paths or app/private payload metadata.
 $buildIdentityAsset = [ordered]@{schema='rusty.quest.android_build_identity.v1';source_commit=$sourceHead;source_tree=$sourceTree;source_composition_fingerprint=[string]$sourceComposition.fingerprint;packaging_fingerprint=$packaging.sha256}
 $buildIdentityAsset | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $assetsDir 'android-build-identity.json') -Encoding utf8
-Copy-NativeRendererMetaXrOperatorLayer -Selection $metaXrOperator -OutputRoot $OutDir -NativeStageRoot $nativeStageRoot
 Invoke-Checked "aapt2 link" $aapt2 @(
     "link",
     "-o", $apkUnsigned,
@@ -2265,8 +2296,16 @@ Invoke-Checked "apksigner" $apksigner @(
 )
 
 $sha256 = Get-FileSha256 -Path $apkSigned
-Assert-NativeRendererMetaXrOperatorArchive -Selection $metaXrOperator -ApkPath $apkSigned
+Assert-QuestMetaXrOperatorArchive -Selection $operatorSelection -ApkPath $apkSigned
+if ($operatorSelection.enabled) {
+    $operatorManifestDump = @(& $aapt2 dump xmltree $apkSigned --file AndroidManifest.xml 2>&1 | ForEach-Object ToString)
+    $operatorManifestExit = $LASTEXITCODE
+    Assert-QuestMetaXrOperatorManifestDump -Selection $operatorSelection -Lines $operatorManifestDump -ExitCode $operatorManifestExit -RequireNativeExtraction
+    [ordered]@{schema='rusty.quest.aapt2_manifest_dump.v1';apk_sha256=$sha256;exit_code=$operatorManifestExit;lines=$operatorManifestDump} |
+        ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutDir 'operator-manifest-dump.json') -Encoding utf8NoBOM
+}
 $manifest = [ordered]@{
+    meta_xr_operator = $operatorSelection
     '$schema' = "rusty.quest.native_renderer_android.build_manifest.v1"
     app_id = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { [string]$appBuildLockObject.app_id }
     package_name = $packageName
@@ -2277,7 +2316,7 @@ $manifest = [ordered]@{
     activity = $activityName
     entrypoint = $selectedNativeActivityClass
     authority = "rusty.quest.native_renderer"
-    meta_xr_operator_debug_layer = $metaXrOperator
+    meta_xr_operator_debug_layer = $operatorSelection
     panel_composition = $panelCompositionSelection
     target_runtime = "quest-native-openxr-vulkan"
     plan_asset = "native-hwb-blur-sdf-public.plan.json"
@@ -2412,8 +2451,9 @@ $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifest
 if ($script:BuildUsesLock) {
     $propertyManifestPath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-property-manifest.json"
     $runCapsule = [ordered]@{
+        meta_xr_operator = $operatorSelection
         schema = "rusty.quest.apk_run_capsule.v1"
-        capsule_id = "native-renderer-$([string]$appBuildLockObject.app_id)-$($appBuildLockSha256.Substring(0, 12))-$(([string]$sourceComposition.fingerprint).Substring(0, 12))-$($packaging.sha256.Substring(0, 12))"
+        capsule_id = "native-renderer-$([string]$appBuildLockObject.app_id)-$($appBuildLockSha256.Substring(0, 12))-$(([string]$sourceComposition.fingerprint).Substring(0, 12))-$($packaging.sha256.Substring(0, 12))$operatorCapsuleSuffix"
         app_id = [string]$appBuildLockObject.app_id
         app_lane = "native-renderer-android"
         packaging_fingerprint = $packaging.sha256

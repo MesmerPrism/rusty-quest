@@ -52,6 +52,7 @@ internal class SpatialVirtualRoomModule(
   private var skyboxTexture: SceneTexture? = null
   private var loadJob: Job? = null
   private var configured = false
+  @Volatile private var sceneRetired = false
 
   var loaded = false
     private set
@@ -65,11 +66,13 @@ internal class SpatialVirtualRoomModule(
 
   fun shouldConfigureScene(): Boolean = (enabled() || skyboxEnabled()) && !configured
 
+  @Synchronized
   fun runIfRequested(
       reason: String,
       projectionState: SpatialVirtualRoomProjectionState,
       onLoaded: () -> Unit,
   ) {
+    if (sceneRetired) return
     if (!enabled() || isStarted()) {
       return
     }
@@ -126,7 +129,9 @@ internal class SpatialVirtualRoomModule(
         }
   }
 
+  @Synchronized
   private fun handleLoaded(composition: GLXFInfo, afterLoaded: () -> Unit) {
+    if (sceneRetired) return
     loaded = true
     val environmentEntity =
         runCatching { composition.getNodeByName(ENVIRONMENT_NODE).entity }.getOrNull()
@@ -148,7 +153,9 @@ internal class SpatialVirtualRoomModule(
   }
 
   @OptIn(SpatialSDKExperimentalAPI::class)
+  @Synchronized
   fun configureScene(reason: String, projectionState: SpatialVirtualRoomProjectionState) {
+    if (sceneRetired) return
     val virtualRoomEnabled = enabled()
     val skyboxMode = currentSkyboxMode()
     val skyboxEnabled = skyboxMode != SpatialSkyboxMode.None
@@ -287,18 +294,25 @@ internal class SpatialVirtualRoomModule(
                 "skyboxProjectionForegroundPolicy=scene-layer-over-background-skybox"
       }
 
+  @Synchronized
+  fun retireScene(reason: String) {
+    if (sceneRetired) return
+    sceneRetired = true
+    destroy(reason)
+  }
+
+  @Synchronized
   fun destroy(reason: String) {
-    loadJob?.cancel()
+    val job = loadJob
+    val room = roomEntity
+    val skybox = skyboxEntity
+    val sceneObject = skyboxSceneObject
+    val mesh = skyboxMesh
+    val material = skyboxMaterial
+    val texture = skyboxTexture
+    val hadRoom = room != null || skybox != null || sceneObject != null
+    // Cancellation/deletion callbacks cannot reacquire these owned handles.
     loadJob = null
-    roomEntity?.let { entity -> runCatching { entity.destroy() } }
-    skyboxSceneObject?.let { sceneObject ->
-      runCatching { scene.destroyObject(sceneObject) }.recoverCatching { sceneObject.destroy() }
-    }
-    skyboxMesh?.let { mesh -> runCatching { mesh.destroy() } }
-    skyboxMaterial?.let { material -> runCatching { material.destroy() } }
-    skyboxTexture?.let { texture -> runCatching { texture.destroy() } }
-    skyboxEntity?.let { entity -> runCatching { entity.destroy() } }
-    val hadRoom = roomEntity != null || skyboxEntity != null || skyboxSceneObject != null
     roomEntity = null
     skyboxEntity = null
     skyboxSceneObject = null
@@ -307,6 +321,15 @@ internal class SpatialVirtualRoomModule(
     skyboxTexture = null
     configured = false
     loaded = false
+    job?.cancel()
+    room?.destroy()
+    sceneObject?.let { ownedObject ->
+      runCatching { scene.destroyObject(ownedObject) }.recoverCatching { ownedObject.destroy() }
+    }
+    mesh?.let { runCatching { it.destroy() } }
+    material?.let { runCatching { it.destroy() } }
+    texture?.let { runCatching { it.destroy() } }
+    skybox?.destroy()
     if (hadRoom) {
       marker(
           "channel=spatial-virtual-room status=destroyed " +

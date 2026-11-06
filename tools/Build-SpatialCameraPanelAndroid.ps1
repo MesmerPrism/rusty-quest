@@ -1,15 +1,22 @@
 param(
     [string]$RepoRoot,
     [string]$NativeRepoRoot,
+    [string]$CargoPath = '',
+    [string]$RustupPath = '',
+    [switch]$RequireInstalledRustTarget,
+    [switch]$OverlapJvmNativeCompilation,
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
     [string]$NdkVersion = "27.2.12479018",
     [string]$BuildToolsVersion = "36.0.0",
     [ValidateSet("9.4.1")][string]$GradleVersion = "9.4.1",
+    [string]$SharedGradleToolRoot = "",
+    [ValidateSet("Bounded", "Retained",IgnoreCase=$false)][string]$WaitPolicy = "Bounded",
     [ValidateSet("DevFast", "Candidate")]
     [string]$BuildMode = "DevFast",
     [switch]$UseSourceCompositionVersionName,
+    [switch]$UseSourceRuntimeStamp,
     [ValidateSet("Static", "Dynamic")]
     [string]$RustStdLinkage = "Static",
     [switch]$AllowNonDeployableDynamicStdBenchmark,
@@ -17,6 +24,7 @@ param(
     [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 24,
     [string]$PrivateLayerProfilePath = "",
+    [string]$PrivateLayerProviderRoot = "",
     [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultLeftX = 0.0,
     [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultLeftY = 0.0,
     [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultRightX = 0.0,
@@ -32,9 +40,17 @@ param(
     [string]$PrivateSurfaceParticleMarkerPrefix = "",
     [string]$HandMeshRigAssetDir = "",
     [string]$PrivateFeatureSourceDir = "",
+    [string]$AndroidComponentContractPath = "",
+    [string]$PythonPath = "python",
     [string]$PrivateFeatureAssetDir = "",
     [string]$PrivateFeatureResourceDir = "",
     [string]$EmbeddedDuplexProductInputRoot = "",
+    [ValidateRange(300000,9223372036854775807)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
+    [ValidateSet("finite", "development-v1",IgnoreCase=$false)][string]$EmbeddedDuplexLifetimePolicy = "finite",
+    [ValidateScript({ $_ -cin @("finite", "ongoing-v2") })][string]$EmbeddedDuplexMediaPolicy = "finite",
+    [ValidateScript({ $_ -cin @("none", "source-bound-v2") })][string]$EmbeddedDuplexFreshSetupPolicy = "none",
+    [string]$EmbeddedDuplexFreshEnrollmentSelectionPath = "",
+    [ValidatePattern('^(?:[0-9a-f]{64})?$')][string]$ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256 = "",
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",
@@ -70,48 +86,45 @@ param(
     [ValidatePattern('^(?:[0-9a-fA-F]{64})?$')]
     [string]$ExpectedSignerSha256 = "",
     [string]$OutDir = "",
+    [string]$ArtifactOutputParent = "",
     [switch]$AllowSharedDevelopmentPackage,
     [switch]$PublicationBuild,
     [switch]$ReplaceExistingOutput
 )
 
 $ErrorActionPreference = "Stop"
-
-function Get-VerifiedPinnedGradleBat {
-    param([Parameter(Mandatory=$true)][string]$RepoRoot)
-    $resolver = Join-Path $RepoRoot "tools\Resolve-GradleTool.ps1"
-    if (-not (Test-Path -LiteralPath $resolver -PathType Leaf)) { throw "Pinned Gradle resolver is missing: $resolver" }
-    try {
-        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55)
-    } catch {
-        throw "Pinned Gradle cache verification failed: $($_.Exception.Message)"
-    }
-    if ($output.Count -eq 0) { throw "Pinned Gradle cache verification returned no receipt." }
-    try { $receipt = (($output -join "`n") | ConvertFrom-Json -ErrorAction Stop) } catch { throw "Pinned Gradle cache verification returned an invalid receipt: $($_.Exception.Message)" }
-    $expectedHome = [IO.Path]::GetFullPath((Join-Path $RepoRoot "local-artifacts\tools\gradle-9.4.1")).TrimEnd('\')
-    $actualHome = [IO.Path]::GetFullPath([string]$receipt.gradle_home).TrimEnd('\')
-    $actualBat = [IO.Path]::GetFullPath([string]$receipt.gradle_bat)
-    if ($receipt.schema -cne "rusty.quest.gradle_cache_receipt.v2" -or $receipt.mode -cne "VerifyCache" -or
-        $receipt.tool_id -cne "gradle" -or $receipt.version -cne "9.4.1" -or
-        $receipt.archive_sha256 -cne "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb" -or
-        $receipt.tree_sha256 -cne "5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db" -or
-        $actualHome -cne $expectedHome -or
-        -not $actualBat.StartsWith($expectedHome + "\bin\", [StringComparison]::OrdinalIgnoreCase) -or
-        $actualBat -cnotlike "*\bin\gradle.bat" -or
-        -not (Test-Path -LiteralPath $actualBat -PathType Leaf)) {
-        throw "Pinned Gradle cache receipt is invalid or escapes the repository-local tool root."
-    }
-    return $actualBat
-}
-$SharedSpatialSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
-$SharedSpatialAppId = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
 $buildLaneMutex = $null
 $buildLaneMutexOwned = $false
 $buildLaneMutexAbandoned = $false
 $buildLaneMutexWaitMs = 0L
+$apkInspectionCopy = $null
+$nativeCargoChild = $null
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
+$sourceRuntimeStampEnabled=Resolve-SpatialSourceRuntimeStampSelection -Requested:$UseSourceRuntimeStamp -SourceVersionEnabled:$UseSourceCompositionVersionName -BuildMode $BuildMode -BuildType $BuildType -PublicationBuild:$PublicationBuild
+$spatialPrerequisitesModule = Import-Module (Join-Path $PSScriptRoot "lib/SpatialCameraPanelBuildPrerequisites.psm1") -PassThru
+Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib/SpatialApkInspection.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialCargoChild.psm1') -Force
+if($OverlapJvmNativeCompilation -and [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)){throw 'JVM/native overlap requires a selected Android component contract.'}
+Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
+if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
+$selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
+if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
+
+$SharedSpatialSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
+$SharedSpatialAppId = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
 
 trap {
     $caughtBuildError = $_
+    if($null -ne $nativeCargoChild -and -not $nativeCargoChild.Completed){
+        try{$caughtBuildError.Exception.Data['native_execution']=Complete-SpatialCargoChild -Child $nativeCargoChild -Cancel}
+        catch{$caughtBuildError.Exception.Data['native_cleanup_error']=$_}
+    }
+    if ($null -ne $apkInspectionCopy -and (Test-Path -LiteralPath $apkInspectionCopy.path -PathType Leaf)) {
+        Write-Warning "Inspection attempt retained after failure: $($apkInspectionCopy.path); canonical APK remains in OutDir."
+    }
     if ($buildLaneMutexOwned -and $null -ne $buildLaneMutex) {
         try { $buildLaneMutex.ReleaseMutex() } catch { }
         $buildLaneMutexOwned = $false
@@ -150,6 +163,35 @@ function Set-TextFileIfChanged {
     }
     [System.IO.File]::WriteAllBytes([System.IO.Path]::GetFullPath($Path), $bytes)
     return $true
+}
+
+function New-ExternalArtifactDirectory {
+    param([Parameter(Mandatory)][string]$Parent,[Parameter(Mandatory)][string]$Output,[Parameter(Mandatory)][string[]]$ExcludedRoots,[Parameter(Mandatory)][string]$Mode,[switch]$Replace,[switch]$Create)
+    if($Mode -cnotin @('DevFast','Candidate') -or $Replace){throw 'ArtifactOutputParent requires DevFast or Candidate mode and forbids ReplaceExistingOutput.'}
+    if(-not [IO.Path]::IsPathFullyQualified($Parent) -or -not [IO.Path]::IsPathFullyQualified($Output) -or $Parent -notmatch '^[A-Za-z]:[\\/]' -or $Output -notmatch '^[A-Za-z]:[\\/]'){throw 'External artifact parent and OutDir must be explicit absolute local drive paths.'}
+    $parentFull=[IO.Path]::GetFullPath($Parent).TrimEnd([char[]]@('\','/'))
+    $outputFull=[IO.Path]::GetFullPath($Output).TrimEnd([char[]]@('\','/'))
+    $volume=[IO.Path]::GetPathRoot($parentFull)
+    if($parentFull -ceq $volume.TrimEnd([char[]]@('\','/'))){throw 'ArtifactOutputParent must not be a filesystem root.'}
+    if(-not $outputFull.StartsWith($parentFull+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'OutDir must be a strict child of ArtifactOutputParent.'}
+    foreach($excluded in @($ExcludedRoots|Where-Object{-not [string]::IsNullOrWhiteSpace($_)})){
+        $excludedFull=[IO.Path]::GetFullPath($excluded).TrimEnd([char[]]@('\','/'))
+        if($parentFull.Equals($excludedFull,[StringComparison]::OrdinalIgnoreCase) -or $parentFull.StartsWith($excludedFull+'\',[StringComparison]::OrdinalIgnoreCase) -or $excludedFull.StartsWith($parentFull+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'ArtifactOutputParent must not overlap source, build cache, or shared tool roots.'}
+    }
+    # Every existing ancestor is ordinary; no directory is created until final admission.
+    $current=[IO.Path]::GetPathRoot($outputFull)
+    $segments=$outputFull.Substring($current.Length).Split([IO.Path]::DirectorySeparatorChar,[StringSplitOptions]::RemoveEmptyEntries)
+    foreach($segment in $segments){
+        $base=($segment -split '\.')[0]
+        if($segment.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $segment.EndsWith('.') -or $segment.EndsWith(' ') -or $base -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])$'){throw 'External artifact output contains an unsafe Windows path segment.'}
+    }
+    foreach($segment in $segments[0..($segments.Count-2)]){
+        $current=Join-Path $current $segment
+        if(-not(Test-Path -LiteralPath $current -PathType Container) -or ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'External artifact output ancestors must be existing ordinary directories.'}
+    }
+    if(Test-Path -LiteralPath $outputFull){throw 'External artifact OutDir must be create-new and absent.'}
+    if($Create){New-Item -ItemType Directory -Path $outputFull -ErrorAction Stop|Out-Null}
+    $outputFull
 }
 
 function Copy-FileIfChanged {
@@ -996,20 +1038,29 @@ if ([string]::IsNullOrWhiteSpace($BuildCacheRoot)) {
     $BuildCacheRoot = Join-Path $workspaceDrive "b\mv"
 }
 $BuildCacheRoot = [System.IO.Path]::GetFullPath($BuildCacheRoot).TrimEnd([char[]]@('\', '/'))
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
+    [void](New-ExternalArtifactDirectory -Parent $ArtifactOutputParent -Output $OutDir -ExcludedRoots @(@($provisionalRepoRoot,$NativeRepoRoot,$BuildCacheRoot,$SharedGradleToolRoot) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -Mode $BuildMode -Replace:$ReplaceExistingOutput)
+}
+if (-not [string]::IsNullOrWhiteSpace($SharedGradleToolRoot)) {
+    $sharedToolPath = [IO.Path]::GetFullPath($SharedGradleToolRoot).TrimEnd([char[]]@('\', '/'))
+    if ($sharedToolPath.Equals($BuildCacheRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $sharedToolPath.StartsWith($BuildCacheRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $BuildCacheRoot.StartsWith($sharedToolPath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'SharedGradleToolRoot and BuildCacheRoot must not overlap.' }
+}
 if ($BuildCacheRoot.Length -gt 64) {
     throw "BuildCacheRoot must remain deliberately short (64 characters or fewer): $BuildCacheRoot"
 }
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialCmakeStaging.psm1') -Force
+$cmakeStaging = Get-SpatialCmakeStaging -BuildCacheRoot $BuildCacheRoot -ProductId $resolvedProductId -BuildType $buildTypeLower
 New-Item -ItemType Directory -Force -Path $BuildCacheRoot | Out-Null
 $buildLaneMutexHash = Get-StringSha256 -Value $BuildCacheRoot.ToLowerInvariant()
 $buildLaneMutexName = "Local\RustyQuestSpatialBuild-$($buildLaneMutexHash.Substring(0, 16))"
 $buildLaneMutex = [System.Threading.Mutex]::new($false, $buildLaneMutexName)
 $buildLaneMutexStopwatch = [Diagnostics.Stopwatch]::StartNew()
-try {
-    $buildLaneMutexOwned = $buildLaneMutex.WaitOne([TimeSpan]::FromMinutes(30))
-} catch [System.Threading.AbandonedMutexException] {
-    $buildLaneMutexOwned = $true
-    $buildLaneMutexAbandoned = $true
-}
+$buildLaneMutexOwned = &$spatialPrerequisitesModule {
+    param($mutex,$policy,$abandoned)
+    Wait-QuestSpatialOperation -Mutex $mutex -WaitPolicy $policy -Estimate ([TimeSpan]::FromMinutes(30)) -Abandoned $abandoned -Label 'Spatial Camera Panel build cache lane'
+} $buildLaneMutex $WaitPolicy ([ref]$buildLaneMutexAbandoned)
 $buildLaneMutexStopwatch.Stop()
 $buildLaneMutexWaitMs = $buildLaneMutexStopwatch.ElapsedMilliseconds
 if (-not $buildLaneMutexOwned) {
@@ -1100,37 +1151,28 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Join-Path $PSScriptRoot ".."
 }
 $repoRoot = Resolve-Path $RepoRoot
-$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRoot)
+$gradleToolDistribution = $null
+# The shared prerequisite owner authenticates the selected Gradle distribution below.
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
+$androidNativeSourcePaths = $null
+if ($EnvironmentDepthOwner -ceq 'spatial-sdk-api-layer') {
+    $androidNativeSourcePaths = Assert-AndroidNativeSourcePaths -SourceDirectory (Join-Path $appRoot 'app/src/main/cpp/spatial_depth_layer') -ObjectDirectory $cmakeStaging.object_directory
+}
 $targetRoot = Join-Path $repoRoot "target"
 $buildStartedUtc = [DateTimeOffset]::UtcNow
 $phaseReceipts = [Collections.Generic.List[object]]::new()
 $preflightStopwatch = [Diagnostics.Stopwatch]::StartNew()
-$buildTools = Join-Path $AndroidHome "build-tools\$BuildToolsVersion"
-if (-not (Test-Path -LiteralPath $buildTools -PathType Container)) {
-    throw "Pinned Android build-tools $BuildToolsVersion are not installed."
-}
-$buildToolsSourceProperties = Join-Path $buildTools "source.properties"
-if (-not (Test-Path -LiteralPath $buildToolsSourceProperties -PathType Leaf)) {
-    throw "Pinned Android build-tools source.properties is missing."
-}
-$buildToolsPropertiesText = Get-Content -LiteralPath $buildToolsSourceProperties -Raw
-if ($buildToolsPropertiesText -notmatch ('(?m)^Pkg\.Revision\s*=\s*' + [regex]::Escape($BuildToolsVersion) + '\s*$')) {
-    throw "Android build-tools source.properties revision differs from $BuildToolsVersion."
-}
-$sourceAapt2 = Join-Path $buildTools "aapt2.exe"
-$zipalign = Join-Path $buildTools "zipalign.exe"
-$apksigner = Join-Path $buildTools "apksigner.bat"
-$keytool = Join-Path $JavaHome "bin\keytool.exe"
-$java = Join-Path $JavaHome "bin\java.exe"
-$nativeReceiptLinker = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
-$llvmReadelf = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readelf.exe"
-$llvmNm = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe"
-foreach ($tool in @($sourceAapt2, $zipalign, $apksigner, $keytool, $java, $nativeReceiptLinker, $llvmReadelf, $llvmNm)) {
-    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
-        throw "Pinned Android build tool not found: $tool"
-    }
-}
+$prerequisiteEvidence = if($OutDir){[IO.Path]::GetFullPath($OutDir)+'.prerequisites'}else{Join-Path ([IO.Path]::GetTempPath()) ('quest-prerequisites-'+[guid]::NewGuid().ToString('N'))}
+$prerequisites = Get-QuestSpatialBuildPrerequisites -RepoRoot ([string]$repoRoot) -AndroidHome $AndroidHome -JavaHome $JavaHome `
+    -NdkHome $NdkHome -NdkVersion $NdkVersion -BuildToolsVersion $BuildToolsVersion -SharedGradleToolRoot $SharedGradleToolRoot -BuildCacheRoot $BuildCacheRoot -ExcludedRoots @($OutDir,$NativeRepoRoot) `
+    -Keystore $Keystore -ExpectedSignerSha256 $ExpectedSignerSha256 -AppId $resolvedAppId -BuildMode $BuildMode `
+    -PublicationBuild:$PublicationBuild -EvidenceDirectory $prerequisiteEvidence -WaitPolicy $WaitPolicy
+$buildTools=$prerequisites.BuildTools;$buildToolsSourceProperties=$prerequisites.BuildToolsSourceProperties
+$sourceAapt2=$prerequisites.Tools.aapt2;$zipalign=$prerequisites.Tools.zipalign;$apksigner=$prerequisites.Tools.apksigner
+$keytool=$prerequisites.Tools.keytool;$java=$prerequisites.Tools.java;$nativeReceiptLinker=$prerequisites.Tools.linker
+$llvmReadelf=$prerequisites.Tools.readelf;$llvmNm=$prerequisites.Tools.nm
+$gradleBat=$prerequisites.GradleBat;$gradleToolDistribution=$prerequisites.GradleToolDistribution
+$selectedGradleSha256 = Get-FileSha256 -Path $gradleBat
 $shortToolRoot = Join-Path $BuildCacheRoot "t"
 $shortAapt2 = Join-Path $shortToolRoot "aapt2.exe"
 $aapt2Updated = Copy-FileIfChanged -Source $sourceAapt2 -Destination $shortAapt2
@@ -1155,25 +1197,7 @@ $representativeAaptPath = Join-Path $BuildCacheRoot "g\p\app\intermediates\incre
 if ($representativeAaptPath.Length -gt 220) {
     throw "Stable Android cache path exceeds the safe AAPT2 path budget: $($representativeAaptPath.Length) > 220"
 }
-Invoke-SmokeChecked -Name "aapt2" -File $shortAapt2 -Arguments @("version")
-Invoke-SmokeChecked -Name "android-clang" -File $nativeReceiptLinker -Arguments @("--version")
-Invoke-SmokeChecked -Name "java" -File $java -Arguments @("-version")
-Invoke-SmokeChecked -Name "zipalign" -File $zipalign -Arguments @() -AcceptedExitCodes @(0, 1)
-Invoke-SmokeChecked -Name "apksigner" -File $apksigner -Arguments @("version")
-$javaVersionOutput = @(& $java "-version" 2>&1)
-if ($LASTEXITCODE -ne 0) { throw "Resolved Java executable version readback failed." }
-$javaVersionText = $javaVersionOutput -join "`n"
-if ($javaVersionText -notmatch '(?m)^(?:openjdk|java) version "17\.' -or
-    $javaVersionText -notmatch '(?i)Temurin') {
-    throw "Resolved Java executable is not the pinned Temurin JDK 17 contract."
-}
-$keytoolVersionOutput = @(& $keytool "-J-version" 2>&1)
-if ($LASTEXITCODE -ne 0) { throw "Resolved keytool executable version readback failed." }
-$keytoolVersionText = $keytoolVersionOutput -join "`n"
-if ($keytoolVersionText -notmatch '(?m)^(?:openjdk|java) version "17\.' -or
-    $keytoolVersionText -notmatch '(?i)Temurin') {
-    throw "Resolved keytool is not backed by the pinned Temurin JDK 17 contract."
-}
+# Version and tool observations were performed by the shared prerequisite owner.
 $selectedAapt2Sha256 = Get-FileSha256 -Path $sourceAapt2
 $preflightStopwatch.Stop()
 $phaseReceipts.Add([ordered]@{
@@ -1204,6 +1228,26 @@ $sourceComposition = Get-QuestBuildSourceComposition `
     -RepoRoot ([string]$repoRoot) `
     -PackageName @("spatial-camera-panel-native-receipt") `
     -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
+$cargoSourceComposition = $sourceComposition
+if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
+    if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { throw 'Selected Android components require an explicit private source root.' }
+    $componentOwnerRoot = (& git -C $resolvedPrivateFeatureSourceDir rev-parse --show-toplevel).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Selected Android component owner is not an owned Git repository.' }
+    $componentContractFull = [IO.Path]::GetFullPath($AndroidComponentContractPath)
+    if (-not $componentContractFull.StartsWith([IO.Path]::GetFullPath($componentOwnerRoot)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Selected Android component contract must belong to the explicit source owner repository.'
+    }
+    $alreadyOwned = @($sourceComposition.repositories | Where-Object {
+        [IO.Path]::GetFullPath([string]$_.repository).TrimEnd([char[]]@('\','/')) -eq [IO.Path]::GetFullPath($componentOwnerRoot).TrimEnd([char[]]@('\','/'))
+    })
+    if ($alreadyOwned.Count -eq 0) {
+        $sourceComposition = Add-QuestBuildOwnedRepository -Composition $sourceComposition -Root $componentOwnerRoot `
+            -RepositoryId (Get-AndroidComponentOwnerRepositoryId -Root $componentOwnerRoot) -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
+    }
+    if ($BuildMode -eq 'Candidate' -and @($sourceComposition.repositories | Where-Object { -not $_.tracked_worktree_clean }).Count -gt 0) {
+        throw 'Candidate builds require a frozen clean owned Android source composition.'
+    }
+}
 $primarySource = @($sourceComposition.repositories | Where-Object { $_.role -eq "primary" })
 if ($primarySource.Count -ne 1) { throw "Spatial APK source composition did not resolve exactly one primary Rusty Quest repository." }
 $sourceHead = [string]$primarySource[0].commit
@@ -1243,66 +1287,35 @@ if ([string]$assetConformanceLock.schema -ne "rusty.morphospace.workflow.feature
     throw "Spatial asset conformance lock does not select the accepted spatial-asset-model contract: $assetConformanceLockPath"
 }
 $assetConformanceLockSha256 = Get-FileSha256 -Path $assetConformanceLockPath
-$environmentKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
-$keystoreWasExplicit = -not [string]::IsNullOrWhiteSpace($Keystore)
-if (-not $keystoreWasExplicit -and -not [string]::IsNullOrWhiteSpace($environmentKeystore)) {
-    $Keystore = $environmentKeystore
-    $keystoreWasExplicit = $true
-}
-$sharedPackageBuild = $resolvedAppId -ceq $SharedSpatialAppId
-$signerRequired = $sharedPackageBuild -or $BuildMode -eq "Candidate" -or [bool]$PublicationBuild
-if ($signerRequired -and -not $keystoreWasExplicit) {
-    throw "Shared-package and candidate builds require an explicit local signer binding before compilation."
-}
-$signingAlias = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS
-$signingStorePassword = $env:RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD
-$signingKeyPassword = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD
-$certificateSha256 = ""
-if ($keystoreWasExplicit) {
-    if (-not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
-        throw "Explicit signing keystore not found."
-    }
-    $Keystore = (Resolve-Path -LiteralPath $Keystore).Path
-    if ([string]::IsNullOrWhiteSpace($signingAlias) -or
-        [string]::IsNullOrWhiteSpace($signingStorePassword) -or
-        [string]::IsNullOrWhiteSpace($signingKeyPassword)) {
-        throw "Explicit signer alias and passwords require local environment bindings."
-    }
-    $signerProbeRoot = Join-Path $BuildCacheRoot "s"
-    New-Item -ItemType Directory -Force -Path $signerProbeRoot | Out-Null
-    $certificatePath = Join-Path $signerProbeRoot "selected-signer.der"
-    Invoke-Checked "selected signer certificate export" $keytool @(
-        "-exportcert",
-        "-keystore", $Keystore,
-        "-storepass", $signingStorePassword,
-        "-alias", $signingAlias,
-        "-file", $certificatePath
-    )
-    $certificateSha256 = Get-FileSha256 -Path $certificatePath
-}
-$normalizedExpectedSignerSha256 = $ExpectedSignerSha256.Trim().ToLowerInvariant()
-if ($sharedPackageBuild) {
-    if (-not [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256) -and
-        $normalizedExpectedSignerSha256 -cne $SharedSpatialSignerSha256) {
-        throw "Shared Spatial Camera Panel package expected signer differs from the pinned public fingerprint."
-    }
-    $normalizedExpectedSignerSha256 = $SharedSpatialSignerSha256
-}
-if ($signerRequired -and [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256)) {
-    throw "Candidate builds require an explicit expected signer fingerprint before compilation."
-}
-if (-not [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256) -and
-    $certificateSha256 -cne $normalizedExpectedSignerSha256) {
-    throw "Explicit Spatial Camera Panel signer fingerprint mismatch before compilation."
-}
+$Keystore=$prerequisites.Keystore;$keystoreWasExplicit=$prerequisites.KeystoreWasExplicit
+$certificateSha256=$prerequisites.CertificateSha256;$normalizedExpectedSignerSha256=$prerequisites.ExpectedSignerSha256
+$signingAlias=$env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS
+$signingStorePassword=$env:RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD
+$signingKeyPassword=$env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD
 $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
     -Path $EmbeddedDuplexProductInputRoot `
     -ApplicationId $resolvedAppId `
     -SigningCertificateSha256 $normalizedExpectedSignerSha256
+$androidComponentSelection = $null
+if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
+    if ($null -eq $embeddedDuplexProductInputs) { throw 'Selected Android components require authenticated product inputs.' }
+    $androidComponentSelection = New-AndroidComponentInventory -ContractPath $AndroidComponentContractPath `
+        -ValidatedProductInputs $embeddedDuplexProductInputs -ApplicationSourceRoot (Join-Path $appRoot 'app/src') `
+        -PrivateSourceRoot $resolvedPrivateFeatureSourceDir -Variant $buildTypeLower -PythonPath $PythonPath
+}
+$androidComponentInputs = Get-AndroidComponentInputSummary -Selection $androidComponentSelection
+$developmentLifetime=Resolve-EmbeddedDuplexDevelopmentLifetime -Selection $EmbeddedDuplexLifetimePolicy -SourceComposition $sourceComposition -FiniteHorizonMs $EmbeddedDuplexSetupHorizonMs
+$EmbeddedDuplexSetupHorizonMs=[long]$developmentLifetime.horizon_ms
+$freshBuildSelection=Resolve-EmbeddedDuplexFreshSetupBuildSelection -Selection $EmbeddedDuplexFreshSetupPolicy -DevelopmentLifetimePolicy $developmentLifetime.policy -MediaPolicy $EmbeddedDuplexMediaPolicy `
+    -ValidatedProductInputs $embeddedDuplexProductInputs -EnrollmentSelectionPath $EmbeddedDuplexFreshEnrollmentSelectionPath `
+    -ExpectedEnrollmentSelectionSha256 $ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256
+$freshDescriptor=[ordered]@{};Set-EmbeddedDuplexFreshSetupPolicyDescriptor $freshDescriptor $freshBuildSelection
+$freshDescriptorJson=if($null-eq$freshBuildSelection){''}else{ConvertTo-FreshSetupCanonicalJson $freshDescriptor.embedded_duplex_fresh_setup_policy}
+$freshDescriptorSha256=if($freshDescriptorJson){Get-StringSha256 $freshDescriptorJson}else{''}
 Import-Module (Join-Path $repoRoot 'tools/src/SourceBankBuildInputs.psm1') -Force
 $sourceBankBuildInputs = Resolve-SourceBankBuildInputs -PrivateLayerProfilePath $resolvedPrivateLayerProfilePath `
     -ValidatedProductInputs $embeddedDuplexProductInputs -VertexShaderPath $resolvedOpaqueProjectionVertexShader `
-    -FragmentShaderPath $resolvedOpaqueProjectionShader
+    -FragmentShaderPath $resolvedOpaqueProjectionShader -ShaderProviderRoot $PrivateLayerProviderRoot
 if ($sourceBankBuildInputs.enabled -and $EnvironmentDepthOwner -cne 'spatial-sdk-api-layer') {
     throw 'Source-bank capture requires the selected shared Vulkan capability owner.'
 }
@@ -1340,9 +1353,12 @@ $embeddedMediaBuildInputs = [ordered]@{
 }
 $embeddedMediaBuildInputsJson = $embeddedMediaBuildInputs | ConvertTo-Json -Depth 12
 $embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInputsJson
-Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
+if($sourceRuntimeStampEnabled){$sourceVersionMetadata['runtime_stamp_mode']='java-resource-nonconstant-v1'}
 $buildInputDescriptor = [ordered]@{
+    android_components = $androidComponentInputs
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
     source_tree = $sourceTree
@@ -1466,12 +1482,19 @@ $nativeIdentityDescriptor = [ordered]@{
     distortion_speed_scale = $resolvedDistortionSpeedScale
     environment_depth_owner = $EnvironmentDepthOwner
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
+if($OverlapJvmNativeCompilation){$buildInputDescriptor['compilation_scheduling']='jvm-native-overlap'}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $nativeIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $nativeIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
 $shellIdentityInputs = [ordered]@{
+    component_observer = Join-Path $PSScriptRoot 'gradle/android-component-closure.gradle'
+    source_version_packaging = Join-Path $PSScriptRoot 'gradle/spatial-source-version.gradle'
     settings_gradle = Join-Path $appRoot "settings.gradle.kts"
     root_build_gradle = Join-Path $appRoot "build.gradle.kts"
     version_catalog = Join-Path $appRoot "gradle\libs.versions.toml"
@@ -1493,6 +1516,7 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateFeatureResourceDir)) {
 }
 $shellSourceSha256 = Get-PathSetSha256 -Paths $shellIdentityInputs
 $shellIdentityDescriptor = [ordered]@{
+    android_components = $androidComponentInputs
     schema = "rusty.quest.spatial_camera_panel.android_shell_cache_identity.v1"
     source_sha256 = $shellSourceSha256
     product_id = $resolvedProductId
@@ -1511,9 +1535,13 @@ $shellIdentityDescriptor = [ordered]@{
     private_assets_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_assets) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_assets.sha256 }
     private_resources_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_resources) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_resources.sha256 }
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $shellIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $shellIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.package_cache_identity.v1"
@@ -1531,6 +1559,12 @@ $buildInputDescriptor["cache_identities"] = [ordered]@{
     android_shell = $shellFingerprint
     package = $packageFingerprint
 }
+if ($null -ne $gradleToolDistribution) { $buildInputDescriptor['gradle_tool_distribution'] = $gradleToolDistribution }
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
+    $buildInputDescriptor['artifact_output'] = [ordered]@{schema='rusty.quest.artifact_output.v1';policy='explicit-external-parent-create-new';parent_path_recorded=$false;source_and_cache_disjoint=$true}
+}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $buildInputDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $buildInputDescriptor -ResolvedSelection $freshBuildSelection
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $buildInputDescriptor["fingerprint"] = $buildInputFingerprint
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
@@ -1538,18 +1572,38 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $targetRoot "spatial-camera-panel-android\builds\$packageLeaf\$($buildInputFingerprint.Substring(0, 24))"
 }
 
-New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
-$resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd([char[]]@('\'))
-$resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd([char[]]@('\'))
-if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "OutDir must be under the repo target directory: $resolvedOutFull"
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
+    # App-owned Git identity includes ignored owner artifacts. Exclude actual
+    # selected Android input directories, preserving the existing Cargo boundary.
+    $excludedArtifactRoots = @((@($cargoSourceComposition.repositories | ForEach-Object { [string]$_.repository }) +
+        @($resolvedPrivateFeatureSourceDir,$resolvedPrivateFeatureAssetDir,$resolvedPrivateFeatureResourceDir,
+          $BuildCacheRoot,$SharedGradleToolRoot,$NativeRepoRoot)) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Assert-AndroidComponentArtifactRoot -Composition $sourceComposition -Parent $ArtifactOutputParent -Output $OutDir
+    $OutDir = New-ExternalArtifactDirectory -Parent $ArtifactOutputParent -Output $OutDir -ExcludedRoots $excludedArtifactRoots -Mode $BuildMode -Replace:$ReplaceExistingOutput -Create
+} else {
+    New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+    $resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd([char[]]@('\'))
+    $resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd([char[]]@('\'))
+    if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "OutDir must be under the repo target directory: $resolvedOutFull"
+    }
+    if (Test-Path -LiteralPath $OutDir) {
+        if (-not $ReplaceExistingOutput) { throw "Content-addressed Spatial APK output already exists: $OutDir. Reuse its run capsule or pass -ReplaceExistingOutput explicitly." }
+        Remove-Item -LiteralPath (Resolve-Path -LiteralPath $OutDir).Path -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 }
-if (Test-Path -LiteralPath $OutDir) {
-    if (-not $ReplaceExistingOutput) { throw "Content-addressed Spatial APK output already exists: $OutDir. Reuse its run capsule or pass -ReplaceExistingOutput explicitly." }
-    Remove-Item -LiteralPath (Resolve-Path -LiteralPath $OutDir).Path -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $buildInputLockPath = Join-Path $OutDir "build-input-lock.json"
+$sourceCompositionPath = Join-Path $OutDir 'source-composition.json'
+[void](Set-TextFileIfChanged -Path $sourceCompositionPath -Value ($sourceComposition | ConvertTo-Json -Depth 20))
+$androidComponentInventoryPath = ''
+$androidComponentEvidenceDir = ''
+if ($null -ne $androidComponentSelection) {
+    $androidComponentEvidenceDir = Join-Path $OutDir 'android-components'
+    New-Item -ItemType Directory -Path $androidComponentEvidenceDir | Out-Null
+    $androidComponentInventoryPath = Join-Path $androidComponentEvidenceDir 'inventory.json'
+    [IO.File]::WriteAllText($androidComponentInventoryPath,$androidComponentSelection.json,[Text.UTF8Encoding]::new($false))
+}
 [void](Set-TextFileIfChanged -Path $buildInputLockPath -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20))
 $embeddedMediaSourceManifestPath = Join-Path $OutDir "embedded-media-aar-source-inputs.json"
 [void](Set-TextFileIfChanged -Path $embeddedMediaSourceManifestPath -Value $embeddedMediaSourceManifestJson)
@@ -1580,6 +1634,7 @@ $appBuildDir = Join-Path $productBuildRoot "a"
 $rootBuildDir = Join-Path $productBuildRoot "r"
 $gradleProjectCacheDir = Join-Path $BuildCacheRoot "gp"
 $gradleUserHome = Join-Path $BuildCacheRoot "gu"
+$kotlinProjectPersistentDir = Join-Path $BuildCacheRoot ("k\{0}" -f $cacheLaneId)
 $nativeReceiptTargetDir = Join-Path $BuildCacheRoot ("c\{0}" -f $RustStdLinkage.Substring(0, 1).ToLowerInvariant())
 New-Item -ItemType Directory -Force -Path @(
     $cacheLaneRoot,
@@ -1589,14 +1644,23 @@ New-Item -ItemType Directory -Force -Path @(
     $rootBuildDir,
     $gradleProjectCacheDir,
     $gradleUserHome,
+    $kotlinProjectPersistentDir,
     $nativeReceiptTargetDir
 ) | Out-Null
 $embeddedDuplexAssetRoot = ""
 if ($null -ne $embeddedDuplexProductInputs) {
     $embeddedDuplexAssetRoot = Join-Path $BuildCacheRoot ("i\{0}" -f $embeddedDuplexProductInputs.closure_sha256.Substring(0, 24))
+    if($null-ne$freshBuildSelection){$embeddedDuplexAssetRoot=Join-Path $BuildCacheRoot ("i\fresh-{0}" -f $freshDescriptorSha256)}
     $embeddedDuplexAssetRoot = Copy-EmbeddedDuplexProductInputs `
         -ValidatedInputs $embeddedDuplexProductInputs `
         -AssetRoot $embeddedDuplexAssetRoot
+    if($null-ne$freshBuildSelection){
+        $freshDirectory=Join-Path $embeddedDuplexAssetRoot 'rusty-quest';New-Item -ItemType Directory -Force -Path $freshDirectory|Out-Null
+        if(((Get-Item -LiteralPath $freshDirectory).Attributes-band[IO.FileAttributes]::ReparsePoint)-ne0){throw 'Fresh descriptor staging directory linked.'}
+        $freshPath=Join-Path $freshDirectory 'fresh-setup-build-policy.json'
+        if(Test-Path -LiteralPath $freshPath){if((Get-FileSha256 $freshPath)-cne$freshDescriptorSha256){throw 'Fresh descriptor staging bytes differ.'}}
+        else{[IO.File]::WriteAllText($freshPath,$freshDescriptorJson,[Text.UTF8Encoding]::new($false))}
+    }
 }
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"
@@ -1627,6 +1691,7 @@ if($NativeRepoRoot){
            (Get-FileSha256 -Path $nativeFile)-cne(Get-FileSha256 -Path (Join-Path $repoRoot $path))){throw 'Native/shell raw source bytes differ.'}
     }
     if(((& git.exe -C $nativeRoot ls-files --others -z)-join'').Length){throw 'Native source contains generated/unexpected payload; retain it.'}
+    Assert-QuestNativeDependencyComposition -ShellComposition $cargoSourceComposition -NativeRepoRoot $nativeRoot
     $nativeReceiptCargoManifest=Join-Path $nativeRoot 'apps/spatial-camera-panel-android/native-receipt/Cargo.toml'
 }
 $nativeReceiptJniRoot = Join-Path $appBuildDir "generated\rustJniLibs"
@@ -1660,6 +1725,7 @@ $packageInvalidation = @(Get-IdentityInvalidation -Previous $priorPackageDescrip
 $cacheIdentityReceipt = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.build_cache_identities.v1"
     workflow_mode = $BuildMode.ToLowerInvariant()
+    cmake_staging = Get-SpatialCmakeStagingReceipt -Staging $cmakeStaging
     stable_short_cache = $true
     paths_recorded = $false
     fingerprints = [ordered]@{
@@ -1689,8 +1755,343 @@ Write-Host ("BUILD_CACHE nativePriorAvailable={0} shellPriorAvailable={1} packag
     ($nativeInvalidation -join ","),
     ($shellInvalidation -join ","),
     ($packageInvalidation -join ","))
-$cargoCommand = Get-Command cargo -ErrorAction Stop
-$rustupCommand = Get-Command rustup -ErrorAction SilentlyContinue
+# Both Gradle phases use this one selected environment projection and restoration.
+function Invoke-SpatialGradlePhase {
+    param([Parameter(Mandatory)][ValidateSet('JvmPreflight','Assemble')][string]$Phase,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ComponentEvidenceDirectory)
+    New-Item -ItemType Directory -Force -Path $gradleUserHome | Out-Null
+
+    $previousAndroidHome = $env:ANDROID_HOME
+    $previousGradleNdkHome = $env:ANDROID_NDK_HOME
+    $previousGradleNdkVersion = $env:RUSTY_QUEST_ANDROID_NDK_VERSION
+    $previousJavaHome = $env:JAVA_HOME
+    $previousGradleUserHome = $env:GRADLE_USER_HOME
+    $previousSpatialProductId = $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID
+    $previousSpatialAppBuildDir = $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR
+    $previousSpatialRootBuildDir = $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR
+    $previousSpatialAppId = $env:RUSTY_QUEST_SPATIAL_APP_ID
+    $previousSpatialAppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL
+    $previousGradleLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION
+    $previousGradleDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
+    $previousHandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR
+    $previousSigningKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
+    $previousOfflineMediaPackAssetDir = $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR
+    $previousOfflineMediaKeyHex = $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX
+    $previousSpatialScopedEnvironment = @{}
+    foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" })) {
+        $previousSpatialScopedEnvironment[[string]$entry.Name] = [string]$entry.Value
+    }
+    $ignoredAmbientSpatialFeatureVariables = @($previousSpatialScopedEnvironment.Keys | Sort-Object)
+    try {
+        foreach ($name in @($previousSpatialScopedEnvironment.Keys)) {
+            Remove-Item -LiteralPath "Env:\$name" -ErrorAction SilentlyContinue
+        }
+        $env:ANDROID_HOME = $AndroidHome
+        $env:ANDROID_NDK_HOME = $NdkHome
+        $env:RUSTY_QUEST_ANDROID_NDK_VERSION = Split-Path -Leaf $NdkHome
+        $env:JAVA_HOME = $JavaHome
+        $env:GRADLE_USER_HOME = $gradleUserHome
+        $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY = $EmbeddedDuplexLifetimePolicy
+        $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_BASE64 = $developmentLifetime.policy_base64
+        $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS = $EmbeddedDuplexSetupHorizonMs.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY = $EmbeddedDuplexMediaPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY = $EmbeddedDuplexFreshSetupPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.policy_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_target_raw_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_base64})
+        $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
+        $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
+        $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
+        $env:RUSTY_QUEST_SPATIAL_APP_ID = $resolvedAppId
+        $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
+        $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
+        $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_X = $resolvedDepthAlignmentDefaultLeftX.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_Y = $resolvedDepthAlignmentDefaultLeftY.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_X = $resolvedDepthAlignmentDefaultRightX.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y = $resolvedDepthAlignmentDefaultRightY.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PROJECTION_DEFAULT_ENABLED = ([bool]$CameraProjectionDefaultEnabled).ToString().ToLowerInvariant()
+        $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $EnvironmentDepthOwner
+        $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED = ([bool]$ImmersiveVideoDefaultEnabled).ToString().ToLowerInvariant()
+        $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID = $resolvedImmersiveVideoDefaultOfflinePackId
+        $env:RUSTY_QUEST_SPATIAL_ZONE_COMPOSITOR_DEFAULT_PRESET = $ZoneCompositorDefaultPreset
+        $env:RUSTY_QUEST_SPATIAL_BUILD_ROOT = $productBuildRoot
+        $env:RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT = $ParticleLayerCarrierDefault
+        $env:RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT = $StartInParticleViewDefault
+        $env:RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT = $PanelLauncherVisibleDefault
+        $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT = $HandAlignmentEnabledDefault
+        $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT = $HandAlignmentViewerMarkersEnabledDefault
+        $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT = $HandAlignmentMappingProfileDefault
+        $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT = $HandBillboardFlockEnabledDefault
+        $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT = $HandBillboardSourceDefault
+        if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)) {
+            Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR = $resolvedOfflineMediaPackAssetDir
+        }
+        if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) {
+            Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = $resolvedOfflineMediaKeyHex
+        }
+        if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $resolvedHandMeshRigAssetDir
+        }
+        if ([string]::IsNullOrWhiteSpace($Keystore)) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE -ErrorAction SilentlyContinue
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS -ErrorAction SilentlyContinue
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD -ErrorAction SilentlyContinue
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $Keystore
+            $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS = $signingAlias
+            $env:RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD = $signingStorePassword
+            $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD = $signingKeyPassword
+        }
+        foreach ($binding in @(
+            @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR"; Value = $resolvedPrivateFeatureSourceDir },
+            @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR"; Value = $resolvedPrivateFeatureAssetDir },
+            @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR"; Value = $resolvedPrivateFeatureResourceDir },
+            @{ Name = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_ASSET_ROOT"; Value = $embeddedDuplexAssetRoot },
+            @{ Name = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256"; Value = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 }) }
+        )) {
+            if ([string]::IsNullOrWhiteSpace([string]$binding.Value)) {
+                Remove-Item -LiteralPath ("Env:\"+[string]$binding.Name) -ErrorAction SilentlyContinue
+            } else {
+                [Environment]::SetEnvironmentVariable([string]$binding.Name, [string]$binding.Value, "Process")
+            }
+        }
+        $mediaAndroidBuildRoot = Join-Path $productBuildRoot "media-stream-android"
+        $mediaAndroidJar = Join-Path $AndroidHome "platforms/android-34/android.jar"
+        if (-not (Test-Path -LiteralPath $mediaAndroidJar -PathType Leaf)) {
+            throw "The embedded media module requires the same Android 34 platform as its host."
+        }
+        Assert-QuestBuildSourceCompositionCurrent -Composition $sourceComposition -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
+        $gradleArguments = @(
+            "--no-daemon",
+            $(if ($BuildMode -eq "DevFast") { "--configuration-cache" } else { "--no-configuration-cache" }),
+            "--console=plain",
+            "--build-cache",
+            "--project-cache-dir", $gradleProjectCacheDir,
+            "-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir",
+            "-Pkotlin.project.persistent.dir.gradle.disableWrite=true",
+            "-Pandroid.aapt2FromMavenOverride=$shortAapt2",
+            "-PrqCmakeStagingDirectory=$($cmakeStaging.path)",
+            "-PandroidJar=$mediaAndroidJar",
+            "-PmediaBuildDir=$mediaAndroidBuildRoot",
+            "-PrqSourceBanksForeignOwnership=$($sourceBankBuildInputs.enabled.ToString().ToLowerInvariant())"
+        )
+        # Explicit empty default prevents ambient Gradle properties from choosing metadata.
+        $versionProperty=if($UseSourceCompositionVersionName){$sourceVersionMetadata.source_composition_fingerprint}else{''}
+        $gradleArguments=@("-PrqDeveloperSourceCompositionFingerprint=$versionProperty","-PrqDeveloperSourceRuntimeStamp=$($sourceRuntimeStampEnabled.ToString().ToLowerInvariant())")+$gradleArguments
+        if ($BuildMode -eq "Candidate") {
+            $gradleArguments = @("--init-script", $gradleTimingInitPath) + $gradleArguments
+        }
+        if ($BuildMode -eq "DevFast") { $gradleArguments = @("-Pkotlin.compiler.execution.strategy=in-process") + $gradleArguments }
+        $phaseArguments=@{GradlePath=$gradleBat;ExpectedGradleSha256=$selectedGradleSha256;
+            ProjectDirectory=[string]$appRoot;GradleUserHome=$gradleUserHome;BuildType=$BuildType;
+            Arguments=$gradleArguments;InventoryPath=$androidComponentInventoryPath;
+            ExpectedInventorySha256=$(if($null -eq $androidComponentSelection){''}else{[string]$androidComponentSelection.sha256});
+            EvidenceDirectory=$ComponentEvidenceDirectory;PythonPath=$PythonPath}
+        if($androidComponentInventoryPath){$phaseArguments.WorkingEvidenceDirectory=Join-Path $cacheLaneRoot ("android-components\{0}" -f $Phase.ToLowerInvariant())}
+        if($Phase -ceq 'JvmPreflight'){
+            $compilation=Invoke-AndroidComponentJvmCompilation @phaseArguments
+            $summary=[ordered]@{status=$compilation.status;scope=$compilation.scope;runtime_authority=$false;
+                inventory_sha256=$compilation.inventory_sha256;compiled_sha256=$compilation.compiled_sha256;
+                gradle_inputs_sha256=$compilation.gradle_inputs_sha256}
+            $phaseReceipts.Add([ordered]@{phase='android-jvm-preflight';status='pass';
+                duration_ms=$compilation.execution.duration_ms;scope='jvm-compilation-only';runtime_authority=$false;
+                inventory_sha256=$compilation.inventory_sha256;compiled_sha256=$compilation.compiled_sha256})
+            Write-Host ("BUILD_PHASE android-jvm-preflight status=pass durationMs={0}" -f $compilation.execution.duration_ms)
+            return [pscustomobject]@{compilation=$summary;media_build_root=$mediaAndroidBuildRoot;
+                ignored_ambient_spatial_variables=$ignoredAmbientSpatialFeatureVariables}
+        }
+        $execution=Invoke-AndroidComponentGradlePhase @phaseArguments -Phase Assemble
+        $gradleOutput=@($execution.output)
+        $gradleStopwatch=[pscustomobject]@{ElapsedMilliseconds=$execution.duration_ms}
+        $gradleDetailedTaskReceipts = @($gradleOutput | ForEach-Object {
+            $match = [regex]::Match([string]$_, '^BUILD_TASK path=(\S+) durationMs=(\d+) outcome=([A-Z_]+)$')
+            if ($match.Success) {
+                [pscustomobject]@{
+                    path = $match.Groups[1].Value
+                    duration_ms = [long]$match.Groups[2].Value
+                    outcome = $match.Groups[3].Value
+                }
+            }
+        })
+        $gradleStandardTaskReceipts = @($gradleOutput | ForEach-Object {
+            $match = [regex]::Match([string]$_, '^> Task (\S+?)(?: (UP-TO-DATE|FROM-CACHE|NO-SOURCE|SKIPPED|FAILED))?$')
+            if ($match.Success) {
+                [pscustomobject]@{
+                    path = $match.Groups[1].Value
+                    duration_ms = 0L
+                    outcome = $(if ($match.Groups[2].Success) { $match.Groups[2].Value.Replace('-', '_') } else { "EXECUTED" })
+                }
+            }
+        })
+        $gradleTaskReceipts = if ($gradleStandardTaskReceipts.Count -gt 0) {
+            @($gradleStandardTaskReceipts | ForEach-Object {
+                $standardTask = $_
+                $detailedTask = $gradleDetailedTaskReceipts | Where-Object { $_.path -ceq $standardTask.path } | Select-Object -First 1
+                [pscustomobject]@{
+                    path = $standardTask.path
+                    duration_ms = $(if ($null -eq $detailedTask) { 0L } else { [long]$detailedTask.duration_ms })
+                    outcome = $standardTask.outcome
+                }
+            })
+        } else {
+            @($gradleDetailedTaskReceipts)
+        }
+        $gradleOutcomeSummary = [ordered]@{
+            task_count = $gradleTaskReceipts.Count
+            executed = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "EXECUTED" }).Count
+            up_to_date = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "UP_TO_DATE" }).Count
+            from_cache = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "FROM_CACHE" }).Count
+            no_source = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "NO_SOURCE" }).Count
+            skipped = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "SKIPPED" }).Count
+        }
+        $gradlePhaseClassifiers = [ordered]@{
+            "kotlin-java" = '(?i)(compile.*(?:Kotlin|Java)|kapt)'
+            "resources-aapt2-shaders" = '(?i)(Resource|Manifest|RFile|ResValue|Shader|Asset)'
+            "dex" = '(?i)(Dex|GlobalSynthetic)'
+            "apk-assembly-sign" = '(?i)(package|assemble|Signing|NativeLib|stripDebug)'
+        }
+        if ($gradleTaskReceipts.Count -gt 0) {
+            foreach ($phaseName in $gradlePhaseClassifiers.Keys) {
+                $tasks = @($gradleTaskReceipts | Where-Object { $_.path -match [string]$gradlePhaseClassifiers[$phaseName] })
+                $phaseReceipts.Add([ordered]@{
+                    phase = $phaseName
+                    duration_ms = [long](($tasks | Measure-Object -Property duration_ms -Sum).Sum)
+                    duration_semantics = "aggregate-gradle-task-time-may-overlap"
+                    task_count = $tasks.Count
+                    executed_count = @($tasks | Where-Object { $_.outcome -eq "EXECUTED" }).Count
+                    up_to_date_count = @($tasks | Where-Object { $_.outcome -eq "UP_TO_DATE" }).Count
+                    from_cache_count = @($tasks | Where-Object { $_.outcome -eq "FROM_CACHE" }).Count
+                    no_source_count = @($tasks | Where-Object { $_.outcome -eq "NO_SOURCE" }).Count
+                    skipped_count = @($tasks | Where-Object { $_.outcome -eq "SKIPPED" }).Count
+                    status = "pass"
+                })
+            }
+        }
+        $phaseReceipts.Add([ordered]@{
+            phase = "android-shell-resources-dex-apk"
+            duration_ms = $gradleStopwatch.ElapsedMilliseconds
+            shell_prior_cache_available = $shellPriorCacheAvailable
+            shell_invalidation = $shellInvalidation
+            package_prior_cache_available = $packagePriorCacheAvailable
+            package_invalidation = $packageInvalidation
+            gradle_observed_outcomes = $gradleOutcomeSummary
+            gradle_daemon = $false
+            aapt2_override = "verified-short-copy"
+            status = "pass"
+        })
+        Write-Host ("BUILD_PHASE android-shell-resources-dex-apk status=pass durationMs={0} shellPriorAvailable={1} packagePriorAvailable={2} executed={3} upToDate={4} fromCache={5} noSource={6} skipped={7}" -f `
+            $gradleStopwatch.ElapsedMilliseconds,
+            $shellPriorCacheAvailable,
+            $packagePriorCacheAvailable,
+            $gradleOutcomeSummary.executed,
+            $gradleOutcomeSummary.up_to_date,
+            $gradleOutcomeSummary.from_cache,
+            $gradleOutcomeSummary.no_source,
+            $gradleOutcomeSummary.skipped)
+        return [pscustomobject]@{media_build_root=$mediaAndroidBuildRoot;
+            ignored_ambient_spatial_variables=$ignoredAmbientSpatialFeatureVariables}
+    } finally {
+        $env:ANDROID_HOME = $previousAndroidHome
+        if ($null -eq $previousGradleNdkHome) {
+            Remove-Item Env:\ANDROID_NDK_HOME -ErrorAction SilentlyContinue
+        } else {
+            $env:ANDROID_NDK_HOME = $previousGradleNdkHome
+        }
+        if ($null -eq $previousGradleNdkVersion) {
+            Remove-Item Env:\RUSTY_QUEST_ANDROID_NDK_VERSION -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_ANDROID_NDK_VERSION = $previousGradleNdkVersion
+        }
+        $env:JAVA_HOME = $previousJavaHome
+        if ($null -eq $previousGradleUserHome) {
+            Remove-Item Env:\GRADLE_USER_HOME -ErrorAction SilentlyContinue
+        } else {
+            $env:GRADLE_USER_HOME = $previousGradleUserHome
+        }
+        if ($null -eq $previousSpatialAppId) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_ID -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_APP_ID = $previousSpatialAppId
+        }
+        if ($null -eq $previousSpatialProductId) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_PRODUCT_ID -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $previousSpatialProductId
+        }
+        if ($null -eq $previousSpatialAppBuildDir) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_BUILD_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $previousSpatialAppBuildDir
+        }
+        if ($null -eq $previousSpatialRootBuildDir) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $previousSpatialRootBuildDir
+        }
+        if ($null -eq $previousSpatialAppLabel) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_LABEL -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $previousSpatialAppLabel
+        }
+        if ($null -eq $previousGradleLockedFinalPresentation) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $previousGradleLockedFinalPresentation
+        }
+        if ($null -eq $previousGradleDistortionSpeedScale) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $previousGradleDistortionSpeedScale
+        }
+        if ($null -eq $previousHandMeshRigAssetDir) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $previousHandMeshRigAssetDir
+        }
+        if ($null -eq $previousSigningKeystore) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $previousSigningKeystore
+        }
+        if ($null -eq $previousOfflineMediaPackAssetDir) {
+            Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR = $previousOfflineMediaPackAssetDir
+        }
+        if ($null -eq $previousOfflineMediaKeyHex) {
+            Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = $previousOfflineMediaKeyHex
+        }
+        foreach ($name in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" } | Select-Object -ExpandProperty Name)) {
+            Remove-Item -LiteralPath "Env:\$name" -ErrorAction SilentlyContinue
+        }
+        foreach ($name in @($previousSpatialScopedEnvironment.Keys)) {
+            [Environment]::SetEnvironmentVariable([string]$name, [string]$previousSpatialScopedEnvironment[$name], "Process")
+        }
+    }
+}
+
+$androidJvmCompilation=[ordered]@{status='unverified';reason='no-selected-component-contract';runtime_authority=$false}
+$invokeSelectedJvmCompilation={
+    $androidJvmPreflight = Invoke-SpatialGradlePhase -Phase JvmPreflight -ComponentEvidenceDirectory (Join-Path $androidComponentEvidenceDir 'jvm-preflight')
+    $androidJvmPreflight.compilation
+}
+if($null -ne $androidComponentSelection -and -not $OverlapJvmNativeCompilation){
+    $androidJvmCompilation=& $invokeSelectedJvmCompilation
+}
+
+$cargoCommand = Resolve-QuestSpatialApplication -Name cargo -Path $CargoPath
+$rustupCommand = Resolve-QuestSpatialApplication -Name rustup -Path $RustupPath -Optional:(-not $RequireInstalledRustTarget)
 if (-not (Test-Path -LiteralPath $nativeReceiptCargoManifest)) {
     throw "Missing Spatial Camera Panel native receipt Cargo manifest: $nativeReceiptCargoManifest"
 }
@@ -1702,6 +2103,7 @@ if ($null -ne $rustupCommand) {
     $installedTargets = @(& $rustupCommand.Source "target" "list" "--installed")
     if ($LASTEXITCODE -ne 0) { throw "rustup target list --installed failed." }
     $rustTargetInstalled = @($installedTargets | Where-Object { $_.Trim() -ceq "aarch64-linux-android" }).Count -eq 1
+    if (-not $rustTargetInstalled -and $RequireInstalledRustTarget) { throw 'The selected build requires the Android Rust target already installed.' }
     if (-not $rustTargetInstalled) {
         Invoke-Checked "rustup target add aarch64-linux-android" $rustupCommand.Source @(
             "target",
@@ -1718,9 +2120,16 @@ $cargoOutput = [Collections.Generic.List[string]]::new()
 $sourceBankCargoEnvironment = @{}
 foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
-        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES')) {
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256')) {
     $sourceBankCargoEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 $previousAndroidHomeForCargo = $env:ANDROID_HOME
@@ -1757,6 +2166,11 @@ try {
     }
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY=$EmbeddedDuplexLifetimePolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY=$EmbeddedDuplexMediaPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY=$EmbeddedDuplexFreshSetupPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256=$(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.policy_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256=$(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_sha256})
     $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $EnvironmentDepthOwner
     $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION =
         $resolvedProjectionSurfaceUniformAbiVersion.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -1775,6 +2189,8 @@ try {
     foreach ($entry in @(
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER';path=$resolvedOpaqueProjectionVertexShader},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER';path=$resolvedOpaqueProjectionShader},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI';path=$sourceBankBuildInputs.final_abi_version},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.primary_input_shader) { $sourceBankBuildInputs.primary_input_shader.path } else { $null })},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS';path=$sourceBankBuildInputs.own_capture_hold_limits.slots},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES';path=$sourceBankBuildInputs.own_capture_hold_limits.bytes},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES';path=$sourceBankBuildInputs.own_capture_hold_limits.gpu_uses})) {
@@ -1827,14 +2243,19 @@ try {
         "--release",
         "--target-dir", $nativeReceiptTargetDir
     )
-    & $cargoCommand.Source @cargoArguments 2>&1 | ForEach-Object {
-        $line = [string]$_
-        $cargoOutput.Add($line)
-        Write-Host $line
-    }
-    $cargoExitCode = $LASTEXITCODE
-    if ($cargoExitCode -ne 0) {
-        throw "Spatial Camera Panel native receipt cargo build failed with exit code $cargoExitCode"
+    if($OverlapJvmNativeCompilation){
+        $nativeCargoChild=Start-SpatialCargoChild -FilePath $cargoCommand.Source -Arguments $cargoArguments `
+            -WorkingDirectory (Get-Location).Path -CaptureDirectory (Join-Path $OutDir 'native-compilation')
+    }else{
+        & $cargoCommand.Source @cargoArguments 2>&1 | ForEach-Object {
+            $line = [string]$_
+            $cargoOutput.Add($line)
+            Write-Host $line
+        }
+        $cargoExitCode = $LASTEXITCODE
+        if ($cargoExitCode -ne 0) {
+            throw "Spatial Camera Panel native receipt cargo build failed with exit code $cargoExitCode"
+        }
     }
 } finally {
     if ($null -eq $previousAndroidHomeForCargo) {
@@ -1942,6 +2363,33 @@ try {
         $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX = $previousPrivateSurfaceParticleMarkerPrefix
     }
 }
+if($null -ne $nativeCargoChild){
+    $jvmError=$null;$nativeError=$null;$nativeExecution=$null;$jvmSucceeded=$false
+    try{
+        # Parent native projection has been restored; only the owned Cargo child
+        # keeps its snapshot. There is still exactly one Gradle invocation.
+        $androidJvmCompilation=& $invokeSelectedJvmCompilation
+        $jvmSucceeded=$true
+    }catch{$jvmError=$_}
+    finally{
+        try{$nativeExecution=Complete-SpatialCargoChild -Child $nativeCargoChild -Cancel:(-not $jvmSucceeded)}catch{$nativeError=$_}
+    }
+    if($null -ne $nativeExecution){
+        foreach($stream in @($nativeExecution.stdout,$nativeExecution.stderr)){
+            foreach($line in @($stream -split '\r?\n' | Where-Object {$_ -ne ''})){$cargoOutput.Add($line);Write-Host $line}
+        }
+    }
+    if($null -ne $jvmError){
+        if($null -ne $nativeExecution){$jvmError.Exception.Data['native_execution']=$nativeExecution}
+        if($null -ne $nativeError){$jvmError.Exception.Data['native_cleanup_error']=$nativeError}
+        throw $jvmError
+    }
+    if($null -ne $nativeError){throw $nativeError}
+    if($nativeExecution.exit_code -ne 0){
+        $failure=[InvalidOperationException]::new("Spatial Camera Panel native receipt cargo build failed with exit code $($nativeExecution.exit_code)")
+        $failure.Data['native_execution']=$nativeExecution;throw $failure
+    }
+}
 $nativeStopwatch.Stop()
 if (-not (Test-Path -LiteralPath $nativeReceiptBuiltLib)) {
     throw "Cargo build did not produce native receipt library: $nativeReceiptBuiltLib"
@@ -1970,7 +2418,7 @@ $cargoObservedFresh = $cargoCompileUnitCount -eq 0 -and
     @($cargoOutput | Where-Object { $_ -match '^\s*Finished\s+`release`\s+profile' }).Count -gt 0
 $phaseReceipts.Add([ordered]@{
     phase = "native-compile-link"
-    duration_ms = $nativeStopwatch.ElapsedMilliseconds
+    duration_ms = $(if($OverlapJvmNativeCompilation){$nativeExecution.duration_ms}else{$nativeStopwatch.ElapsedMilliseconds})
     prior_cache_available = $nativePriorCacheAvailable
     prior_cache_semantics = "matching-identity-and-verified-output-only"
     invalidation = $nativeInvalidation
@@ -1982,311 +2430,16 @@ $phaseReceipts.Add([ordered]@{
     status = "pass"
 })
 Write-Host ("BUILD_PHASE native-compile-link status=pass durationMs={0} priorCacheAvailable={1} cargoFresh={2} cargoCompileUnits={3} jniChanged={4}" -f `
-    $nativeStopwatch.ElapsedMilliseconds,
+    $(if($OverlapJvmNativeCompilation){$nativeExecution.duration_ms}else{$nativeStopwatch.ElapsedMilliseconds}),
     $nativePriorCacheAvailable,
     $cargoObservedFresh,
     $cargoCompileUnitCount,
     $nativeJniUpdated)
 
 
-New-Item -ItemType Directory -Force -Path $gradleUserHome | Out-Null
-
-$previousAndroidHome = $env:ANDROID_HOME
-$previousGradleNdkHome = $env:ANDROID_NDK_HOME
-$previousGradleNdkVersion = $env:RUSTY_QUEST_ANDROID_NDK_VERSION
-$previousJavaHome = $env:JAVA_HOME
-$previousGradleUserHome = $env:GRADLE_USER_HOME
-$previousSpatialProductId = $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID
-$previousSpatialAppBuildDir = $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR
-$previousSpatialRootBuildDir = $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR
-$previousSpatialAppId = $env:RUSTY_QUEST_SPATIAL_APP_ID
-$previousSpatialAppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL
-$previousGradleLockedFinalPresentation = $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION
-$previousGradleDistortionSpeedScale = $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE
-$previousHandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR
-$previousSigningKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
-$previousOfflineMediaPackAssetDir = $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR
-$previousOfflineMediaKeyHex = $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX
-$previousSpatialScopedEnvironment = @{}
-foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" })) {
-    $previousSpatialScopedEnvironment[[string]$entry.Name] = [string]$entry.Value
-}
-$ignoredAmbientSpatialFeatureVariables = @($previousSpatialScopedEnvironment.Keys | Sort-Object)
-try {
-    foreach ($name in @($previousSpatialScopedEnvironment.Keys)) {
-        [Environment]::SetEnvironmentVariable([string]$name, $null, "Process")
-    }
-    $env:ANDROID_HOME = $AndroidHome
-    $env:ANDROID_NDK_HOME = $NdkHome
-    $env:RUSTY_QUEST_ANDROID_NDK_VERSION = Split-Path -Leaf $NdkHome
-    $env:JAVA_HOME = $JavaHome
-    $env:GRADLE_USER_HOME = $gradleUserHome
-    $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
-    $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
-    $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
-    $env:RUSTY_QUEST_SPATIAL_APP_ID = $resolvedAppId
-    $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
-    $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
-    $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_X = $resolvedDepthAlignmentDefaultLeftX.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_LEFT_Y = $resolvedDepthAlignmentDefaultLeftY.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_X = $resolvedDepthAlignmentDefaultRightX.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-    $env:RUSTY_QUEST_SPATIAL_DEPTH_ALIGNMENT_DEFAULT_RIGHT_Y = $resolvedDepthAlignmentDefaultRightY.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-    $env:RUSTY_QUEST_SPATIAL_CAMERA_PROJECTION_DEFAULT_ENABLED = ([bool]$CameraProjectionDefaultEnabled).ToString().ToLowerInvariant()
-    $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $EnvironmentDepthOwner
-    $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED = ([bool]$ImmersiveVideoDefaultEnabled).ToString().ToLowerInvariant()
-    $env:RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_OFFLINE_PACK_ID = $resolvedImmersiveVideoDefaultOfflinePackId
-    $env:RUSTY_QUEST_SPATIAL_ZONE_COMPOSITOR_DEFAULT_PRESET = $ZoneCompositorDefaultPreset
-    $env:RUSTY_QUEST_SPATIAL_BUILD_ROOT = $productBuildRoot
-    $env:RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT = $ParticleLayerCarrierDefault
-    $env:RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT = $StartInParticleViewDefault
-    $env:RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT = $PanelLauncherVisibleDefault
-    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT = $HandAlignmentEnabledDefault
-    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT = $HandAlignmentViewerMarkersEnabledDefault
-    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT = $HandAlignmentMappingProfileDefault
-    $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT = $HandBillboardFlockEnabledDefault
-    $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT = $HandBillboardSourceDefault
-    if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)) {
-        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR = $resolvedOfflineMediaPackAssetDir
-    }
-    if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) {
-        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = $resolvedOfflineMediaKeyHex
-    }
-    if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $resolvedHandMeshRigAssetDir
-    }
-    if ([string]::IsNullOrWhiteSpace($Keystore)) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE -ErrorAction SilentlyContinue
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS -ErrorAction SilentlyContinue
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD -ErrorAction SilentlyContinue
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $Keystore
-        $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS = $signingAlias
-        $env:RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD = $signingStorePassword
-        $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD = $signingKeyPassword
-    }
-    foreach ($binding in @(
-        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR"; Value = $resolvedPrivateFeatureSourceDir },
-        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR"; Value = $resolvedPrivateFeatureAssetDir },
-        @{ Name = "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR"; Value = $resolvedPrivateFeatureResourceDir },
-        @{ Name = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_ASSET_ROOT"; Value = $embeddedDuplexAssetRoot },
-        @{ Name = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256"; Value = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 }) }
-    )) {
-        if ([string]::IsNullOrWhiteSpace([string]$binding.Value)) {
-            [Environment]::SetEnvironmentVariable([string]$binding.Name, $null, "Process")
-        } else {
-            [Environment]::SetEnvironmentVariable([string]$binding.Name, [string]$binding.Value, "Process")
-        }
-    }
-    $mediaAndroidBuildRoot = Join-Path $productBuildRoot "media-stream-android"
-    $mediaAndroidJar = Join-Path $AndroidHome "platforms/android-34/android.jar"
-    if (-not (Test-Path -LiteralPath $mediaAndroidJar -PathType Leaf)) {
-        throw "The embedded media module requires the same Android 34 platform as its host."
-    }
-    $gradleArguments = @(
-        "--no-daemon",
-        $(if ($BuildMode -eq "DevFast") { "--configuration-cache" } else { "--no-configuration-cache" }),
-        "--console=plain",
-        "--build-cache",
-        "--project-cache-dir", $gradleProjectCacheDir,
-        "-Pandroid.aapt2FromMavenOverride=$shortAapt2",
-        "-PandroidJar=$mediaAndroidJar",
-        "-PmediaBuildDir=$mediaAndroidBuildRoot",
-        "-PrqSourceBanksForeignOwnership=$($sourceBankBuildInputs.enabled.ToString().ToLowerInvariant())",
-        "-p", ([string]$appRoot),
-        ":app:assemble$BuildType"
-    )
-    # Explicit empty default prevents ambient Gradle properties from choosing metadata.
-    $versionProperty=if($UseSourceCompositionVersionName){$sourceVersionMetadata.source_composition_fingerprint}else{''}
-    $gradleArguments=@("-PrqDeveloperSourceCompositionFingerprint=$versionProperty")+$gradleArguments
-    if ($BuildMode -eq "Candidate") {
-        $gradleArguments = @("--init-script", $gradleTimingInitPath) + $gradleArguments
-    }
-    if ($BuildMode -eq "DevFast") { $gradleArguments = @("-Pkotlin.compiler.execution.strategy=in-process") + $gradleArguments }
-    $gradleStopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $gradleOutput = [Collections.Generic.List[string]]::new()
-    & $gradleBat @gradleArguments 2>&1 | ForEach-Object {
-        $line = [string]$_
-        $gradleOutput.Add($line)
-        Write-Host $line
-    }
-    $gradleExitCode = $LASTEXITCODE
-    if ($gradleExitCode -ne 0) {
-        throw "Spatial Camera Panel Gradle build failed with exit code $gradleExitCode"
-    }
-    $gradleStopwatch.Stop()
-    $gradleDetailedTaskReceipts = @($gradleOutput | ForEach-Object {
-        $match = [regex]::Match([string]$_, '^BUILD_TASK path=(\S+) durationMs=(\d+) outcome=([A-Z_]+)$')
-        if ($match.Success) {
-            [pscustomobject]@{
-                path = $match.Groups[1].Value
-                duration_ms = [long]$match.Groups[2].Value
-                outcome = $match.Groups[3].Value
-            }
-        }
-    })
-    $gradleStandardTaskReceipts = @($gradleOutput | ForEach-Object {
-        $match = [regex]::Match([string]$_, '^> Task (\S+?)(?: (UP-TO-DATE|FROM-CACHE|NO-SOURCE|SKIPPED|FAILED))?$')
-        if ($match.Success) {
-            [pscustomobject]@{
-                path = $match.Groups[1].Value
-                duration_ms = 0L
-                outcome = $(if ($match.Groups[2].Success) { $match.Groups[2].Value.Replace('-', '_') } else { "EXECUTED" })
-            }
-        }
-    })
-    $gradleTaskReceipts = if ($gradleStandardTaskReceipts.Count -gt 0) {
-        @($gradleStandardTaskReceipts | ForEach-Object {
-            $standardTask = $_
-            $detailedTask = $gradleDetailedTaskReceipts | Where-Object { $_.path -ceq $standardTask.path } | Select-Object -First 1
-            [pscustomobject]@{
-                path = $standardTask.path
-                duration_ms = $(if ($null -eq $detailedTask) { 0L } else { [long]$detailedTask.duration_ms })
-                outcome = $standardTask.outcome
-            }
-        })
-    } else {
-        @($gradleDetailedTaskReceipts)
-    }
-    $gradleOutcomeSummary = [ordered]@{
-        task_count = $gradleTaskReceipts.Count
-        executed = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "EXECUTED" }).Count
-        up_to_date = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "UP_TO_DATE" }).Count
-        from_cache = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "FROM_CACHE" }).Count
-        no_source = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "NO_SOURCE" }).Count
-        skipped = @($gradleTaskReceipts | Where-Object { $_.outcome -eq "SKIPPED" }).Count
-    }
-    $gradlePhaseClassifiers = [ordered]@{
-        "kotlin-java" = '(?i)(compile.*(?:Kotlin|Java)|kapt)'
-        "resources-aapt2-shaders" = '(?i)(Resource|Manifest|RFile|ResValue|Shader|Asset)'
-        "dex" = '(?i)(Dex|GlobalSynthetic)'
-        "apk-assembly-sign" = '(?i)(package|assemble|Signing|NativeLib|stripDebug)'
-    }
-    if ($gradleTaskReceipts.Count -gt 0) {
-        foreach ($phaseName in $gradlePhaseClassifiers.Keys) {
-            $tasks = @($gradleTaskReceipts | Where-Object { $_.path -match [string]$gradlePhaseClassifiers[$phaseName] })
-            $phaseReceipts.Add([ordered]@{
-                phase = $phaseName
-                duration_ms = [long](($tasks | Measure-Object -Property duration_ms -Sum).Sum)
-                duration_semantics = "aggregate-gradle-task-time-may-overlap"
-                task_count = $tasks.Count
-                executed_count = @($tasks | Where-Object { $_.outcome -eq "EXECUTED" }).Count
-                up_to_date_count = @($tasks | Where-Object { $_.outcome -eq "UP_TO_DATE" }).Count
-                from_cache_count = @($tasks | Where-Object { $_.outcome -eq "FROM_CACHE" }).Count
-                no_source_count = @($tasks | Where-Object { $_.outcome -eq "NO_SOURCE" }).Count
-                skipped_count = @($tasks | Where-Object { $_.outcome -eq "SKIPPED" }).Count
-                status = "pass"
-            })
-        }
-    }
-    $phaseReceipts.Add([ordered]@{
-        phase = "android-shell-resources-dex-apk"
-        duration_ms = $gradleStopwatch.ElapsedMilliseconds
-        shell_prior_cache_available = $shellPriorCacheAvailable
-        shell_invalidation = $shellInvalidation
-        package_prior_cache_available = $packagePriorCacheAvailable
-        package_invalidation = $packageInvalidation
-        gradle_observed_outcomes = $gradleOutcomeSummary
-        gradle_daemon = $false
-        aapt2_override = "verified-short-copy"
-        status = "pass"
-    })
-    Write-Host ("BUILD_PHASE android-shell-resources-dex-apk status=pass durationMs={0} shellPriorAvailable={1} packagePriorAvailable={2} executed={3} upToDate={4} fromCache={5} noSource={6} skipped={7}" -f `
-        $gradleStopwatch.ElapsedMilliseconds,
-        $shellPriorCacheAvailable,
-        $packagePriorCacheAvailable,
-        $gradleOutcomeSummary.executed,
-        $gradleOutcomeSummary.up_to_date,
-        $gradleOutcomeSummary.from_cache,
-        $gradleOutcomeSummary.no_source,
-        $gradleOutcomeSummary.skipped)
-} finally {
-    $env:ANDROID_HOME = $previousAndroidHome
-    if ($null -eq $previousGradleNdkHome) {
-        Remove-Item Env:\ANDROID_NDK_HOME -ErrorAction SilentlyContinue
-    } else {
-        $env:ANDROID_NDK_HOME = $previousGradleNdkHome
-    }
-    if ($null -eq $previousGradleNdkVersion) {
-        Remove-Item Env:\RUSTY_QUEST_ANDROID_NDK_VERSION -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_ANDROID_NDK_VERSION = $previousGradleNdkVersion
-    }
-    $env:JAVA_HOME = $previousJavaHome
-    if ($null -eq $previousGradleUserHome) {
-        Remove-Item Env:\GRADLE_USER_HOME -ErrorAction SilentlyContinue
-    } else {
-        $env:GRADLE_USER_HOME = $previousGradleUserHome
-    }
-    if ($null -eq $previousSpatialAppId) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_ID -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_APP_ID = $previousSpatialAppId
-    }
-    if ($null -eq $previousSpatialProductId) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_PRODUCT_ID -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $previousSpatialProductId
-    }
-    if ($null -eq $previousSpatialAppBuildDir) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_BUILD_DIR -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $previousSpatialAppBuildDir
-    }
-    if ($null -eq $previousSpatialRootBuildDir) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $previousSpatialRootBuildDir
-    }
-    if ($null -eq $previousSpatialAppLabel) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_LABEL -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $previousSpatialAppLabel
-    }
-    if ($null -eq $previousGradleLockedFinalPresentation) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $previousGradleLockedFinalPresentation
-    }
-    if ($null -eq $previousGradleDistortionSpeedScale) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $previousGradleDistortionSpeedScale
-    }
-    if ($null -eq $previousHandMeshRigAssetDir) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $previousHandMeshRigAssetDir
-    }
-    if ($null -eq $previousSigningKeystore) {
-        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $previousSigningKeystore
-    }
-    if ($null -eq $previousOfflineMediaPackAssetDir) {
-        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR = $previousOfflineMediaPackAssetDir
-    }
-    if ($null -eq $previousOfflineMediaKeyHex) {
-        Remove-Item Env:\RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX -ErrorAction SilentlyContinue
-    } else {
-        $env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = $previousOfflineMediaKeyHex
-    }
-    foreach ($name in @(Get-ChildItem Env: | Where-Object { $_.Name -like "RUSTY_QUEST_SPATIAL_*" } | Select-Object -ExpandProperty Name)) {
-        [Environment]::SetEnvironmentVariable([string]$name, $null, "Process")
-    }
-    foreach ($name in @($previousSpatialScopedEnvironment.Keys)) {
-        [Environment]::SetEnvironmentVariable([string]$name, [string]$previousSpatialScopedEnvironment[$name], "Process")
-    }
-}
+$gradleRun = Invoke-SpatialGradlePhase -Phase Assemble -ComponentEvidenceDirectory $androidComponentEvidenceDir
+$mediaAndroidBuildRoot=$gradleRun.media_build_root
+$ignoredAmbientSpatialFeatureVariables=@($gradleRun.ignored_ambient_spatial_variables)
 
 $embeddedMediaAarPath = Join-Path $mediaAndroidBuildRoot "outputs\aar\rusty-quest-media-stream-android-release.aar"
 $embeddedMediaClassesJarPath = Join-Path $mediaAndroidBuildRoot "aar-staging\classes.jar"
@@ -2365,13 +2518,20 @@ $apkSource = Join-Path $appBuildDir "outputs\apk\$buildTypeLower\app-$buildTypeL
 if (-not (Test-Path -LiteralPath $apkSource)) {
     throw "Gradle build did not produce expected APK: $apkSource"
 }
+$androidComponentClosure = $androidComponentInputs
+if ($null -ne $androidComponentSelection) {
+    $androidComponentClosure = Assert-AndroidComponentClosure -InventoryPath $androidComponentInventoryPath `
+        -ExpectedInventorySha256 $androidComponentSelection.sha256 `
+        -EvidenceDirectory $androidComponentEvidenceDir -ApkPath $apkSource -PythonPath $PythonPath
+}
+Assert-QuestBuildSourceCompositionCurrent -Composition $sourceComposition -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
 
 $apkOut = Join-Path $OutDir $resolvedApkFileName
 $apkCopied = Copy-FileIfChanged -Source $apkSource -Destination $apkOut
 $sha256 = Get-FileSha256 -Path $apkOut
 $apkInspectionRoot = Join-Path $BuildCacheRoot "apk-v"
-$apkInspectionPath = Join-Path $apkInspectionRoot "$sha256.apk"
-$null = Copy-FileIfChanged -Source $apkOut -Destination $apkInspectionPath
+$apkInspectionCopy = New-QuestApkInspectionCopy -ApkPath $apkOut -InspectionRoot $apkInspectionRoot -ExpectedApkSha256 $sha256
+$apkInspectionPath = $apkInspectionCopy.path
 $inspectionStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $signerInspection = @(& $apksigner "verify" "--verbose" "--print-certs" $apkInspectionPath 2>&1)
 if ($LASTEXITCODE -ne 0) {
@@ -2392,6 +2552,8 @@ $badging = @(& $shortAapt2 "dump" "badging" $apkInspectionPath 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "Produced APK failed AAPT2 badging inspection." }
 $badgingText = $badging -join "`n"
 $observedSourceVersion=Assert-SpatialSourceVersionBadging -BadgingText $badgingText -PackageName $resolvedAppId -Metadata $sourceVersionMetadata
+$observedRuntimeStamp=Assert-SpatialSourceVersionResource -ApkPath $apkInspectionPath -Metadata $sourceVersionMetadata -RuntimeStampEnabled:$sourceRuntimeStampEnabled
+if($sourceRuntimeStampEnabled){$observedSourceVersion['runtime_stamp']=$observedRuntimeStamp}
 if ($badgingText -notmatch ("package:\s+name='" + [regex]::Escape($resolvedAppId) + "'") -or
     $badgingText -notmatch "sdkVersion:'34'" -or
     $badgingText -notmatch "targetSdkVersion:'34'" -or
@@ -2420,6 +2582,14 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $apkZip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $apkOut).Path)
 try {
     $apkEntryNames = @($apkZip.Entries | ForEach-Object { [string]$_.FullName })
+    $freshEntryName='assets/rusty-quest/fresh-setup-build-policy.json'
+    $freshEntries=@($apkEntryNames|Where-Object{$_-ceq$freshEntryName})
+    if($null-eq$freshBuildSelection){if($freshEntries.Count-ne0){throw 'Unselected APK unexpectedly contains fresh policy.'}}
+    else{
+        $freshPackaged=Get-ZipEntrySha256 -Zip $apkZip -EntryName $freshEntryName
+        if($freshPackaged.sha256-cne$freshDescriptorSha256-or$freshPackaged.size_bytes-ne[Text.Encoding]::UTF8.GetByteCount($freshDescriptorJson)){throw 'APK fresh descriptor bytes differ from actual build selection.'}
+    }
+
     $actualEmbeddedDuplexAssetNames = @($apkEntryNames | Where-Object {
         $_.StartsWith("assets/embedded-duplex/", [StringComparison]::Ordinal)
     } | Sort-Object)
@@ -2473,6 +2643,8 @@ if ($missingRustDynamicStd.Count -gt 0) {
 }
 $inspectionStopwatch.Stop()
 $apkInspection = [ordered]@{
+    android_components = $androidComponentClosure
+    android_jvm_compilation = $androidJvmCompilation
     schema = "rusty.quest.spatial_camera_panel.apk_inspection.v1"
     package_name = $resolvedAppId
     min_sdk = 34
@@ -2488,6 +2660,8 @@ $apkInspection = [ordered]@{
     app_owned_rust_native_receipt_count = $nativeReceiptPayloadEntries.Count
     embedded_media_additional_native_payload_count = $unexpectedEmbeddedMediaNativePayload.Count
     embedded_media_rust_linkage = "statically-linked-once-in-spatial-camera-panel-native-receipt"
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
         closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
@@ -2505,8 +2679,12 @@ $apkInspection = [ordered]@{
     private_path_recorded = $false
 }
 if($UseSourceCompositionVersionName){$apkInspection['developer_source_version']=$observedSourceVersion}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $apkInspection -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $apkInspection -ResolvedSelection $freshBuildSelection
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
+Complete-QuestApkInspectionCopy -Copy $apkInspectionCopy -InspectionReceiptPath $apkInspectionPath -ExpectedInspectionSha256 (Get-FileSha256 $apkInspectionPath)
+$apkInspectionCopy = $null
 $phaseReceipts.Add([ordered]@{
     phase = "zipalign-sign-inspection"
     duration_ms = $inspectionStopwatch.ElapsedMilliseconds
@@ -2559,6 +2737,7 @@ $phaseReceipts.Add([ordered]@{
 })
 $phaseReceipt = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.build_phase_receipts.v1"
+    compilation_scheduling = $(if($OverlapJvmNativeCompilation){'jvm-native-overlap'}else{'serialized'})
     build_workflow_mode = $BuildMode.ToLowerInvariant()
     started_at_utc = $buildStartedUtc.ToString("o")
     completed_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
@@ -2576,6 +2755,10 @@ $offlineMediaPackagedAssets =
     -not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
+    compilation_scheduling = $(if($OverlapJvmNativeCompilation){'jvm-native-overlap'}else{'serialized'})
+    android_components = $androidComponentClosure
+    android_jvm_compilation = $androidJvmCompilation
+    android_native_source_paths = $androidNativeSourcePaths
     product_id = $resolvedProductId
     build_input_fingerprint = $buildInputFingerprint
     build_input_lock_path = $buildInputLockPath
@@ -2604,6 +2787,8 @@ $manifest = [ordered]@{
         native_payload_count = 0
         rust_linkage = [string]$embeddedMediaArtifactInspection.rust_linkage
     }
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
         closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
@@ -3227,10 +3412,16 @@ $manifest = [ordered]@{
     signer_path_alias_password_recorded = $false
 }
 if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $manifest -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $manifest -ResolvedSelection $freshBuildSelection
 $manifestPath = Join-Path $OutDir "build-manifest.json"
+if ($null -ne $gradleToolDistribution) { $manifest['gradle_tool_distribution'] = $gradleToolDistribution }
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) { $manifest['artifact_output'] = $buildInputDescriptor['artifact_output'] }
 [void](Set-TextFileIfChanged -Path $manifestPath -Value ($manifest | ConvertTo-Json -Depth 12))
 
 $runCapsule = [ordered]@{
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.apk_run_capsule.v1"
     capsule_id = "spatial-$($resolvedAppId.Replace('.', '-'))-$($buildInputFingerprint.Substring(0, 12))"
     app_id = $resolvedAppId
@@ -3238,6 +3429,7 @@ $runCapsule = [ordered]@{
     source = [ordered]@{
         repository = [string]$repoRoot; commit = $sourceHead; tree = $sourceTree; tracked_worktree_clean = $sourceTrackedWorktreeClean; worktree_overlay_sha256 = $sourceWorktreeOverlaySha256
         composition_fingerprint = [string]$sourceComposition.fingerprint; packages = @($sourceComposition.packages); dependencies = $sourceDependencies
+        provider_document = [ordered]@{path=$sourceCompositionPath;sha256=(Get-FileSha256 -Path $sourceCompositionPath)}
     }
     build_lock = [ordered]@{
         path = $buildInputLockPath; sha256 = Get-FileSha256 -Path $buildInputLockPath; resolution_fingerprint = $buildInputFingerprint
@@ -3248,6 +3440,15 @@ $runCapsule = [ordered]@{
         paths_recorded = $false
     }
     apk_inspection = [ordered]@{ path = $apkInspectionPath; sha256 = Get-FileSha256 -Path $apkInspectionPath }
+    android_components = $(if($null -eq $androidComponentSelection){$androidJvmCompilation}else{
+        [ordered]@{
+            inventory = [ordered]@{path=$androidComponentInventoryPath;sha256=$androidComponentSelection.sha256}
+            jvm_inputs = [ordered]@{path=(Join-Path $androidComponentEvidenceDir 'jvm-preflight/gradle-inputs.json');sha256=$androidJvmCompilation.gradle_inputs_sha256}
+            jvm_compilation = [ordered]@{path=(Join-Path $androidComponentEvidenceDir 'jvm-preflight/compiled.json');sha256=$androidJvmCompilation.compiled_sha256}
+            assembled_inputs = [ordered]@{path=(Join-Path $androidComponentEvidenceDir 'gradle-inputs.json');sha256=(Get-FileSha256 (Join-Path $androidComponentEvidenceDir 'gradle-inputs.json'))}
+            closure = [ordered]@{path=(Join-Path $androidComponentEvidenceDir 'closure.json');sha256=$androidComponentClosure.closure_sha256}
+        }
+    })
     embedded_media_aar = [ordered]@{
         source_inputs = [ordered]@{ path = $embeddedMediaSourceManifestPath; sha256 = Get-FileSha256 -Path $embeddedMediaSourceManifestPath }
         build_inputs = [ordered]@{ path = $embeddedMediaBuildInputsPath; sha256 = Get-FileSha256 -Path $embeddedMediaBuildInputsPath }
@@ -3267,6 +3468,8 @@ $runCapsule = [ordered]@{
         restore_on_failure = $true
     }
 }
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $runCapsule -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $runCapsule -ResolvedSelection $freshBuildSelection
 $runCapsulePath = Join-Path $OutDir "run-capsule.json"
 [void](Set-TextFileIfChanged -Path $runCapsulePath -Value ($runCapsule | ConvertTo-Json -Depth 16))
 

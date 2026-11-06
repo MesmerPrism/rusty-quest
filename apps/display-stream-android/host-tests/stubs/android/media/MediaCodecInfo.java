@@ -1,0 +1,1 @@
+package android.media;public class MediaCodecInfo{public static class CodecCapabilities{public static final int COLOR_FormatSurface=1;}public static class EncoderCapabilities{public static final int BITRATE_MODE_CBR=1;}}

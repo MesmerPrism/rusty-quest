@@ -34,6 +34,23 @@ final class EmbeddedDuplexBootstrap {
         BOOTSTRAP_BINDINGS("bootstrap_bindings", "rejected"),
         NATIVE_INITIALIZE("native_initialize", "rejected_or_unavailable"),
         RESOURCE_INSTALL("resource_install", "failed"),
+        RESOURCE_IDENTITY("resource_install", "initialized_identity_mismatch"),
+        RESOURCE_CONSTRUCT("resource_install", "owner_construction_failed"),
+        RESOURCE_OWN_CAPTURE("resource_install", "own_capture_start_failed"),
+        RESOURCE_OWN_PROJECTION("resource_install", "own_projection_failed"),
+        RESOURCE_CAPTURE_UNAVAILABLE("resource_install", "own_capture_unavailable"),
+        RESOURCE_CAPTURE_FRESHNESS("resource_install", "own_capture_freshness_pending"),
+        RESOURCE_PROJECTION_CARRIER("resource_install", "own_carrier_not_ready"),
+        RESOURCE_PROJECTION_SUPERSEDED("resource_install", "own_projection_superseded"),
+        RESOURCE_PROJECTION_INTERRUPTED("resource_install", "own_projection_interrupted"),
+        RESOURCE_PROJECTION_TIMEOUT("resource_install", "own_projection_dispatch_timeout"),
+        RESOURCE_PIPELINE("resource_install", "pipeline_create_failed"),
+        RESOURCE_ROUTE("resource_install", "pipeline_route_failed"),
+        RESOURCE_OUTGOING("resource_install", "outgoing_owner_failed"),
+        RESOURCE_BINDING_CREATE("resource_install", "binding_create_failed"),
+        RESOURCE_BINDINGS("resource_install", "owner_bindings_failed"),
+        RESOURCE_BINDING_BUILD("resource_install", "binding_build_failed"),
+        RESOURCE_REGISTRY("resource_install", "registry_install_failed"),
         CONTROL_ENDPOINT("control_endpoint", "failed"),
         UNKNOWN("unknown", "unexpected");
 
@@ -45,6 +62,30 @@ final class EmbeddedDuplexBootstrap {
     static final class Trace {
         private volatile Failure failure = Failure.UNKNOWN;
         void mark(Failure next) { failure = next; }
+        // Only the existing closed resource-install stage can be refined. A
+        // cleanup/suppressed exception cannot replace the original failing step.
+        void captureFailure(Exception original) {
+            if (failure != Failure.RESOURCE_OWN_PROJECTION) return;
+            Throwable cause = original;
+            for (int depth = 0; depth < 4 && (cause instanceof java.util.concurrent.ExecutionException
+                    || cause instanceof java.util.concurrent.CompletionException); depth++) {
+                if (cause.getCause() == null) break;
+                cause = cause.getCause();
+            }
+            if (cause instanceof EmbeddedDuplexOwnProjectionFailure) {
+                switch (((EmbeddedDuplexOwnProjectionFailure) cause).reason) {
+                    case CAPTURE_UNAVAILABLE: failure = Failure.RESOURCE_CAPTURE_UNAVAILABLE; break;
+                    case FRESHNESS_PENDING: failure = Failure.RESOURCE_CAPTURE_FRESHNESS; break;
+                    case CARRIER_NOT_READY: failure = Failure.RESOURCE_PROJECTION_CARRIER; break;
+                    case SUPERSEDED: failure = Failure.RESOURCE_PROJECTION_SUPERSEDED; break;
+                    case INTERRUPTED: failure = Failure.RESOURCE_PROJECTION_INTERRUPTED; break;
+                }
+            } else if (cause instanceof java.util.concurrent.TimeoutException) {
+                failure = Failure.RESOURCE_PROJECTION_TIMEOUT;
+            } else if (cause instanceof InterruptedException) {
+                failure = Failure.RESOURCE_PROJECTION_INTERRUPTED;
+            }
+        }
         Failure failure() { return failure; }
     }
 
@@ -115,6 +156,17 @@ final class EmbeddedDuplexBootstrap {
     }
 
     static Prepared prepare(EmbeddedDuplexPackagedInputs inputs, JSONObject runtimeBindings,
+            ConfigAssembler assembler, Trace trace) throws Exception {
+        if (inputs == null) throw new IllegalArgumentException("embedded bootstrap inputs");
+        return prepare(FrozenEffectiveInputs.packaged(inputs), runtimeBindings, assembler, trace);
+    }
+
+    static Prepared prepare(FrozenEffectiveInputs inputs, JSONObject runtimeBindings,
+            ConfigAssembler assembler) throws Exception {
+        return prepare(inputs, runtimeBindings, assembler, null);
+    }
+
+    static Prepared prepare(FrozenEffectiveInputs inputs, JSONObject runtimeBindings,
             ConfigAssembler assembler, Trace trace) throws Exception {
         mark(trace, Failure.PACKAGED_REQUEST);
         if (inputs == null || runtimeBindings == null || assembler == null) {
@@ -204,7 +256,16 @@ final class EmbeddedDuplexBootstrap {
         }
         fields(startup, "remote_key_id", "remote_public_key_hex", "route_grant_id",
                 "device_peers");
-        fields(replay, "pending_request_sha256", "terminal");
+        // Native dispatch replay retains target-local bindings after remote effects.
+        // Older snapshots omit this map; preserve either complete form for Rust.
+        if (replay.has("target_bindings")) {
+            fields(replay, "pending_request_sha256", "terminal", "target_bindings");
+            replay.getJSONObject("target_bindings");
+        } else {
+            fields(replay, "pending_request_sha256", "terminal");
+        }
+        replay.getJSONObject("pending_request_sha256");
+        replay.getJSONObject("terminal");
         fields(activationReplay, "pending_request_sha256", "terminal");
         String remotePublic = startup.getString("remote_public_key_hex");
         String remoteKeyId = startup.getString("remote_key_id");

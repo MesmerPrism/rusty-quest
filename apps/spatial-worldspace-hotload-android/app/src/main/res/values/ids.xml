@@ -1,0 +1,4 @@
+<resources>
+    <item name="probe_controls" type="id" />
+    <item name="probe_atlas_carrier" type="id" />
+</resources>

@@ -17,6 +17,17 @@ const MARKER_PREFIX: &str = "RUSTY_QUEST_VISUAL_SHOWCASE";
 
 #[cfg(feature = "showcase")]
 mod automatic_breath;
+#[path = "../../../../crates/rusty-quest-development-feedback-native/src/lib.rs"]
+mod development_feedback_core;
+pub(crate) use development_feedback_core::{abi, digest, loader, runtime};
+mod development_feedback_contract;
+mod development_feedback_shader;
+#[cfg(all(target_os = "android", native_development_feedback))]
+mod gpu_development_feedback_scene;
+mod native_development_feedback;
+#[cfg(any(native_meta_xr_operator, test))]
+mod native_input_geometry;
+
 mod bounded_breath_phase_integrator;
 mod breath_calibration_controller_action;
 #[cfg(not(feature = "showcase"))]
@@ -199,11 +210,11 @@ mod openxr_simultaneous_hands_controllers;
 mod openxr_stimulus_actions;
 mod particle_adapter_consumer;
 mod polar_acc_breath_adapter;
-#[cfg(feature = "showcase")]
-mod polar_tilt_breath_state;
 mod polar_acc_phase_classifier;
 mod polar_composition_adapters;
 mod polar_input_health;
+#[cfg(feature = "showcase")]
+mod polar_tilt_breath_state;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod private_particle_breath_state_driver;

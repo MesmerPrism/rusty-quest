@@ -26,6 +26,9 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $RepoRoot
 try {
     New-Item -ItemType Directory -Path "local-artifacts" -Force | Out-Null
+    foreach ($Test in @("Test-FreshSdkHotload.py", "Test-SdkHotloadCatalog.py", "Test-SdkGraphicsProvider.py")) {
+        Invoke-Checked "SDK graphics host provider $Test" "python" @("tools\sdk_graphics\$Test")
+    }
     Invoke-Checked "cargo fmt" "cargo" @("fmt", "--all", "--check")
     Invoke-Checked "cargo test" "cargo" @("test", "--workspace", "--exclude", "spatial-camera-panel-native-receipt")
     if ($IncludeLegacyMakepad) {

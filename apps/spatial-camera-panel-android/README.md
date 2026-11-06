@@ -268,7 +268,19 @@ headset, mapped-pixel, sustained-rate or physical-cleanup acceptance.
   the presentation-pose contract explicit. The scene-extrapolated and OpenXR
   presets add a bounded 0-30 ms estimated presentation lead; the latter calls
   `xrLocateViews` with SDK-owned handles but never calls `xrWaitFrame`,
-  `xrBeginFrame`, or `xrEndFrame`. Each eye uses its own gyroscope-referenced
+  `xrBeginFrame`, or `xrEndFrame`. The locator is acquired only when diagnostics
+  are enabled with `openxr-locate-views`. Scene pose modes and the projection
+  carrier require no optional OpenXR locator. Each Activity owns its locator
+  lifetime: shutdown drains native lookup/configuration and destroys its space
+  before SDK teardown. An overlapping successor uses the existing scene fallback
+  until that owner releases; late older teardown cannot destroy the successor.
+  Focused source controls are `tools/checks/Test-SpatialCameraLatencyLifecycleHost.py`
+  (actual Kotlin and Activity callers with modeled platform leaves) and
+  `tools/checks/Test-SpatialOpenXrLocatorLifecycle.py` (actual native constructor,
+  lookup and destructor with modeled SDK dispatch, plus `--android-check` for
+  the unchanged Android owner source). These checks build no APK and provide no
+  device lifecycle or pose-quality evidence.
+  Each eye uses its own gyroscope-referenced
   Camera2 lens pose, focal lengths, and principal point, is drawn independently
   within the 128-byte portable push-constant floor. `Overscan10` is the retained
   zoom-to-fill control: it maps the central 80 percent source into the unchanged

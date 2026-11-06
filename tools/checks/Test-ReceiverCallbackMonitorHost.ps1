@@ -11,11 +11,12 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 public final class ReceiverCallbackMonitorHost {
- final Object lock=new Object();boolean stopRequested;String state="running",connectionState="connected",failure;
+ final Object lock=new Object();boolean stopRequested,preparedMode;String state="running",connectionState="connected",failure;
  final AtomicLong revision=new AtomicLong();Thread worker;Object incomingListener,socket,decoder;
  long connectionGeneration=1;final Map<Long,Object> pendingFrames=new HashMap<>();final Bounds bounds=new Bounds();HandlerThread renderThread;
  static final class Bounds{long shutdownTimeoutMs=80;}
  void requireNotMainThread(String x){} void closeSocket(){} void closeListener(){} void releaseConnection(){}
+ static void warnPreparedWait(String message){throw new AssertionError("legacy fixture entered prepared wait");}
  final class HandlerThread extends Thread {
   final int mode;final CountDownLatch quit=new CountDownLatch(1),release=new CountDownLatch(1),completed=new CountDownLatch(1);
   boolean quitCalled;

@@ -1,4 +1,4 @@
-//! Borrowed faÃ§ade over the one live Broker and durable peer Runtime Host.
+//! Borrowed facade over the one live Broker and durable peer Runtime Host.
 
 use std::sync::{Arc, RwLock};
 
@@ -32,7 +32,8 @@ use rusty_quest_media_stream_android::{
     OwnerDispatchAuthorizationKind, OwnerDispatchClock, OwnerDispatchRequest,
     ProductActivationAuthorityVerifier, ProductActivationRequest,
     RetainedCleanupAuthorityProjection, MAX_OWNER_DISPATCH_FUTURE_SKEW_MS,
-    MAX_OWNER_DISPATCH_REQUEST_AGE_MS, RETAINED_CLEANUP_PROJECTION_SCHEMA,
+    MAX_OWNER_DISPATCH_REQUEST_AGE_MS, OWNED_CLEANUP_PROJECTION_SCHEMA,
+    RETAINED_CLEANUP_PROJECTION_SCHEMA,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -51,6 +52,10 @@ pub const QUEST_RETAINED_CLEANUP_TARGET_SCHEMA: &str =
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestRetainedCleanupSessionRenewal {
+    /// Native accepted checkpoint attestation, authenticated by the enclosing
+    /// signed Prepare. It is never detached restore or fresh media authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_checkpoint: Option<QuestRetainedCleanupContinuationCheckpoint>,
     /// Unique accepted renewal request.
     pub request_id: String,
     /// Stable session.
@@ -83,6 +88,27 @@ pub struct QuestRetainedCleanupSessionRenewal {
     pub reciprocal_expires_at_ms: u64,
     /// Digest of the complete canonical accepted receipt.
     pub receipt_sha256: String,
+}
+
+/// Compact native-owner ancestry signed into the existing cleanup Prepare.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestRetainedCleanupContinuationCheckpoint {
+    /// Closed prospective schema.
+    #[serde(rename = "$schema")]
+    pub schema_id: String,
+    /// Actual native owner checkpoint ordinal.
+    pub checkpoint_sequence: u64,
+    /// Same-session accepted renewals covered by this certificate.
+    pub cumulative_renewals: u64,
+    /// V2 renewals in this exact authenticated Start/derivative lifetime.
+    /// The cumulative field remains global across completed lifetimes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_lifetime_renewal_count: Option<u64>,
+    /// Commitment produced by the validated live owner checkpoint gate.
+    pub source_history_sha256: String,
+    /// Exact complete accepted checkpoint commitment.
+    pub checkpoint_sha256: String,
 }
 
 /// Separates the immutable media target from the live cleanup requester.
@@ -121,6 +147,16 @@ pub struct QuestRetainedCleanupTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestEmbeddedDuplexAuthorityConfig {
+    /// Exact installed local enrolled identity selects the fixed product fresh-setup policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fresh_setup_local_peer_id: Option<DottedId>,
+    /// Immutable exact two packaged enrollment keys; selected before owner construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fresh_setup_enrollment_selection:
+        Option<rusty_manifold_peer::ManifoldFreshPairSetupEnrollmentSelection>,
+    /// Explicit prospective continuation storage policy; omission is finite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ongoing_media_policy: Option<rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy>,
     /// Schema.
     #[serde(rename = "$schema")]
     pub schema_id: String,
@@ -139,7 +175,14 @@ pub struct QuestEmbeddedDuplexAuthorityConfig {
 impl QuestEmbeddedDuplexAuthorityConfig {
     /// Validates exact canonical sets and required trust roots.
     pub(crate) fn validate(&self) -> bool {
-        self.schema_id == QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+        matches!(self.schema_id.as_str(), QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+            | QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA)
+            && self.fresh_setup_local_peer_id.is_some()==self.fresh_setup_enrollment_selection.is_some()
+            && self.fresh_setup_local_peer_id.as_ref().map_or(true, |id|
+                self.fresh_setup_enrollment_selection.as_ref().is_some_and(|selection|selection.keys.iter().any(|key|&key.peer_id==id)) && self.ongoing_media_policy.as_ref()==Some(&rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()))
+            && self.ongoing_media_policy.as_ref().map_or(true, |policy|
+                *policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1()
+                    || *policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2())
             && self.runtime_host_id.as_str().starts_with("host.")
             && !self.trusted_operator_ids.is_empty()
             && !self.trusted_key_fingerprints.is_empty()
@@ -150,7 +193,21 @@ impl QuestEmbeddedDuplexAuthorityConfig {
             && canonical_set(&self.trusted_adapter_ids)
             && canonical_set(&self.trusted_media_revoker_ids)
     }
+
+    pub(crate) fn require_lifetime_policy_selection(
+        &self,
+        policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> bool {
+        self.validate()
+            && (self.schema_id == QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA)
+                == policy.is_some()
+            && policy.map_or(true, |value| value.is_source_owned_v1())
+    }
 }
+
+/// Selected config retains the legacy field shape and requires trusted constructor policy.
+pub const QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA: &str =
+    "rusty.quest.embedded_duplex.development_authority_config.v1";
 
 /// Product-selected portions of a common-LAN context. Authority revisions are
 /// always read from the current durable Runtime Host.
@@ -181,7 +238,265 @@ pub struct QuestEmbeddedDuplexAuthority {
     peer: Arc<RwLock<ManifoldPeerRuntimeHost>>,
 }
 
+/// Local witness captured only after an incoming original dispatch is authenticated.
+/// It is retained with that exact native original, never accepted from a Prepare frame.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestRetainedOriginalEnrollment {
+    schema: String,
+    original_sha256: String,
+    ticket_sha256: String,
+    credential_id: String,
+    key_id: String,
+    key_generation: u64,
+    public_key_sha256: String,
+    valid_from_ms: u64,
+    expires_at_ms: u64,
+    accepted_at_ms: u64,
+}
+
+#[derive(Clone, Copy)]
+enum CleanupProjectionVersion {
+    LeasedV2,
+    OwnedV3,
+}
+
 impl QuestEmbeddedDuplexAuthority {
+    /// Read only actual registered root identities. An absent/expired root never
+    /// becomes a grant, and observation performs no sweep or renewal.
+    pub fn checkpoint_dormant_peer_roots(
+        &self,
+        now: u64,
+    ) -> Result<Option<rusty_manifold_broker_adapter::ManifoldBrokerHistoryCheckpoint>, String>
+    {
+        let mut broker = self
+            .broker
+            .write()
+            .map_err(|_| "root checkpoint Broker poisoned")?;
+        let mut peer = write_peer(&self.peer)?;
+        peer.checkpoint_dormant_root_history(&mut broker, now)
+            .map_err(host_error)
+    }
+    pub fn current_root_lineage_observation(
+        &self,
+        seed: &rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+        session: &DottedId,
+        now: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldPeerCurrentRootLineageObservation, String>
+    {
+        let broker = self
+            .broker
+            .read()
+            .map_err(|_| "root lineage Broker poisoned")?;
+        read_peer(&self.peer)?
+            .current_root_lineage_observation(&broker, seed, session, now)
+            .map_err(host_error)
+    }
+    pub fn root_terminal_custody_source(
+        &self,
+        seed: &rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+    ) -> Result<serde_json::Value, String> {
+        let broker = self
+            .broker
+            .read()
+            .map_err(|_| "terminal root Broker poisoned")?;
+        let peer = read_peer(&self.peer)?;
+        peer.validate_committed_root_seed_for_custody(&broker, seed)
+            .map_err(host_error)?;
+        let (grant, lease) = broker
+            .source_bound_root_target()
+            .ok_or("terminal root registration absent")?;
+        Ok(
+            serde_json::json!({"authority_snapshot":peer.snapshot(),"broker_evidence":broker.evidence(),
+            "current_roots":{"grant":broker.admission_snapshot().grants.iter().find(|g|&g.grant_id==grant),
+                "control_lease":broker.control_lease_authority_snapshot().active_leases.iter().find(|l|&l.lease_id==lease),
+                "runtime_lease":broker.host_snapshot().leases.iter().find(|l|&l.lease_id==lease)}}),
+        )
+    }
+    pub fn peer_root_projection(&self) -> Result<serde_json::Value, String> {
+        let b = self
+            .broker
+            .read()
+            .map_err(|_| "root Broker read poisoned")?;
+        let (grant, lease) = b
+            .source_bound_root_target()
+            .ok_or("selected root registration absent")?;
+        Ok(
+            serde_json::json!({"grant":b.admission_snapshot().grants.iter().find(|g|&g.grant_id==grant),
+            "control_lease":b.control_lease_authority_snapshot().active_leases.iter().find(|l|&l.lease_id==lease),
+            "runtime_lease":b.host_snapshot().leases.iter().find(|l|&l.lease_id==lease)}),
+        )
+    }
+    /// Actual source-bound owner transaction; caller witnesses grant no M rights.
+    pub fn reestablish_peer_roots(
+        &self,
+        witness: rusty_manifold_peer_runtime_host::ManifoldSourceBoundRootNativeWitness,
+        fresh: &rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt,
+        session: &DottedId,
+        clock: rusty_manifold_model::ManifoldClockSnapshot,
+        now: u64,
+        desired_stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<
+        rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+        String,
+    > {
+        let mut broker = self
+            .broker
+            .write()
+            .map_err(|_| "root Broker write poisoned")?;
+        let mut peer = write_peer(&self.peer)?;
+        peer.reestablish_source_bound_roots(
+            &mut broker,
+            witness,
+            fresh,
+            session,
+            clock,
+            now,
+            desired_stop,
+        )
+        .map_err(host_error)
+    }
+
+    pub fn selected_fresh_setup_enrollment_selection(
+        &self,
+    ) -> Result<Option<rusty_manifold_peer::ManifoldFreshPairSetupEnrollmentSelection>, String>
+    {
+        let actual = read_peer(&self.peer)?;
+        if actual.selected_fresh_pair_setup_policy().is_none() {
+            return Ok(None);
+        }
+        Ok(actual
+            .snapshot()
+            .trust_policy
+            .fresh_setup_enrollment_selection
+            .clone())
+    }
+    pub fn current_fresh_prime_enrollment_receipt(
+        &self,
+        id: &DottedId,
+    ) -> Result<Option<rusty_manifold_peer::ManifoldFreshPrimeEnrollmentEntry>, String> {
+        read_peer(&self.peer)?
+            .current_fresh_prime_enrollment_receipt(id)
+            .map_err(host_error)
+    }
+    pub fn fresh_phase_prepare_view(
+        &self,
+        missing: &[DottedId],
+        operation: &str,
+        eligibility: &str,
+        now: u64,
+    ) -> Result<rusty_manifold_peer::ManifoldFreshPhasePrepareView, String> {
+        read_peer(&self.peer)?
+            .fresh_phase_prepare_view(missing, operation, eligibility, now)
+            .map_err(host_error)
+    }
+    pub fn apply_fresh_phase_prepare(
+        &self,
+        request: &rusty_manifold_peer::ManifoldFreshPhasePrepareRequest,
+        now: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshPhasePrepareReceipt, String> {
+        write_peer(&self.peer)?
+            .apply_fresh_phase_prepare(request, now)
+            .map_err(host_error)
+    }
+    pub fn current_fresh_phase_prepare_receipt(
+        &self,
+        id: &DottedId,
+    ) -> Result<Option<rusty_manifold_peer_runtime_host::ManifoldFreshPhasePrepareReceipt>, String>
+    {
+        read_peer(&self.peer)?
+            .current_fresh_phase_prepare_receipt(id)
+            .map_err(host_error)
+    }
+    /// Retain the actual nonclone owner write guard throughout plan -> sealed
+    /// app custody -> commit. The fixed persistence callback must not call back
+    /// into this Manifold owner; it performs only app-owned storage/attestation.
+    pub fn archive_fresh_history(
+        &self,
+        operation: rusty_manifold_peer::ManifoldFreshArchiveOperationBinding,
+        persist: impl FnOnce(
+            &[u8],
+        )
+            -> Result<rusty_manifold_peer::ManifoldFreshHistoryCustodyAck, String>,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshHistoryArchiveCursor, String> {
+        let mut owner = write_peer(&self.peer)?;
+        let plan = owner
+            .plan_fresh_history_archive(operation)
+            .map_err(host_error)?;
+        let ack = persist(plan.canonical_body())?;
+        plan.commit(ack).map_err(host_error)
+    }
+    pub fn fresh_history_receipt_location(
+        &self,
+        id: &DottedId,
+        kind: rusty_manifold_peer::ManifoldFreshArchiveOperationKind,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshReceiptLocation, String> {
+        read_peer(&self.peer)?
+            .fresh_history_receipt_location(id, kind)
+            .map_err(host_error)
+    }
+
+    /// Immutable product selection; a returned clone is data, never a detached owner.
+    pub fn selected_fresh_pair_setup_policy(
+        &self,
+    ) -> Result<Option<rusty_manifold_peer::ManifoldFreshPairSetupPolicy>, String> {
+        let peer = read_peer(&self.peer)?;
+        let selected = peer.selected_fresh_pair_setup_policy().cloned();
+        if selected.is_none() && peer.snapshot().trust_policy.fresh_setup_policy.is_some() {
+            return Err("selected fresh setup requires the actual ongoing owner".into());
+        }
+        Ok(selected)
+    }
+    /// Exact owner preimage for the private native borrowed setup phase.
+    pub fn fresh_pair_setup_view(
+        &self,
+        local: &DottedId,
+        peers: &[DottedId],
+        operation: &str,
+        eligibility: &str,
+        now: u64,
+    ) -> Result<rusty_manifold_peer::ManifoldFreshPairSetupPeerView, String> {
+        read_peer(&self.peer)?
+            .fresh_pair_setup_view(local, peers, operation, eligibility, now)
+            .map_err(host_error)
+    }
+    /// The shared actual owner validates both signatures and commits its own retained fence.
+    pub fn apply_fresh_pair_setup(
+        &self,
+        request: &rusty_manifold_peer::ManifoldFreshPairSetupRequest,
+        now: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt, String> {
+        write_peer(&self.peer)?
+            .apply_fresh_pair_setup(request, now)
+            .map_err(host_error)
+    }
+    /// Exact retained transaction read from the same actual ongoing owner.
+    /// None means no fresh transaction with this ID, never no prime effects.
+    pub fn current_fresh_pair_setup_receipt(
+        &self,
+        request_id: &DottedId,
+    ) -> Result<Option<rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt>, String>
+    {
+        read_peer(&self.peer)?
+            .current_fresh_pair_setup_receipt(request_id)
+            .map_err(host_error)
+    }
+
+    /// Qualifies a fresh signed context/request in the actual selected owner.
+    pub fn current_signed_history_request_id(&self, suffix: &DottedId) -> Result<DottedId, String> {
+        read_peer(&self.peer)?
+            .current_signed_history_request_id(suffix)
+            .map_err(host_error)
+    }
+    /// Qualifies a fresh parent request; finite callers retain their exact IDs.
+    pub fn current_runtime_history_request_id(
+        &self,
+        suffix: &DottedId,
+    ) -> Result<DottedId, String> {
+        read_peer(&self.peer)?
+            .current_runtime_history_request_id(suffix)
+            .map_err(host_error)
+    }
     pub(crate) fn new(
         broker: Arc<RwLock<ManifoldBrokerRuntime>>,
         peer: Arc<RwLock<ManifoldPeerRuntimeHost>>,
@@ -478,6 +793,40 @@ impl QuestEmbeddedDuplexAuthority {
         requester_lease_id: &DottedId,
         now_ms: u64,
     ) -> Result<QuestRetainedCleanupTarget, String> {
+        self.retained_cleanup_target_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            now_ms,
+            CleanupProjectionVersion::LeasedV2,
+        )
+    }
+
+    /// Derive an owned cleanup target from the exact terminal route and retained
+    /// requester identity. Deadlines do not revoke the duty to retire resources.
+    pub fn owned_retained_cleanup_target(
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<QuestRetainedCleanupTarget, String> {
+        self.retained_cleanup_target_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            now_ms,
+            CleanupProjectionVersion::OwnedV3,
+        )
+    }
+    fn retained_cleanup_target_inner(
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        now_ms: u64,
+        version: CleanupProjectionVersion,
+    ) -> Result<QuestRetainedCleanupTarget, String> {
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
         let route = snapshot
@@ -502,16 +851,27 @@ impl QuestEmbeddedDuplexAuthority {
             .iter()
             .find(|lease| lease.lease_id == *requester_lease_id)
             .ok_or_else(|| "cleanup requester lease is absent".to_owned())?;
-        let trusted_revoker = current_cleanup_requester(
-            &route.authority_client_id,
-            &route.authority_runtime_lease_id,
-            requester_id,
-            requester_lease_id,
-            lease,
-            &snapshot.trust_policy.media_runtime_lease_scope_id,
-            &snapshot.trust_policy.trusted_media_revoker_ids,
-            now_ms,
-        )?;
+        let trusted_revoker = match version {
+            CleanupProjectionVersion::LeasedV2 => current_cleanup_requester(
+                &route.authority_client_id,
+                &route.authority_runtime_lease_id,
+                requester_id,
+                requester_lease_id,
+                lease,
+                &snapshot.trust_policy.media_runtime_lease_scope_id,
+                &snapshot.trust_policy.trusted_media_revoker_ids,
+                now_ms,
+            )?,
+            CleanupProjectionVersion::OwnedV3 => cleanup_requester_identity(
+                &route.authority_client_id,
+                &route.authority_runtime_lease_id,
+                requester_id,
+                requester_lease_id,
+                lease,
+                &snapshot.trust_policy.media_runtime_lease_scope_id,
+                &snapshot.trust_policy.trusted_media_revoker_ids,
+            )?,
+        };
         let target = (
             &route.grant_id,
             &route.authority_client_id,
@@ -558,6 +918,7 @@ impl QuestEmbeddedDuplexAuthority {
             executor_peer_id,
             now_ms,
             false,
+            CleanupProjectionVersion::LeasedV2,
         )
     }
 
@@ -579,9 +940,62 @@ impl QuestEmbeddedDuplexAuthority {
             local_peer_id,
             now_ms,
             true,
+            CleanupProjectionVersion::LeasedV2,
         )
     }
 
+    /// Cleanup entitlement is timeless; only remote authentication uses the
+    /// accepted source-owned delegated horizon (finite when omitted).
+    pub fn owned_cleanup_authentication_validity_ms(&self) -> Result<u64, String> {
+        let peer = read_peer(&self.peer)?;
+        Ok(
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                peer.development_lifetime_policy(),
+                rusty_quest_media_stream_android::DEFAULT_OWNED_CLEANUP_AUTHENTICATION_VALIDITY_MS,
+            ),
+        )
+    }
+    /// Durable cleanup of an exact retained remote target, with renewable wire authentication.
+    pub fn owned_retained_cleanup_projection(
+        &self,
+        grant: &DottedId,
+        requester: &DottedId,
+        lease: &DottedId,
+        authority_peer: &DottedId,
+        executor_peer: &DottedId,
+        now: u64,
+    ) -> Result<RetainedCleanupAuthorityProjection, String> {
+        self.retained_cleanup_projection_inner(
+            grant,
+            requester,
+            lease,
+            authority_peer,
+            executor_peer,
+            now,
+            false,
+            CleanupProjectionVersion::OwnedV3,
+        )
+    }
+    /// Same owned entitlement for the actual local registry; never a new media Start.
+    pub fn owned_retained_local_cleanup_projection(
+        &self,
+        grant: &DottedId,
+        requester: &DottedId,
+        lease: &DottedId,
+        local_peer: &DottedId,
+        now: u64,
+    ) -> Result<RetainedCleanupAuthorityProjection, String> {
+        self.retained_cleanup_projection_inner(
+            grant,
+            requester,
+            lease,
+            local_peer,
+            local_peer,
+            now,
+            true,
+            CleanupProjectionVersion::OwnedV3,
+        )
+    }
     fn retained_cleanup_projection_inner(
         &self,
         grant_id: &DottedId,
@@ -591,20 +1005,24 @@ impl QuestEmbeddedDuplexAuthority {
         executor_peer_id: &DottedId,
         now_ms: u64,
         local: bool,
+        version: CleanupProjectionVersion,
     ) -> Result<RetainedCleanupAuthorityProjection, String> {
-        let target =
-            self.retained_cleanup_target(grant_id, requester_id, requester_lease_id, now_ms)?;
+        let owned_authentication_validity = match version {
+            CleanupProjectionVersion::OwnedV3 => self.owned_cleanup_authentication_validity_ms()?,
+            CleanupProjectionVersion::LeasedV2 => 0,
+        };
+        let target = self.retained_cleanup_target_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            now_ms,
+            version,
+        )?;
         let broker = read_broker(&self.broker)?;
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
-        let snapshot_json = peer.snapshot_json().map_err(host_error)?;
-        ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
-            &snapshot_json,
-            &snapshot.trust_policy,
-            &snapshot.provider_epoch_id,
-            &broker,
-        )
-        .map_err(host_error)?;
+        peer.validate_owned_state_with_live_broker(&broker)
+            .map_err(host_error)?;
         let route = snapshot
             .pair_media_routes
             .routes
@@ -624,12 +1042,17 @@ impl QuestEmbeddedDuplexAuthority {
             || target.terminal_route_sha256 != typed_sha256(route)?
             || target.provider_epoch_id != snapshot.provider_epoch_id
             || target.platform_runtime_spec_id != route.platform_runtime_spec_id
-            || target.requester_expires_at_ms <= now_ms
+            || matches!(version, CleanupProjectionVersion::LeasedV2)
+                && target.requester_expires_at_ms <= now_ms
         {
             return Err("retained cleanup source authority differs".to_owned());
         }
         Ok(RetainedCleanupAuthorityProjection {
-            schema_id: RETAINED_CLEANUP_PROJECTION_SCHEMA.to_owned(),
+            schema_id: match version {
+                CleanupProjectionVersion::LeasedV2 => RETAINED_CLEANUP_PROJECTION_SCHEMA,
+                CleanupProjectionVersion::OwnedV3 => OWNED_CLEANUP_PROJECTION_SCHEMA,
+            }
+            .to_owned(),
             authority_peer_id: authority_peer_id.to_string(),
             executor_peer_id: executor_peer_id.to_string(),
             peer_session_id: route.peer_session_id.to_string(),
@@ -647,10 +1070,14 @@ impl QuestEmbeddedDuplexAuthority {
             signed_topology_sha256: typed_sha256(topology)?,
             historical_topology_expires_at_ms: topology.expires_at_ms,
             requester_expires_at_ms: target.requester_expires_at_ms,
-            expires_at_ms: retained_cleanup_projection_expiry(
-                target.requester_expires_at_ms,
-                now_ms,
-            ),
+            expires_at_ms: match version {
+                CleanupProjectionVersion::LeasedV2 => {
+                    retained_cleanup_projection_expiry(target.requester_expires_at_ms, now_ms)
+                }
+                CleanupProjectionVersion::OwnedV3 => {
+                    now_ms.saturating_add(owned_authentication_validity)
+                }
+            },
         })
     }
 
@@ -682,6 +1109,58 @@ impl QuestEmbeddedDuplexAuthority {
         )
     }
 
+    /// Capture the receiving registry's current enrollment after signed original admission.
+    /// The caller must retain this with the exact original before entering the provider.
+    pub fn capture_retained_original_enrollment(
+        &self,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        accepted_at_ms: u64,
+    ) -> Result<QuestRetainedOriginalEnrollment, String> {
+        let peer = read_peer(&self.peer)?;
+        let snapshot = peer.snapshot();
+        let credential = snapshot
+            .enrollment
+            .credentials
+            .iter()
+            .find(|credential| {
+                credential.peer_id.as_str() == original.authority_peer_id
+                    && credential.key_id.as_str() == signer_key_id
+                    && matches!(
+                        credential.status,
+                        rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
+                    )
+                    && credential.valid_from_ms <= accepted_at_ms
+                    && credential.expires_at_ms > accepted_at_ms
+            })
+            .ok_or("retained original signer is not currently enrolled")?;
+        if decode_array::<32>(&credential.public_key_hex)? != *signer_key
+            || accepted_at_ms == 0
+            || original.expires_at_ms <= accepted_at_ms
+            || original.schema_id != QUEST_C1_OWNER_PROJECTION_SCHEMA
+            || original.authorization_kind != OwnerDispatchAuthorizationKind::CurrentRoute
+            || ticket.authority_epoch_id != original.authority_provider_epoch_id
+            || ticket.client_id != original.authority_client_id
+            || ticket.lease_id != original.authority_runtime_lease_id
+        {
+            return Err("retained original enrollment admission differs".into());
+        }
+        Ok(QuestRetainedOriginalEnrollment {
+            schema: "rusty.quest.retained_original_enrollment.v1".into(),
+            original_sha256: typed_sha256(original)?,
+            ticket_sha256: typed_sha256(ticket)?,
+            credential_id: credential.credential_id.to_string(),
+            key_id: credential.key_id.to_string(),
+            key_generation: credential.key_generation,
+            public_key_sha256: credential.public_key_sha256.clone(),
+            valid_from_ms: credential.valid_from_ms,
+            expires_at_ms: credential.expires_at_ms,
+            accepted_at_ms,
+        })
+    }
+
     /// Validates bounded sender-owned renewal ancestry inside the already fully
     /// signature-authenticated cleanup frame; foreign authority is never imported.
     pub fn validate_remote_retained_cleanup_projection_with_renewals(
@@ -694,6 +1173,34 @@ impl QuestEmbeddedDuplexAuthority {
         now_ms: u64,
         renewals: &[QuestRetainedCleanupSessionRenewal],
     ) -> Result<(), String> {
+        self.validate_remote_retained_cleanup_projection_with_original_enrollment(
+            cleanup,
+            original,
+            ticket,
+            signer_key_id,
+            signer_key,
+            now_ms,
+            renewals,
+            None,
+        )
+    }
+
+    /// Validate exact retained native original enrollment; absent witnesses preserve legacy checks.
+    pub fn validate_remote_retained_cleanup_projection_with_original_enrollment(
+        &self,
+        cleanup: &RetainedCleanupAuthorityProjection,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        now_ms: u64,
+        renewals: &[QuestRetainedCleanupSessionRenewal],
+        retained_enrollment: Option<&QuestRetainedOriginalEnrollment>,
+    ) -> Result<(), String> {
+        let owned = cleanup.schema_id == OWNED_CLEANUP_PROJECTION_SCHEMA;
+        if owned && retained_enrollment.is_none() {
+            return Err("owned cleanup original enrollment witness absent".into());
+        }
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
         let credential = snapshot
@@ -708,11 +1215,30 @@ impl QuestEmbeddedDuplexAuthority {
                         rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
                     )
                     && credential.valid_from_ms <= now_ms
-                    && credential.expires_at_ms > now_ms
+                    && (retained_enrollment.is_some() || credential.expires_at_ms > now_ms)
             })
             .ok_or("cleanup signer is not currently enrolled")?;
         if decode_array::<32>(&credential.public_key_hex)? != *signer_key {
             return Err("cleanup enrolled signer changed".into());
+        }
+        if let Some(witness) = retained_enrollment {
+            if witness.schema != "rusty.quest.retained_original_enrollment.v1"
+                || witness.original_sha256 != typed_sha256(original)?
+                || witness.ticket_sha256 != typed_sha256(ticket)?
+                || witness.credential_id != credential.credential_id.as_str()
+                || witness.key_id != signer_key_id
+                || witness.key_generation != credential.key_generation
+                || witness.public_key_sha256 != credential.public_key_sha256
+                || witness.valid_from_ms != credential.valid_from_ms
+                || credential.expires_at_ms < witness.expires_at_ms
+                || witness.accepted_at_ms == 0
+                || witness.accepted_at_ms > now_ms
+                || witness.valid_from_ms > witness.accepted_at_ms
+                || witness.expires_at_ms <= witness.accepted_at_ms
+                || original.expires_at_ms <= witness.accepted_at_ms
+            {
+                return Err("cleanup retained original enrollment differs".into());
+            }
         }
         let parties = if cleanup.trusted_revoker {
             cleanup.requester_id != cleanup.target_client_id
@@ -728,7 +1254,7 @@ impl QuestEmbeddedDuplexAuthority {
         };
         if original.schema_id != QUEST_C1_OWNER_PROJECTION_SCHEMA
             || original.authorization_kind != OwnerDispatchAuthorizationKind::CurrentRoute
-            || cleanup.schema_id != RETAINED_CLEANUP_PROJECTION_SCHEMA
+            || !owned && cleanup.schema_id != RETAINED_CLEANUP_PROJECTION_SCHEMA
             || cleanup.authority_peer_id != original.authority_peer_id
             || cleanup.executor_peer_id != original.executor_peer_id
             || cleanup.authority_peer_id == cleanup.executor_peer_id
@@ -739,7 +1265,16 @@ impl QuestEmbeddedDuplexAuthority {
             || cleanup.platform_runtime_spec_id != original.platform_runtime_spec_id
             || cleanup.target_client_id != original.authority_client_id
             || cleanup.target_runtime_lease_id != original.authority_runtime_lease_id
-            || !retained_cleanup_topology_matches(renewals, original, cleanup, now_ms)?
+            || !retained_cleanup_topology_matches(
+                renewals,
+                original,
+                cleanup,
+                now_ms,
+                snapshot
+                    .ongoing_media_policy
+                    .as_ref()
+                    .map(|p| p.schema_id.as_str()),
+            )?
             || ticket.authority_epoch_id != cleanup.provider_epoch_id
             || ticket.client_id != cleanup.target_client_id
             || ticket.lease_id != cleanup.target_runtime_lease_id
@@ -747,10 +1282,11 @@ impl QuestEmbeddedDuplexAuthority {
             || !valid_sha256(&cleanup.terminal_route_sha256)
             || !parties
             || now_ms == 0
-            || cleanup.expires_at_ms <= now_ms
-            || cleanup.requester_expires_at_ms <= now_ms
-            || cleanup.expires_at_ms > cleanup.requester_expires_at_ms
-            || cleanup.expires_at_ms > now_ms.saturating_add(30_000)
+            || !owned
+                && (cleanup.expires_at_ms <= now_ms
+                    || cleanup.requester_expires_at_ms <= now_ms
+                    || cleanup.expires_at_ms > cleanup.requester_expires_at_ms
+                    || cleanup.expires_at_ms > now_ms.saturating_add(30_000))
         {
             return Err("remote cleanup retained source differs".into());
         }
@@ -768,13 +1304,8 @@ impl QuestEmbeddedDuplexAuthority {
         let snapshot = peer.snapshot();
         // Read-only canonical validation includes applied requests, reciprocal
         // receipts and every full session transition; the restored value is not installed.
-        ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(
-            snapshot.clone(),
-            &snapshot.trust_policy,
-            &snapshot.provider_epoch_id,
-            &broker,
-        )
-        .map_err(host_error)?;
+        peer.validate_owned_state_with_live_broker(&broker)
+            .map_err(host_error)?;
         let route = snapshot
             .pair_media_routes
             .routes
@@ -794,12 +1325,13 @@ impl QuestEmbeddedDuplexAuthority {
             .iter()
             .filter(|receipt| receipt.session_id.as_str() == cleanup.peer_session_id)
             .collect();
-        let renewals: Vec<_> = accepted
+        let mut renewals: Vec<_> = accepted
             .iter()
             .skip(accepted.len().saturating_sub(64))
             .map(|receipt| {
                 let prior = &receipt.prior_topology;
                 Ok(QuestRetainedCleanupSessionRenewal {
+                    continuation_checkpoint: None,
                     request_id: receipt.request_id.to_string(),
                     session_id: receipt.session_id.to_string(),
                     decision_id: receipt.decision_id.to_string(),
@@ -819,6 +1351,68 @@ impl QuestEmbeddedDuplexAuthority {
                 })
             })
             .collect::<Result<_, String>>()?;
+        if let Some(checkpoint) = &snapshot.concurrent_media_checkpoint {
+            let first = &checkpoint.original.paired_session_receipt;
+            let last = &checkpoint.baseline.paired_session_receipt;
+            if last.session_id.as_str() != cleanup.peer_session_id
+                || first.session_id != last.session_id
+                || last
+                    .resulting_authority_revision
+                    .get()
+                    .checked_sub(first.prior_authority_revision.get())
+                    != Some(
+                        checkpoint
+                            .current_lifetime_renewal_count
+                            .unwrap_or(checkpoint.cumulative_renewals),
+                    )
+            {
+                return Err(
+                    "checkpoint cleanup ancestry is not the original same-session lifetime".into(),
+                );
+            }
+            let checkpoint_sha256 = typed_sha256(checkpoint)?;
+            renewals.retain(|receipt| {
+                receipt.resulting_authority_revision > last.resulting_authority_revision.get()
+            });
+            renewals.insert(
+                0,
+                QuestRetainedCleanupSessionRenewal {
+                    continuation_checkpoint: Some(QuestRetainedCleanupContinuationCheckpoint {
+                        schema_id: if checkpoint.current_lifetime_renewal_count.is_some() {
+                            "rusty.quest.retained_cleanup.continuation_checkpoint.v2"
+                        } else {
+                            "rusty.quest.retained_cleanup.continuation_checkpoint.v1"
+                        }
+                        .into(),
+                        current_lifetime_renewal_count: checkpoint.current_lifetime_renewal_count,
+                        checkpoint_sequence: checkpoint.checkpoint_sequence,
+                        cumulative_renewals: checkpoint.cumulative_renewals,
+                        source_history_sha256: checkpoint.source_history_sha256.clone(),
+                        checkpoint_sha256: checkpoint_sha256.clone(),
+                    }),
+                    request_id: last.request_id.to_string(),
+                    session_id: last.session_id.to_string(),
+                    decision_id: last.decision_id.to_string(),
+                    initiator_peer_id: first.prior_topology.initiator_peer_id.to_string(),
+                    responder_peer_id: first.prior_topology.responder_peer_id.to_string(),
+                    transport_sha256: typed_sha256(&first.prior_topology.transport)?,
+                    route_configuration_sha256: first
+                        .prior_topology
+                        .transport
+                        .route_configuration_sha256
+                        .clone(),
+                    prior_topology_sha256: typed_sha256(&first.prior_topology)?,
+                    topology_sha256: typed_sha256(&last.topology)?,
+                    prior_authority_revision: first.prior_authority_revision.get(),
+                    resulting_authority_revision: last.resulting_authority_revision.get(),
+                    observed_at_ms: first.observed_at_ms,
+                    prior_expires_at_ms: first.prior_expires_at_ms,
+                    expires_at_ms: last.expires_at_ms,
+                    reciprocal_expires_at_ms: last.reciprocal.expires_at_ms,
+                    receipt_sha256: checkpoint_sha256,
+                },
+            );
+        }
         if serde_json::to_vec(&renewals)
             .map_err(|error| error.to_string())?
             .len()
@@ -850,14 +1444,57 @@ impl QuestEmbeddedDuplexAuthority {
         let mut peer = write_peer(&self.peer)?;
         let expected_trust = peer.snapshot().trust_policy.clone();
         let expected_epoch = peer.snapshot().provider_epoch_id.clone();
-        let (restored, receipt) =
-            ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
+        if peer.snapshot().runtime_history_checkpoint.is_some() {
+            peer.restore_current_ongoing_media_snapshot(snapshot_json, &broker)
+                .map_err(host_error)?;
+            let snapshot = peer.snapshot();
+            return Ok(ManifoldPeerRuntimeHostSnapshotMigrationReceipt {
+                schema_id: SchemaId::new(
+                    "rusty.manifold.peer.runtime_host.snapshot_migration_receipt.v1",
+                )
+                .expect("fixed schema"),
+                source_schema_id: snapshot.schema_id.clone(),
+                resulting_schema_id: snapshot.schema_id.clone(),
+                migrated: false,
+                host_id: snapshot.host_id.clone(),
+                provider_epoch_id: snapshot.provider_epoch_id.clone(),
+                preserved_event_sequence: snapshot.event_sequence,
+                preserved_broker_lease_admission_count: snapshot.broker_lease_admissions.len(),
+            });
+        }
+        if peer.snapshot().ongoing_media_policy.is_some() {
+            let anchor = peer
+                .seal_ongoing_media_snapshot(&broker)
+                .map_err(host_error)?;
+            let restored = ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(
                 snapshot_json,
-                &expected_trust,
-                &expected_epoch,
+                &anchor,
                 &broker,
             )
             .map_err(host_error)?;
+            let snapshot = restored.snapshot();
+            let receipt = ManifoldPeerRuntimeHostSnapshotMigrationReceipt {
+                schema_id: SchemaId::new(
+                    "rusty.manifold.peer.runtime_host.snapshot_migration_receipt.v1",
+                )
+                .expect("fixed schema"),
+                source_schema_id: snapshot.schema_id.clone(),
+                resulting_schema_id: snapshot.schema_id.clone(),
+                migrated: false,
+                host_id: snapshot.host_id.clone(),
+                provider_epoch_id: snapshot.provider_epoch_id.clone(),
+                preserved_event_sequence: snapshot.event_sequence,
+                preserved_broker_lease_admission_count: snapshot.broker_lease_admissions.len(),
+            };
+            *peer = restored;
+            return Ok(receipt);
+        }
+        let (restored, receipt) = match peer.development_lifetime_policy() {
+            Some(policy) => ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime_and_lifetime_policy(
+                snapshot_json, &expected_trust, &expected_epoch, &broker, policy),
+            None => ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
+                snapshot_json, &expected_trust, &expected_epoch, &broker),
+        }.map_err(host_error)?;
         *peer = restored;
         Ok(receipt)
     }
@@ -1004,7 +1641,23 @@ impl QuestOwnerDispatchAuthorityVerifier {
     }
 }
 
+impl QuestOwnerDispatchAuthorityVerifier {
+    fn selected_authentication_validity_ms(&self) -> Result<u64, String> {
+        let peer = read_peer(&self.authority.peer)?;
+        Ok(
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                peer.development_lifetime_policy(),
+                MAX_OWNER_DISPATCH_REQUEST_AGE_MS,
+            ),
+        )
+    }
+}
+
 impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        self.selected_authentication_validity_ms()
+    }
+
     fn verify_current(
         &self,
         request: &OwnerDispatchRequest,
@@ -1014,7 +1667,8 @@ impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
         let now_ms = self.clock.now_ms()?;
         if now_ms == 0
             || request.issued_at_ms > now_ms.saturating_add(MAX_OWNER_DISPATCH_FUTURE_SKEW_MS)
-            || now_ms.saturating_sub(request.issued_at_ms) > MAX_OWNER_DISPATCH_REQUEST_AGE_MS
+            || now_ms.saturating_sub(request.issued_at_ms)
+                > self.selected_authentication_validity_ms()?
         {
             return Err("owner dispatch request is not currently fresh".to_owned());
         }
@@ -1032,6 +1686,10 @@ impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
 }
 
 impl ProductActivationAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        self.selected_authentication_validity_ms()
+    }
+
     fn verify_activation(
         &self,
         request: &ProductActivationRequest,
@@ -1114,14 +1772,8 @@ fn cleanup_projection_from_retained(
     now_ms: u64,
 ) -> Result<OwnerDispatchAuthorityProjection, String> {
     let snapshot = peer.snapshot();
-    let snapshot_json = peer.snapshot_json().map_err(host_error)?;
-    ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
-        &snapshot_json,
-        &snapshot.trust_policy,
-        &snapshot.provider_epoch_id,
-        broker,
-    )
-    .map_err(host_error)?;
+    peer.validate_owned_state_with_live_broker(broker)
+        .map_err(host_error)?;
     let route = snapshot
         .pair_media_routes
         .routes
@@ -1214,12 +1866,33 @@ fn current_cleanup_requester(
     trusted_revoker_ids: &[DottedId],
     now_ms: u64,
 ) -> Result<bool, String> {
+    if lease.expires_at_ms <= now_ms {
+        return Err("cleanup requester lease is not current".to_owned());
+    }
+    cleanup_requester_identity(
+        original_client_id,
+        original_lease_id,
+        requester_id,
+        requester_lease_id,
+        lease,
+        required_scope,
+        trusted_revoker_ids,
+    )
+}
+fn cleanup_requester_identity(
+    original_client_id: &DottedId,
+    original_lease_id: &DottedId,
+    requester_id: &DottedId,
+    requester_lease_id: &DottedId,
+    lease: &ManifoldRuntimeLease,
+    required_scope: &DottedId,
+    trusted_revoker_ids: &[DottedId],
+) -> Result<bool, String> {
     if lease.lease_id != *requester_lease_id
         || lease.holder_id != *requester_id
         || lease.scope != *required_scope
-        || lease.expires_at_ms <= now_ms
     {
-        return Err("cleanup requester lease is not current".to_owned());
+        return Err("cleanup requester identity/scope differs".into());
     }
     if original_client_id == requester_id && original_lease_id == requester_lease_id {
         return Ok(false);
@@ -1328,6 +2001,7 @@ fn retained_cleanup_topology_matches(
     original: &OwnerDispatchAuthorityProjection,
     cleanup: &RetainedCleanupAuthorityProjection,
     now_ms: u64,
+    ongoing_policy_schema: Option<&str>,
 ) -> Result<bool, String> {
     if renewals.is_empty() {
         return Ok(cleanup.signed_topology_sha256 == original.signed_topology_sha256);
@@ -1345,7 +2019,42 @@ fn retained_cleanup_topology_matches(
     let mut anchored = digest == original.signed_topology_sha256;
     let mut seen = std::collections::BTreeSet::from([digest.clone()]);
     let mut requests = std::collections::BTreeSet::new();
-    for renewal in renewals {
+    for (index, renewal) in renewals.iter().enumerate() {
+        let revision_join = if let Some(checkpoint) = &renewal.continuation_checkpoint {
+            let count = checkpoint
+                .current_lifetime_renewal_count
+                .unwrap_or(checkpoint.cumulative_renewals);
+            let policy_matches = match ongoing_policy_schema {
+                Some("rusty.manifold.peer.ongoing_media_policy.v1") => {
+                    checkpoint.schema_id
+                        == "rusty.quest.retained_cleanup.continuation_checkpoint.v1"
+                        && checkpoint.current_lifetime_renewal_count.is_none()
+                        && checkpoint.checkpoint_sequence.checked_mul(16)
+                            == Some(checkpoint.cumulative_renewals)
+                }
+                Some("rusty.manifold.peer.ongoing_media_policy.v2") => {
+                    checkpoint.schema_id
+                        == "rusty.quest.retained_cleanup.continuation_checkpoint.v2"
+                        && checkpoint.current_lifetime_renewal_count.is_some()
+                        && count > 0
+                        && count <= checkpoint.cumulative_renewals
+                        && checkpoint.checkpoint_sequence <= checkpoint.cumulative_renewals
+                }
+                _ => false,
+            };
+            policy_matches
+                && index == 0
+                && checkpoint.checkpoint_sequence > 0
+                && renewal
+                    .resulting_authority_revision
+                    .checked_sub(renewal.prior_authority_revision)
+                    == Some(count)
+                && valid_sha256(&checkpoint.source_history_sha256)
+                && checkpoint.checkpoint_sha256 == renewal.receipt_sha256
+        } else {
+            renewal.prior_authority_revision.checked_add(1)
+                == Some(renewal.resulting_authority_revision)
+        };
         if renewal.session_id != original.peer_session_id
             || renewal.decision_id != first.decision_id
             || renewal.initiator_peer_id != first.initiator_peer_id
@@ -1373,8 +2082,7 @@ fn retained_cleanup_topology_matches(
             || renewal.prior_expires_at_ms <= renewal.observed_at_ms
             || renewal.prior_expires_at_ms >= renewal.expires_at_ms
             || renewal.expires_at_ms > renewal.reciprocal_expires_at_ms
-            || renewal.prior_authority_revision.checked_add(1)
-                != Some(renewal.resulting_authority_revision)
+            || !revision_join
         {
             return Ok(false);
         }
@@ -1509,4 +2217,181 @@ mod tests {
             Start,
         ));
     }
+}
+
+/// Pure projection of an actual typed owner result. The caller owns the actual
+/// Original/actor/ARM/prior-root data; this formatter creates no authority.
+pub fn project_peer_root_reestablishment(
+    original: &str,
+    actor: &serde_json::Value,
+    arm: &serde_json::Value,
+    prior: &serde_json::Value,
+    receipt: &rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+) -> Result<serde_json::Value, String> {
+    use serde_json::{json, Value};
+    use sha2::{Digest, Sha256};
+    let exact = |v: &Value, k: &[&str]| {
+        v.as_object()
+            .is_some_and(|o| o.len() == k.len() && k.iter().all(|k| o.contains_key(*k)))
+    };
+    let digest = |domain: &str, value: &Value| -> Result<String, String> {
+        let bytes = rusty_manifold_peer::fresh_history_canonical(value)
+            .map_err(|_| "root formatter canonical data")?;
+        let mut h = Sha256::new();
+        h.update(domain.as_bytes());
+        h.update([0]);
+        h.update(bytes);
+        Ok(format!("sha256:{:x}", h.finalize()))
+    };
+    if original.len() != 32
+        || !original
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || !exact(
+            actor,
+            &[
+                "app_process_generation",
+                "app_record_sha256",
+                "native_executor_generation",
+                "config_sha256",
+            ],
+        )
+        || !exact(
+            arm,
+            &[
+                "binding",
+                "challenge",
+                "arm_generation",
+                "native_process",
+                "process_epoch",
+                "runtime_config_sha256",
+            ],
+        )
+        || !exact(prior, &["grant", "control_lease", "runtime_lease"])
+        || receipt.authority.request_id.as_str() != format!("request.root.{original}")
+        || receipt.authority.native_actor_sha256
+            != digest("rusty.quest.embedded_duplex.root_native_actor.v1", actor)?
+        || receipt.authority.arm_binding_sha256
+            != digest("rusty.quest.embedded_duplex.root_arm.v1", arm)?
+        || receipt.authority.runtime_configuration_sha256
+            != format!(
+                "sha256:{}",
+                actor["config_sha256"]
+                    .as_str()
+                    .ok_or("root formatter config identity")?
+            )
+        || serde_json::to_value(&receipt.broker.request.grant.prior_grant)
+            .map_err(|_| "root formatter grant")?
+            != prior["grant"]
+        || serde_json::to_value(&receipt.broker.request.lease.prior_lease)
+            .map_err(|_| "root formatter lease")?
+            != prior["control_lease"]
+    {
+        return Err("root formatter original/actor/ARM/actual prior owner differs".into());
+    }
+    let mut resulting = prior.clone();
+    if let Some(a) = &receipt.broker.admission {
+        resulting["grant"] = serde_json::to_value(&a.binding.resulting_grant)
+            .map_err(|_| "root formatter resulting grant")?;
+    }
+    if receipt.broker.control_lease_transition.is_some() {
+        let request = &receipt.broker.request.lease;
+        let mut lease = request.prior_lease.clone();
+        lease.expires_at_ms = request.expires_at_ms;
+        resulting["control_lease"] =
+            serde_json::to_value(lease).map_err(|_| "root formatter resulting lease")?;
+        resulting["runtime_lease"]["expires_at_ms"] = json!(request.expires_at_ms);
+    }
+    let mut result = actor.clone();
+    let o = result.as_object_mut().ok_or("root formatter actor")?;
+    o.extend(serde_json::from_value::<serde_json::Map<String,Value>>(json!({"$schema":"rusty.quest.embedded_duplex.peer_root_reestablishment.v2",
+        "request_id":receipt.authority.request_id,"original_id":original,"arm_binding":arm,"source_bound_authority":receipt.authority,
+        "current_pair":receipt.current_pair,"prior_roots":prior,"resulting_roots":resulting,"admission_receipt":receipt.broker.admission,
+        "control_lease_transition":receipt.broker.control_lease_transition,"runtime_adoption":receipt.broker.runtime_adoption,
+        "applied_at_ms":receipt.broker.observed_at_ms,"applied":true,"owner_receipt":receipt})).map_err(|_|"root formatter fields")?);
+    result["root_binding_sha256"] = json!(digest(
+        "rusty.quest.embedded_duplex.peer_root_binding.v1",
+        &result
+    )?);
+    Ok(result)
+}
+
+/// Pure shared status formatter. Inputs are observations from the actual
+/// Native owner; this routine neither dispatches nor supplies authority.
+pub fn project_peer_root_status(
+    actor: &serde_json::Value,
+    roots: &serde_json::Value,
+    previous: Option<&serde_json::Value>,
+    current_pair: Option<&rusty_manifold_peer::ManifoldPeerSessionCurrentReceiptV2>,
+    pending: bool,
+    now: u64,
+) -> Result<serde_json::Value, String> {
+    use serde_json::{json, Value};
+    use sha2::{Digest, Sha256};
+    let actor_keys = [
+        "app_process_generation",
+        "app_record_sha256",
+        "native_executor_generation",
+        "config_sha256",
+    ];
+    if !actor
+        .as_object()
+        .is_some_and(|o| o.len() == 4 && actor_keys.iter().all(|k| o.contains_key(*k)))
+        || !roots.as_object().is_some_and(|o| {
+            o.len() == 3
+                && ["grant", "control_lease", "runtime_lease"]
+                    .iter()
+                    .all(|k| o.contains_key(*k))
+        })
+    {
+        return Err("root status exact actual observation fields".into());
+    }
+    let g = &roots["grant"];
+    let c = &roots["control_lease"];
+    let r = &roots["runtime_lease"];
+    let state = if pending {
+        "pending"
+    } else if g.is_null() || c.is_null() || r.is_null() {
+        "absent"
+    } else if g["revoked"] != false || c["state"] != "active" {
+        "revoked"
+    } else if [g, c, r]
+        .iter()
+        .any(|v| v["expires_at_ms"].as_u64().is_none_or(|e| e <= now))
+    {
+        "expired"
+    } else {
+        "current"
+    };
+    let arm_hash = if let Some(old) = previous {
+        if actor_keys.iter().any(|k| old.get(*k) != actor.get(*k)) {
+            return Err("root status prior actor differs".into());
+        }
+        let receipt = serde_json::from_value(old["owner_receipt"].clone())
+            .map_err(|_| "root status typed prior receipt")?;
+        let expected = project_peer_root_reestablishment(
+            old["original_id"].as_str().ok_or("root status Original")?,
+            actor,
+            &old["arm_binding"],
+            &old["prior_roots"],
+            &receipt,
+        )?;
+        if &expected != old {
+            return Err("root status prior result bytes differ".into());
+        }
+        let bytes = rusty_manifold_peer::fresh_history_canonical(&old["arm_binding"])
+            .map_err(|_| "root status ARM canonical")?;
+        let mut h = Sha256::new();
+        h.update(b"rusty.quest.embedded_duplex.root_arm.v1\0");
+        h.update(bytes);
+        Some(format!("sha256:{:x}", h.finalize()))
+    } else {
+        None
+    };
+    let mut value = actor.clone();
+    value.as_object_mut().ok_or("root status actor")?.extend(
+        serde_json::from_value::<serde_json::Map<String,Value>>(json!({"$schema":"rusty.quest.embedded_duplex.peer_root_status.v1",
+            "arm_binding_sha256":arm_hash,"state":state,"observed_at_ms":now,"grant":g,"control_lease":c,"runtime_lease":r,
+            "reestablishment":previous,"root_binding_sha256":previous.map(|p|p["root_binding_sha256"].clone()),"current_pair":current_pair})).map_err(|_|"root status field encoding")?);
+    Ok(value)
 }

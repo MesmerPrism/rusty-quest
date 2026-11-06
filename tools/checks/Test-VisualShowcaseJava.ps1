@@ -32,7 +32,7 @@ foreach ($record in $projection.sources) { $canonical = Join-Path $RepoRoot $rec
 $sources = $moduleSources + @(Get-ChildItem -LiteralPath $generated -Filter *.java | ForEach-Object FullName) +
     @(Join-Path $RepoRoot "apps/native-renderer-android/src/main/java/$package/PanelModule.java") +
     @(Join-Path $RepoRoot "apps/native-renderer-android/src/main/java/$package/NativeAppSettingsReader.java")
-$expectedCount = if ($Vulkan) { 22 } else { 16 }
+$expectedCount = if ($Vulkan) { 23 } else { 16 }
 if ($sources.Count -ne $expectedCount) { throw "Showcase exact Java source closure must have $expectedCount files." }
 $sourceRecords = @()
 foreach ($source in $sources) {

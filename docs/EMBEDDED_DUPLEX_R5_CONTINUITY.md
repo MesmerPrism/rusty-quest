@@ -6,6 +6,14 @@ do not establish camera, codec, reciprocal rendering, renewal or teardown.
 See [the retained cleanup contract](EMBEDDED_DUPLEX_R4_RECOVERY.md) for the
 remaining app transaction and restoration obligations.
 
+Explicit current debug mutations can use [Original custody](EMBEDDED_DUPLEX_ORIGINAL_CUSTODY.md)
+for durable begin/query/ACK observations and a process-incarnation companion on
+the existing command lane. The default no-ID finite/direct route remains
+available. Original completion/ACK never replaces the physical cleanup or
+runtime authority proofs below. The separately selected
+[fresh credential setup provider](EMBEDDED_DUPLEX_FRESH_SETUP.md) adds typed
+fresh phases and lifecycle-v4 joins; owner succession remains separate.
+
 ## App and native execution ownership
 
 The app holds its private FileChannel writer lock and a synced generation,
@@ -14,11 +22,45 @@ private inode with a retained `flock` descriptor. These locks have separate
 owners and must not share an inode: reopening Java's lock file in native code
 would change the Java lock's process semantics.
 
-Native admission reads the live app-held channel. Its opaque capability binds
+Native admission reads the live app-held descriptor. Its opaque capability binds
 the app generation and exact admission-record digest to a monotonically
 allocated native executor generation. Runtime callbacks check that capability
 before and after external work. Enrollment primitives remain available before
 runtime admission; an enrollment signature is not runtime execution authority.
+
+The app opens that one no-create/no-follow descriptor and borrows its channel
+only for the writer lock. Held-record reads and writes use Android `Os` positioned
+I/O, truncate and sync on the same descriptor, carrying forward `3449872d` and
+the explicit descriptor-ownership correction `94d6c579`. Callback interruption
+does not close the held lock through interruptible channel data I/O. The fence
+closes its borrowed stream view and its owned raw descriptor on release/unwind;
+real I/O errors still refuse use. Current run-aware v2 record, incarnation,
+FileStore and recovery rules are unchanged. `Test-ProcessFenceInterruptHost.py`
+executes the whole current Java fence with real host locks and child-process
+death, explicit modeled Android syscall leaves and optional Android API compile.
+It establishes no Android runtime or prior device failure cause.
+
+The first Native writer poison transition emits `status=native-fence-first-failure`
+through the existing Native owner marker. Its closed operation/cause distinguishes
+file observation, allocation commit, app callback, app-record parsing and changed
+binding fields; only the error length/hash crosses the boundary. Poison remains
+latched before logging, operation-local file guards have dropped, and later
+refusals cannot replace the first marker. Diagnostic failure changes no refusal,
+counter, binding, admission or recovery predicate.
+
+Each captured live app-record source separately preserves its first thrown Java
+exception as `status=native-fence-callback-failure`. Inspection/directory failures
+consume no live-source marker. JNI retains the pending Throwable before the
+existing clear, then reads its base message/cause fields outside ownership locks;
+it invokes no overridden Throwable method. The summary bounds the cause chain to
+four entries, class names to 160 UTF16 units and message hashes to a 1024-unit
+prefix converted with UTF8 replacement for unpaired surrogates. It includes
+original message length and truncation indicators, never message plaintext.
+Local references and secondary diagnostic exceptions are cleared independently
+of the original fixed refusal. `Test-NativeFenceFailureHost.py` runs extracted
+Native gates with modeled OS/app/logging leaves; `Test-NativeFenceCallbackHost.py`
+runs extracted JNI producers against an installed host JVM and warmed crates.
+These controls establish neither ART behavior nor an earlier device failure cause.
 
 Initialization publishes a Host only after construction and the final live
 capability check succeed. An unwind guard clears only the initialization gate
@@ -32,7 +74,86 @@ live admission readback. This is not a durable restore mapping or a cleanup
 reconstruction protocol. Process death, lock reacquisition, an empty recreated
 registry and stale callback suppression cannot prove old provider teardown.
 
+### Observation of a cold-restored Pending fence
+
+Operational-run inspection uses `nativeInspectionDirectory` and the existing
+`nativeInspectionRecord` callbacks. Both verify the actual live held writer and
+exact persisted record, including when acquisition retained Pending recovery
+state. Admission keeps its separate `nativeFenceDirectory`,
+`nativeAdmissionRecord` and `requireFresh` gates. Readback never clears Pending,
+grants a capability or changes a run selection. Native registry, resource-owner,
+stale-handoff and changed-record refusals remain actual inspection results.
+
+The successor operator declares `run_status.v2`: its closed fields are `$schema`,
+`run_id`, `selection_generation`, `native`, `app_process_generation`,
+`app_display_generation` and `app_fence_disposition`. The last field is exactly
+`clear`, `effects_pending` or `recovery_required`; recovery-only disposition takes
+precedence over the pending bit. Native inspection keeps its v1 schema. A Native
+eligible result alone grants no app admission. A consumer must version-dispatch
+the exact v1 and v2 DTOs; v1 has no app disposition and must not acquire an
+inferred `clear`. Existing installed v1 producers retain their six-field schema.
+
+Run `tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` for actual Java cold
+acquisition/readback and unchanged effect-gate controls. Run
+`python tools/checks/Test-ColdPendingRunInspectionHost.py` for the complete
+source-extracted JNI inspection caller/projection against explicit JNI, registry
+and platform models. These host controls prove neither an installed JNI binding
+nor physical cleanup/recovery. A dead old process does not need to join an old
+in-memory callback, but any new local recovery must establish its own actual
+retirement facts and preserve persistent counter lineage and remote UNKNOWNs.
+
+Finite no-media Whole completion publishes its joined receipt and latest-Whole
+pointer only after the actual Original callback, command stages and outbound
+exchanges have returned. File-only restart readers version-dispatch closed
+no-media v1/v2/v3 proofs, preserving exact physical bytes, actor joins and Native
+counter floors. The production Native handoff parser independently checks the
+same versions and terminal barriers. A retained source-run companion may support
+cold recovery only when it matches the exact unretired structured Native owner;
+the independently held current run remains the recovery output subject.
+
+`Test-EmbeddedDuplexOriginalsHost.py --whole-publication` exercises completion,
+join publication, ACK and reload with modeled physical owners. Its optional
+`--captured-whole-row` reads captured evidence without rewriting it and runs
+that exact response through a new modeled lifecycle. `Test-OperationalHandoffHost.py`
+uses an explicit existing host dependency directory to compile the production
+JSON/owner/handoff validators with real serde JSON and SHA-256, including an
+optional Java-exported handoff. Kernel identity and physical commit remain
+modeled leaves; these controls confer no historical ACK or device credit.
+
 ## Validation boundaries
+
+### Prepared media readiness and retirement estimates
+
+The incoming activation's readiness estimate is diagnostic. The same claimed
+arm and revision continue waiting for actual acquired and GPU-retired frames;
+the exact receiver/route/decoder/reader identities, 500 ms frame freshness,
+current authority expiry and cleanup fence still apply. Stop, supersession,
+interruption and malformed or foreign evidence remain real failures.
+
+The selected prepared receiver similarly keeps its same decoder and delivery
+latch past its startup estimate. Each wait checks the actual current-authority
+supplier and desired Stop. A readiness estimate cannot invoke cleanup or
+recreate a decoder. Prepared worker and callback retirement joins retain the
+same threads until actual death, keeping resource and connection barriers.
+Caller interruption during those joins is restored after the real join; it
+does not manufacture terminal cleanup. The nonprepared compatibility receiver
+retains its explicit startup and shutdown bounds. Transport read and codec
+polling bounds remain separate from readiness.
+
+A dispatched display lifecycle action has one retained future. Its estimate
+warns without abandoning queued effects. An interrupted waiting caller drains
+that same future and restores its interrupt status after receiving the actual
+success or failure. It cannot free caller-owned SDK resources while its queued
+action remains live. Main-thread blocking and a fenced lifecycle dispatcher
+still reject before dispatch.
+
+`tools/checks/Test-OwnedMediaWaitsHost.py` compiles the complete production
+callers using an explicit SDK compile-command inventory plus JSON/JUnit host
+dependencies. It checks delayed readiness and dispatch beyond the production
+estimates, exact claim/freshness fences, actual desired Stop, interrupted
+caller custody, real thread retirement and the legacy bounded path. Android
+and SDK resources are host models in these controls; separate Android/SDK
+typechecking and device evidence retain their own limits.
 
 ### Verified terminal Stop projection
 
@@ -88,6 +209,40 @@ they preserve the original operation result and never establish completion.
 `peer_status.native_owner_dispatch_failure` carries the code through its
 existing field. The Java diagnostic parser and cleanup authority remain unchanged.
 
+Ordinary remote owner ticket issuance consumes the current actor's privately held
+prepared decoder receipt, whose sole writer authenticates the signed remote
+view and validates the exact decoder request before preparation completes.
+The lookup joins local Native generation, peers, immutable route configuration
+and held preparation actor. It selects recipient placement identity only; current
+media authority and the receiver's Native/Java registry checks remain separate.
+Retained cleanup keeps its local source carrier and independently target-authored
+Stop, including after prepared metadata retirement.
+
+At the existing Native rejection log, `TARGET_EXECUTOR_GENERATION` identifies the
+exact authenticated-recipient generation refusal. Each rejection also records
+`error_sha256` and `error_bytes` from the original UTF-8 error before generic
+mapping. These fixed-size observations permit offline comparison with source
+literals even for a residual stage; arbitrary error, ticket, key or payload text
+is not logged. The first-failure latch and generic caller rejection remain.
+Ordinary JNI exchange failures have the finite `ORDINARY_JAVA_EXCHANGE_REJECTED`
+code, separate from owner callback rejection. None of these observations supplies
+completion, cleanup or admission evidence.
+
+The first-error latch also emits `status=owner-effect-failed` with that finite
+stage and original error fingerprint on Android, after releasing its diagnostic
+mutex. This preserves local pre-dispatch proof failures for offline comparison
+when no incoming dispatch boundary runs. Later compensation failures cannot
+replace or relog that first cause. Host builds retain the same return/latch
+behavior without requiring an Android logger.
+
+The broker's `recipient_generation` controls join actual ticket issuance,
+Composite placement, authenticated prepared metadata and signed remote dispatch
+against asymmetric registry generations. The existing
+`Test-RetainedOwnerDiagnosticsHost.py` additionally accepts `--host-deps` naming
+provisioned host dependencies to exercise exact held-generation, retained-carrier
+and rejection-log bodies. These controls model enclosing Native/resource owners;
+they do not typecheck the Android native application or qualify device effects.
+
 `tools/checks/Test-RetainedPrepareDiagnosticHost.ps1` executes the exact outgoing
 production preparation block and latch with explicitly modeled platform seams.
 The focused broker-authority test
@@ -130,6 +285,70 @@ release, terminal, cleanup, lease-chain and graph records fail closed.
 `tools/checks/Test-RetainedCleanupAncestryHost.py` tests
 the exact native Prepare serde and signature verification with real Ed25519.
 These host tests do not prove JNI, exchange or physical cleanup.
+
+### Additive guarded active-mode operator
+
+Debug packages include a bounded `quest-debug/operator-capabilities.json`
+asset identifying `rusty.quest.embedded_duplex.guarded_mode.v1` and the four
+closed `guarded_policy_update`, `guarded_blend_update`, `guarded_blend_read` and
+`guarded_operation_ack` methods. It is in the debug source set beside the
+DUMP/shell-UID provider. A host must explicitly select actual packaged support;
+this metadata is not health, admission, cleanup or execution authority. Existing
+unprefixed methods and older packages remain compatible.
+
+The marker is outside the authenticated `embedded-duplex/` product directory.
+The exact default loader inventory is unchanged; extra entries in that directory
+remain rejected before any manifest read. `Test-GuardedModeAssetInventory.py`
+executes that production loader boundary against the candidate debug overlay,
+using explicit read-only Android/JSON/reference-class inputs. Its manifest-open
+sentinel proves only inventory admission, not full manifest or device validity.
+
+The variants accept explicit typed run/app generation/epoch, installed digest,
+Native actor record/generation and runtime-config bindings. The existing command
+lane checks the current selected/READY real owner, process incarnation, live
+fence, package/descriptor digest memo and actual Native run/actor before invoking
+the existing handler and after its real Future returns. It composes queued work
+without blocking its own lane. Binder authorization remains on ingress. Active
+`native_host_owned` / `effects_pending` status is preserved, not confused with a
+fresh-start eligibility requirement. The nested response is the existing actual
+handler's response, with challenge-bound before/after observations.
+
+Updates still use the real Original store and its existing Future; only logical
+method/fields enter the canonical request. Guard fields do not change Original
+hashes. Consumer verification and the separately issued exact ACK are retained;
+the ACK wrapper also earns fresh installed identity. Pending, body failure,
+missing capture and failed postcheck never authorize replay or legacy fallback.
+Stop/Whole/recovery/inactive query routes do not use this active-owner wrapper.
+
+The two guarded update routes compose the same Original owner's existing
+publication callback before returning its outcome envelope. They do not close
+the guarded response on a registered/pending envelope while the actual update
+is still running. Successful operation completion with unavailable persistence
+remains an error; an actual failed operation retains its stored unknown outcome.
+Legacy update routes still return their immediate Original observation.
+The provider's existing 30-second wait remains unchanged: timeout or lost reply
+does not cancel the actual operation, settle its Original, or authorize another
+send. A later exact query can observe that same retained work. No command/main
+executor blocks on this composition, and the consumer, ACK and independent
+post-ACK compaction query remain separate.
+
+Focused controls pair `Test-EmbeddedDuplexOriginalsHost.py --completion-only`
+with `Test-GuardedModeOperatorHost.py --originals-classes <fresh-owner-classes>`
+and the same explicit read-only `--support-classpath`. They compile the actual
+store and provider helper, execute persistence and pending/error controls,
+and exercise the unchanged real 30-second provider boundary. Android/Native
+facts remain modeled; these controls prove no installed latency improvement,
+APK execution or reduction in real device calls.
+Native ARM/config/expected-actor checks stay in their existing owners.
+
+`tools/checks/Test-GuardedModeOperatorHost.py --output <fresh-target-output>
+--java-home <jdk17> --compiler-classpath <existing-kotlin-compiler-jars>
+--stdlib <kotlin-stdlib-jar> --json-jar <org.json20240303>` executes the actual
+parser, provider helper, service bridge, canonical request producer and extracted
+Host methods. Android, process/Native and Original persistence leaves are
+explicit models. It checks wrong preconditions/no body, real pending Future,
+post-failure no replay, typed Float bits and debug asset/provider inclusion.
+It does not build an APK, call a device or establish performance/physical proof.
 
 ### Process-local installed APK digest
 
@@ -252,3 +471,207 @@ physical retirement barrier unresolved. The separate-store host controls execute
 the exact native prepare/current-source code with real signatures and production
 Broker validators; Java persistence, clock and platform completion are modeled.
 No host result identifies the incoming packet or cause of a prior device failure.
+## Failed initialization observation
+
+The existing debug `owner_failure_diagnostic` read also supports an initialization
+failure before native host publication. Its native v1 envelope contains a versioned
+`initialization_failure.v1` observation with a process-local attempt number,
+runtime digest, app-record digest, app/native generations, and a closed static
+reason code. Provider initialization preserves only a fixed code for the typed
+`QuestBrokerRuntimeError` category, without formatting its payload. Unknown
+variants and error strings are redacted; configuration bodies, keys,
+credentials and exception messages are never exported. This is observation only,
+not authority, successful host construction, or cleanup certification.
+
+The existing process mutex owns this record. Accepted initialization clears the
+previous record before construction; successful route cleanup removes it. Reads
+require the current live capability, matching staged digest and app record, and
+no initialization/close in progress. The live app-source callback runs without
+either native mutex held; the same attempt and route are revalidated afterwards.
+Java additionally joins the current FAILED
+host's held runtime and app-record digests. Published-host diagnostics keep their
+existing callback path. Capability loss and panics do not fabricate a readable
+failure. The existing pending fence and cleanup obligations are unchanged.
+
+`tools/checks/Test-InitializationFailureDiagnosticHost.py` executes the production
+state, initializer, diagnostic and cleanup-commit bodies, plus the Java owner
+method, with modeled capability/host/JNI inputs. Typed provider payloads are
+modeled in this harness; actual enum compatibility is checked by the native
+Android compile. No cleanup prerequisite outside the commit block is simulated
+as an actual platform observation.
+The Android-target native typecheck is separate; neither proves installed behavior.
+
+This host gate requires Cargo, a JDK (`javac` and `java`), and a provisioned
+`org.json` JAR. Select the JAR with `--java-json-jar` or `RUSTY_QUEST_JSON_JAR`;
+the existing owner Gradle cache is a fallback. A missing JAR fails before the
+controls run and does not earn a skipped pass. Default aggregate registration
+is deferred until dependency provisioning has an owner; invoke this focused
+gate explicitly with its required inputs. Cargo can acquire its ordinary test dependencies;
+use `--offline` only after provisioning the registry. The result records the
+selected JAR digest. No Android SDK, Gradle build, APK, or device is invoked by
+this focused gate.
+
+## Opt-in ongoing source composition
+
+The explicit artifact policy and its six build/inspection projections are
+documented in [media policy selection](EMBEDDED_DUPLEX_MEDIA_POLICY_SELECTION.md).
+The native adapter retains actual coupled owner checkpoints and independent
+request epochs; [ongoing continuation](ONGOING_MEDIA_CONTINUATION.md) separates
+finite, partial v1 and complete v2 histories. Camera source reuse now also
+requires actual graph readiness, the same live claim and fresh original source
+epoch. A thread alone supplies no readiness.
+
+This source package adds no fresh credential/pair-setup feature, independent
+Fresh development data session, remote-recovery campaign, APK or device result.
+Those remain separate composition and product checkpoints.
+
+## App-owned cold process recovery
+
+`run_status.v2` separates the app fence from Native eligibility with the closed
+`app_fence_disposition` enum `clear`, `effects_pending`, `recovery_required`.
+Current-process Pending effects remain ordinary owner work. Cold-restored Pending
+requires cleanup recovery. A restored clear phase whose exact Native handoff
+never published also requires recovery after fresh verification that its old
+process is dead. Read-only inspection uses the held-record/live fence check;
+ordinary effect admission still uses `requireFresh` and every existing Native
+and physical-owner gate. The installed `run_status.v1` contract stays separate.
+
+The debug `recover_cold_pending` operation takes current `run_id`, new
+`original_id`, and optional paired `prior_run_id`/`prior_original_id`. Durable
+Native-owner mode omits both prior extras. Legacy migration uses both exact IDs
+to read one retained Native-bound Original and the two named app companions.
+There is no caller proof JSON, counter, process identity, cleanup flag or path.
+
+New Native allocation stores counter, exact app admission record and the actual
+kernel process birth identity together in `native_process_fence.v2`, in the
+existing fixed lock inode and checksum-bound write before capability publication.
+App initialization also stamps its current companion before allocation, including
+non-Original UI entry. A crash before publishing the bootstrap Original therefore
+does not lose the counter owner. A v1 counter supports only the bounded legacy
+link; a missing or conflicting link is an explicit unsupported case.
+
+Recovery keeps the app fence and Native counter fixed while it checks the exact
+last writable companion, fresh boot/PID/birth retirement and actual current local
+owners. It stops and joins current Own, display, resources, renderer, camera,
+control, callbacks and outbound exchanges. Java callbacks run outside authority
+locks. Native then reacquires its original lock and rechecks counter, companion,
+owner and current kernel identity before retaining the new local retirement.
+Only that verified receipt clears the app Pending phase and stamps the current
+incarnation. Neither counter reset nor historical callback replay is involved.
+Old Original rows, transaction UNKNOWN and remote debt remain unchanged.
+
+Populated Start/evidence journals do not prevent local retirement. Recovery
+captures their exact current and prior digests from the source-owned companions,
+checks the bytes again before commit and handoff, and preserves every old row
+and journal byte. The internal owner link v2 carries exactly those four digest
+strings; callers cannot supply them. Same-run nonterminal Start still blocks
+ordinary bootstrap. A new run uses its own journal scope and the newly earned
+local handoff without pretending that the old media transaction completed.
+Before overwriting a Pending global phase, acquisition durably retains its exact
+predecessor in a checksum-named private file. Recovery reads only that named
+predecessor when the companion checksum requires it, without scanning history.
+The predecessor is fully written and synced under a unique staging name before
+atomic publication; incomplete orphan staging bytes never become the named proof.
+
+Dispatch/query/consumer/join/ACK retain the existing outer
+`operator_transport.v3` Original flow. Its actual Future response is a nested
+`operator_transport.v1` observed receipt of
+`cold_pending_local_retirement.v2`, including the closed eleven-field
+`cold_pending_native_retirement.v2`. The paired v1 codecs remain explicit
+compatibility readers; mixed local/Native versions are rejected. The local
+receipt keeps its seventeen closed fields. The current actor has a null Native
+generation. Its app hash is the operation's Pending hash; the receipt separately
+records the resulting clear hash. The actual new worker/callback/local joins use
+`original_join.v2` with a null Native executor and the entire local receipt hash.
+A restored row never gains an invented live Future or ACK join.
+
+The app retains fixed current-run pointers to completed recovery and joined
+Whole receipts. It chooses a validated closure with the latest Native generation
+for the next selector/admission; a newer normal Whole supersedes an older
+recovery receipt. Restart reads these exact owners without a history scan or an
+ACK census. Interrupted recovery publication remains recovery-required, and a
+new cleanup decision preserves the earlier UNKNOWN row. Staged pointer paths are
+owned by their Original IDs so a dead writer cannot monopolize the next attempt.
+
+The focused `Test-EmbeddedDuplexNewRunHost.py --cold-recovery` control executes
+the actual Java recovery, Original persistence/query/join/ACK, selector, journal
+guards and Native admission prefix. Its Native ABI bridge invokes the actual
+Rust DTO projector and handoff validator. Separate Unix controls exercise the
+real counter inode, owner write, process death, retirement and successor claim;
+the full JNI module compiles against the real JNI crate. Android/platform and
+physical-owner leaves in the JVM control remain models. The optional retained
+witness manifest accepts exact source captures only as temporary test inputs.
+This is source evidence, not APK, target-JNI or hardware validation.
+
+
+## Owning local cleanup after partial Start
+
+A carried `whole_app_close` Original first validates its actual current Java
+actor and held attachment/resources. It requests both local media directions
+once and retains their actual workers while decoder, reader, encoder, camera,
+renderer and callback joins remain Pending. Physical joins run outside the
+command lane so the callbacks needed to finish them can run. Observation
+intervals emit warnings; they cannot free a live owner or certify a join.
+Before local drain, the current registry fences new forward effects and joins
+only callbacks actually executing in this process. Historical UNKNOWN records
+remain unchanged. Late registry installation inherits the same fence. The codec
+source-owner check and local leaf retirement share the existing lifecycle lock.
+Local resource retirement grants no remote Stop readback or transaction result.
+A failed or ambiguous logical Whole preserves the same Original and UNKNOWN.
+
+Retained cleanup registries acquire their existing transaction admission before
+checking durable uncertainty, carrying forward the ordering from `2c984675`.
+Another thread's live persistence is joined; a failed commit remains refused
+after admission. Same-thread callback reentry still returns `runtime busy`.
+Construction snapshots and fresh-setup observations retain nonwaiting
+`try_enter()` admission and check uncertainty only after acquisition, so a failed
+writer cannot release stale state to an observer. The admission primitive,
+durable-before-effect extent and existing authority checks remain unchanged.
+`Test-RetainedOriginalEnrollmentHost.ps1` exercises the production registry,
+persistence/state gates and actual admission primitive with deterministic
+interleavings; JSON, durable Java callbacks, authority and providers are modeled.
+These controls establish source ordering, not an installed storage-failure cause.
+
+After that wait, a local C1 registry reborrows the current projection through
+the existing shared Broker owner and samples the current clock before any
+retained write or provider effect. Semantic route, session, epoch, client, lease,
+topology and configuration bindings must still match. The held expiry must be
+live and no later than the current bound; it is never rewritten or extended.
+A time-dependent observation-receipt digest may change without changing that
+authority. This restores the post-admission local check from `2c984675` using
+today's projection source and its existing Stop-only retained-cleanup fallback.
+Receiving remote originals retain their post-wait enrollment check and never
+borrow the receiver's distinct local Broker as their source. Recipient-generation
+checks and owned-cleanup authentication remain unchanged.
+
+Native current-root lookup is separate from ordinary operation admission.
+Whole validates the current carried Whole Original. Incoming owner dispatch
+verifies the signed exact target before classifying Stop or retained
+compensation for cleanup admission. Start and activation still require the
+ordinary gate. Lookup alone, a stop latch, an expired Pair or caller data cannot
+authorize an SDK effect.
+
+The maintained two-principal cleanup projection, ticket, request and response
+use component v3. Entitlement comes from the independently retained original
+Start, exact target/counter, accepted original enrollment and current signer
+status. Historical requester, Pair and topology expiry remain recorded target
+evidence rather than renewable cleanup rights. Revocation, key changes,
+foreign target/root and replay collisions still reject. The explicit v2 reader
+preserves its finite legacy rules.
+
+Remote authentication retains signed issuance, future skew and a finite horizon
+selected by the accepted source policy. An omitted development policy keeps the
+finite compatibility horizon. Cached Pending and terminal queries retain their
+exact request/response identity beyond that interval. After transport
+uncertainty the sender keeps the same commit bytes. Only an authenticated signed
+`owned_cleanup_authentication_expired_no_effect` refusal, produced before replay
+reservation or registry entry, permits a fresh envelope for that same cleanup
+identity. It cannot refresh or remutate an uncertain effect.
+
+New exceptional Original completion emits `original_failure.v2` at the existing
+completion seam. Its seven closed fields bind operation, Original, fixed
+`actual_future_completion` stage, direct throwable family and bounded cause
+category. No exception message, stack, endpoint or credential is exported.
+This retains safe failure classification, not a complete state-guard diagnosis.
+The outcome stays UNKNOWN/uncertain. Existing terminal failure rows, outcome
+hashes and ACK custody are read byte-exact and are never upgraded in place.

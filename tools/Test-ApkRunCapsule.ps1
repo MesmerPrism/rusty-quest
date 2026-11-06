@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)][Alias("Path")][string]$CapsulePath,
-    [ValidateSet("", "native-renderer-android", "spatial-camera-panel-android")]
+    [ValidateSet("", "native-renderer-android", "spatial-camera-panel-android", "development-feedback-android")]
     [string]$ExpectedLane = ""
 )
 
@@ -44,6 +44,17 @@ function Assert-FileRecord {
 
 $resolvedCapsule = (Resolve-Path -LiteralPath $CapsulePath).Path
 $capsule = Get-Content -LiteralPath $resolvedCapsule -Raw | ConvertFrom-Json
+if ([string]$capsule.app_lane -ceq 'development-feedback-android' -or [string]$capsule.app_id -ceq 'development-feedback' -or [string]$capsule.android.package_name -ceq 'io.github.mesmerprism.rustyquest.development_feedback') {
+    Import-Module (Join-Path $PSScriptRoot 'lib/QuestRunIsolation.psm1') -Force -DisableNameChecking
+    $capsule = Read-QuestRunCapsule -CapsulePath $resolvedCapsule -ExpectedLane $ExpectedLane
+    [pscustomobject][ordered]@{
+        schema='rusty.quest.apk_run_capsule_validation.v1';status='pass';capsule_path=$resolvedCapsule
+        capsule_sha256=Get-FileSha256 $resolvedCapsule;app_id=$capsule.app_id;app_lane=$capsule.app_lane
+        package_name=$capsule.android.package_name;activity=$capsule.android.activity;apk_path=$capsule.apk.path
+        runtime_profile_path=$capsule.runtime_profile.path
+    } | ConvertTo-Json -Depth 6
+    return
+}
 if ([string]$capsule.schema -ne "rusty.quest.apk_run_capsule.v1") { throw "Unsupported APK run capsule schema: $($capsule.schema)" }
 if (-not [string]::IsNullOrWhiteSpace($ExpectedLane) -and [string]$capsule.app_lane -ne $ExpectedLane) {
     throw "APK run capsule lane mismatch: expected $ExpectedLane, found $($capsule.app_lane)"

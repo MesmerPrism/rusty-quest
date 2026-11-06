@@ -101,9 +101,16 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
 
     private void awaitIdle() throws InterruptedException {
         long remaining = TimeUnit.SECONDS.toNanos(10);
+        boolean warned = false;
         while (inFlight != 0) {
-            if (remaining <= 0L) throw new IllegalStateException("display barrier pending");
-            remaining = idle.awaitNanos(remaining);
+            if (!warned && remaining <= 0L) {
+                System.err.println("embedded-duplex display callback barrier remains Pending generation="+generation+" inFlight="+inFlight);
+                warned = true;
+            }
+            // Time is advisory. Keep this exact generation/callback barrier;
+            // interruption retains the attachment and never frees an SDK owner.
+            if (warned) idle.await();
+            else remaining = idle.awaitNanos(remaining);
         }
     }
 
@@ -143,6 +150,21 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
     }
     @Override public void requestWholeProjectionStop() {
         call(display -> { display.requestWholeProjectionStop(); return null; });
+    }
+    @Override public long reserveDormantPeerProjection() {return call(EmbeddedDuplexDisplay::reserveDormantPeerProjection);}
+    @Override public long reserveDormantPeerProjection(java.util.function.BooleanSupplier desiredStop) {
+        if (desiredStop == null) throw new IllegalArgumentException("actual desired Stop unavailable");
+        return call(display -> display.reserveDormantPeerProjection(desiredStop));
+    }
+    @Override public String prepareDormantPeerRenderer(String preparationId, long generation,
+            java.util.function.BooleanSupplier desiredStop) {
+        return call(display -> display.prepareDormantPeerRenderer(preparationId, generation, desiredStop));
+    }
+    @Override public String abortDormantPeerRenderer(String preparationId) {
+        return call(display -> display.abortDormantPeerRenderer(preparationId));
+    }
+    @Override public void retireArchivedPreparedRenderer(String preparationId) {
+        call(display -> { display.retireArchivedPreparedRenderer(preparationId); return null; });
     }
     @Override public long preparePeerProjection() {
         return call(EmbeddedDuplexDisplay::preparePeerProjection);

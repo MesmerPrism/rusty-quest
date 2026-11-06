@@ -34,7 +34,7 @@ if ($allowlist.Count -ne 1) { throw 'Expected exact production selected Java all
 . ([scriptblock]::Create($allowlist[0].Extent.Text))
 $showcaseVulkanSelected = [bool]$Vulkan
 . ([scriptblock]::Create($allowlist[0].Extent.Text))
-$expectedCount=if($Vulkan){22}else{16}
+$expectedCount=if($Vulkan){23}else{16}
 if ($allowedShowcaseJava.Count -ne $expectedCount -or $allowedShowcaseJava -cnotcontains 'NativeAppSettingsReader.java') { throw 'Selected Java allowlist omits the settings reader.' }
 if (@($allowedShowcaseJava | Where-Object { $_ -match 'ExperimentSession|ConditionAudio|Questionnaire|Recording|Kiosk' }).Count -ne 0) { throw 'Showcase reader fix widened the capability allowlist.' }
 if ($ClassesDir) {

@@ -287,8 +287,10 @@ impl PolarMeasurementIngress {
 
     fn submit_rr(&mut self, host_time_ns: u64, rr_interval_ms: f32) {
         #[cfg(feature = "showcase")]
-        if !rr_interval_ms.is_finite() || !(250.0..=2000.0).contains(&rr_interval_ms) { return; }
-        self.last_rr_received=Some(std::time::Instant::now());
+        if !rr_interval_ms.is_finite() || !(250.0..=2000.0).contains(&rr_interval_ms) {
+            return;
+        }
+        self.last_rr_received = Some(std::time::Instant::now());
         let sequence_id = self.next_rr_sequence_id();
         if self.rr_measurements.len() == RR_QUEUE_CAPACITY {
             self.rr_measurements.pop_front();
@@ -589,7 +591,9 @@ pub(crate) fn polar_rr_after(sequence_id: Option<u64>) -> Vec<PolarRrMeasurement
 
 #[cfg(feature = "showcase")]
 pub(crate) fn polar_rr_fresh() -> bool {
-    lock_ingress().last_rr_received.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
+    lock_ingress()
+        .last_rr_received
+        .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(2))
 }
 
 pub(crate) fn dropped_polar_rr_measurements() -> u64 {

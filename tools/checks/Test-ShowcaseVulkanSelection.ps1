@@ -11,7 +11,7 @@ if(($legacy -join '|') -cne 'android.app.NativeActivity|ControlPanelActivity'){t
 $features=@{}
 foreach($path in @('fixtures/native-app-features/ui/visual-showcase/ui.visual_showcase.feature.json','fixtures/native-app-features/ui/native-mesh-panel-showcase/ui.native_mesh_panel.showcase.feature.json')){$descriptor=Get-Content -LiteralPath (Join-Path $RepoRoot $path) -Raw | ConvertFrom-Json;$features[$descriptor.feature_id]=@{descriptor=$descriptor}}
 $closure=Resolve-NativePanelComposition -RepoRoot $RepoRoot -SelectedFeatureIds $ids -Features $features -Activities $activities
-if($closure.source_files.Count -ne 18 -or $closure.modules.Count -ne 2){throw 'Exact retained form and neutral source module closure missing.'}
+if($closure.source_files.Count -ne 19 -or $closure.modules.Count -ne 2){throw 'Exact retained form and neutral source module closure missing.'}
 foreach($source in $closure.source_files){if($source.path -match 'ConditionAudio|Questionnaire|RecordingExport|ExperimentSessionRuntime'){throw 'Presentation imported excluded capability.'}}
 $manifest=New-GeneratedAndroidManifestText -PackageName 'example.showcase' -ApplicationLabel 'Showcase' -Activities $activities -Permissions @() -UsesFeatures @() -Receivers @() -Services @() -Queries @() -SelectedFeatureIds $ids
 $xml=[xml]$manifest

@@ -739,41 +739,78 @@ pub(crate) fn boottime_now_ns() -> i64 {
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeConfigureCameraLatencyOpenXrHandles(
     _env: *mut jni::sys::JNIEnv,
     _thiz: jni::sys::jobject,
+    owner_id: jni::sys::jlong,
     instance: jni::sys::jlong,
     session: jni::sys::jlong,
     get_instance_proc_addr: jni::sys::jlong,
 ) -> i64 {
+    if owner_id <= 0 {
+        return -1;
+    }
+    let settings = current_camera_latency_settings();
+    if !settings.enabled
+        || settings.presentation_pose_mode != CameraLatencyPresentationPoseMode::OpenXrLocateViews
+    {
+        return 0;
+    }
     let handles = CameraLatencyOpenXrHandles {
         instance,
         session,
         get_instance_proc_addr,
     };
-    let mut mask = 1_i64;
-    if instance != 0 && session != 0 && get_instance_proc_addr != 0 {
-        mask |= 1 << 1;
-    }
-    let (status, reference_space) = match CameraLatencyOpenXrPoseLocator::new(handles) {
-        Ok(locator) => {
-            let reference_space = locator.reference_space_token;
-            if let Ok(mut configured) = openxr_locator().lock() {
-                *configured = Some(locator);
-                mask |= 1 << 2;
-                ("ready", reference_space)
-            } else {
-                ("locator-lock-failed", "unavailable")
-            }
+    let mask = if instance != 0 && session != 0 && get_instance_proc_addr != 0 {
+        3
+    } else {
+        1
+    };
+    // Creation, use and destruction share this lock. In particular, never
+    // construct a successor and drop an old instance's dispatch on replacement.
+    let (mask, status, reference_space, error) = {
+        let Ok(mut state) = openxr_locator().lock() else {
+            return -1;
+        };
+        if owner_id < state.latest_owner {
+            // A still-live older Activity can poll while its successor waits.
+            // It supplies no poses and cannot reacquire; scene fallback is safe.
+            return mask;
         }
-        Err(error) => {
-            if let Ok(mut configured) = openxr_locator().lock() {
-                *configured = None;
+        if owner_id <= state.retired_through {
+            return -1;
+        }
+        state.latest_owner = owner_id;
+        if let Some(owned) = state.locator.as_mut() {
+            if owned.owner_id != owner_id {
+                (mask, "owner-busy", "unavailable", None)
+            } else if owned.handles != handles || !owned.usable {
+                // A changed SDK lifetime must retire through its old hook, not
+                // silently replace handles while old calls may still be live.
+                owned.usable = false;
+                return -1;
+            } else {
+                (mask | 4, "ready", owned.locator.reference_space_token, None)
             }
-            log_marker(format!(
-                "status=camera-latency-openxr-pose-locator-unavailable error={} frameLoopAuthority=spatial-sdk sidecarFrameWait=false presentationTimeAuthority=estimated-lead-not-compositor-predicted",
-                error.replace(' ', "-"),
-            ));
-            ("unavailable", "unavailable")
+        } else {
+            match CameraLatencyOpenXrPoseLocator::new(handles) {
+                Ok(locator) => {
+                    let reference_space = locator.reference_space_token;
+                    state.locator = Some(CameraLatencyOwnedOpenXrLocator {
+                        owner_id,
+                        handles,
+                        locator,
+                        usable: true,
+                    });
+                    (mask | 4, "ready", reference_space, None)
+                }
+                Err(error) => (mask, "unavailable", "unavailable", Some(error)),
+            }
         }
     };
+    if let Some(error) = error {
+        log_marker(format!(
+            "status=camera-latency-openxr-pose-locator-unavailable error={} frameLoopAuthority=spatial-sdk sidecarFrameWait=false presentationTimeAuthority=estimated-lead-not-compositor-predicted",
+            error.replace(' ', "-"),
+        ));
+    }
     log_marker(format!(
         "status=camera-latency-openxr-pose-locator-configured configureStatus={} configureMask={} handlesComplete={} locateFunction=xrLocateViews timeConversion=XR_KHR_convert_timespec_time-clock-monotonic referenceSpace={} frameLoopAuthority=spatial-sdk sidecarFrameWait=false presentationTimeAuthority=estimated-lead-not-compositor-predicted",
         status,
@@ -782,6 +819,39 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         reference_space,
     ));
     mask
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeReleaseCameraLatencyOpenXrHandles(
+    _env: *mut jni::sys::JNIEnv,
+    _thiz: jni::sys::jobject,
+    owner_id: jni::sys::jlong,
+    retiring: jni::sys::jboolean,
+) -> i64 {
+    if owner_id <= 0 {
+        return -1;
+    }
+    let Ok(mut state) = openxr_locator().lock() else {
+        return -1;
+    };
+    if retiring != 0 {
+        state.latest_owner = state.latest_owner.max(owner_id);
+        state.retired_through = state.retired_through.max(owner_id);
+    }
+    if state
+        .locator
+        .as_ref()
+        .is_some_and(|owned| owned.owner_id == owner_id)
+    {
+        // Drop completes under the lookup mutex and before the Activity returns
+        // from its shutdown hook to the still-valid SDK's destruction sequence.
+        drop(state.locator.take());
+        1
+    } else {
+        0
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -1000,9 +1070,24 @@ static CAMERA_LATENCY_CAMERA_CALIBRATION: OnceLock<
 > = OnceLock::new();
 static CAMERA_LATENCY_VIEWER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "android")]
-#[cfg(target_os = "android")]
-static CAMERA_LATENCY_OPENXR_LOCATOR: OnceLock<Mutex<Option<CameraLatencyOpenXrPoseLocator>>> =
+static CAMERA_LATENCY_OPENXR_LOCATOR: OnceLock<Mutex<CameraLatencyOpenXrLocatorState>> =
     OnceLock::new();
+
+#[cfg(target_os = "android")]
+#[derive(Default)]
+struct CameraLatencyOpenXrLocatorState {
+    latest_owner: i64,
+    retired_through: i64,
+    locator: Option<CameraLatencyOwnedOpenXrLocator>,
+}
+
+#[cfg(target_os = "android")]
+struct CameraLatencyOwnedOpenXrLocator {
+    owner_id: i64,
+    handles: CameraLatencyOpenXrHandles,
+    locator: CameraLatencyOpenXrPoseLocator,
+    usable: bool,
+}
 
 fn viewer_history() -> &'static Mutex<VecDeque<CameraLatencyViewerBasis>> {
     CAMERA_LATENCY_VIEWER_HISTORY.get_or_init(|| Mutex::new(VecDeque::with_capacity(128)))
@@ -1021,8 +1106,9 @@ struct CameraLatencyOpenXrHandles {
 }
 
 #[cfg(target_os = "android")]
-fn openxr_locator() -> &'static Mutex<Option<CameraLatencyOpenXrPoseLocator>> {
-    CAMERA_LATENCY_OPENXR_LOCATOR.get_or_init(|| Mutex::new(None))
+fn openxr_locator() -> &'static Mutex<CameraLatencyOpenXrLocatorState> {
+    CAMERA_LATENCY_OPENXR_LOCATOR
+        .get_or_init(|| Mutex::new(CameraLatencyOpenXrLocatorState::default()))
 }
 
 fn normalize3(value: [f32; 3]) -> Option<[f32; 3]> {
@@ -1903,9 +1989,17 @@ pub(crate) fn current_camera_latency_presentation_viewer_basis(
         CameraLatencyPresentationPoseMode::OpenXrLocateViews => {
             #[cfg(target_os = "android")]
             {
-                let located = openxr_locator().lock().ok().and_then(|locator| {
-                    locator.as_ref().and_then(|locator| {
-                        locator
+                let located = openxr_locator().lock().ok().and_then(|state| {
+                    state.locator.as_ref().and_then(|owned| {
+                        if !settings.enabled
+                            || !owned.usable
+                            || owned.owner_id != state.latest_owner
+                            || owned.owner_id <= state.retired_through
+                        {
+                            return None;
+                        }
+                        owned
+                            .locator
                             .locate_presentation_basis(
                                 latest,
                                 target_timestamp_ns,

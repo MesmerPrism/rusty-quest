@@ -922,8 +922,11 @@ impl BreathCompositionRuntime {
                     let projection = match request.polar_projection {
                         PolarProjectionSelection::Xz => PolarAccProjection::Xz,
                         PolarProjectionSelection::Full3d => PolarAccProjection::Full3d,
-                        PolarProjectionSelection::DynamicAxis | PolarProjectionSelection::TiltClassifier
-                            | PolarProjectionSelection::AdaptiveTiltClassifier => PolarAccProjection::Full3d,
+                        PolarProjectionSelection::DynamicAxis
+                        | PolarProjectionSelection::TiltClassifier
+                        | PolarProjectionSelection::AdaptiveTiltClassifier => {
+                            PolarAccProjection::Full3d
+                        }
                     };
                     let mut parameters =
                         rusty_quest_breath_contract::calibration::CalibrationParameters::default();
@@ -945,9 +948,15 @@ impl BreathCompositionRuntime {
                     let mut adapter = PolarAccBreathAdapter::new(settings);
                     #[cfg(feature = "showcase")]
                     match request.polar_projection {
-                        PolarProjectionSelection::DynamicAxis => adapter.enable_dynamic_state(request.inverted),
-                        PolarProjectionSelection::TiltClassifier => adapter.enable_tilt_state(request.inverted),
-                        PolarProjectionSelection::AdaptiveTiltClassifier => adapter.enable_adaptive_tilt_state(request.inverted),
+                        PolarProjectionSelection::DynamicAxis => {
+                            adapter.enable_dynamic_state(request.inverted)
+                        }
+                        PolarProjectionSelection::TiltClassifier => {
+                            adapter.enable_tilt_state(request.inverted)
+                        }
+                        PolarProjectionSelection::AdaptiveTiltClassifier => {
+                            adapter.enable_adaptive_tilt_state(request.inverted)
+                        }
                         _ => {}
                     }
                     let calibration = adapter.configure(at);
@@ -1337,7 +1346,9 @@ pub(crate) fn showcase_uses_direct_controller_phase(request: BreathCompositionRe
 pub(crate) fn showcase_calibration_status(inputs: &Value) -> Value {
     let runtime = lock_runtime();
     let snapshot = runtime.snapshot();
-    let (Some(request), Some(calibration)) = (snapshot.effective, runtime.latest_calibration.as_ref()) else {
+    let (Some(request), Some(calibration)) =
+        (snapshot.effective, runtime.latest_calibration.as_ref())
+    else {
         return Value::Null;
     };
     if snapshot.generation != Some(calibration.generation)
@@ -1345,7 +1356,8 @@ pub(crate) fn showcase_calibration_status(inputs: &Value) -> Value {
         || inputs["breath_source"] != request.source.as_str()
         || inputs["breath_mapping"] != request.mapping.as_str()
         || inputs["controller_projection"] != request.controller_projection.as_str()
-        || crate::showcase_runtime::effective_polar_projection(inputs) != request.polar_projection.as_str()
+        || crate::showcase_runtime::effective_polar_projection(inputs)
+            != request.polar_projection.as_str()
         || inputs["inverted"] != request.inverted
     {
         return Value::Null;
@@ -1371,7 +1383,9 @@ pub(crate) fn reset_to_packaged_defaults() {
 }
 
 #[cfg(feature = "showcase")]
-pub(crate) fn ensure_running_for_visual_use()->Result<&'static str,&'static str>{lock_runtime().ensure_running_for_experiment_arm()}
+pub(crate) fn ensure_running_for_visual_use() -> Result<&'static str, &'static str> {
+    lock_runtime().ensure_running_for_experiment_arm()
+}
 
 pub(crate) fn ensure_running_for_experiment_arm() -> Result<&'static str, &'static str> {
     let mut state = lock_runtime();
@@ -1969,14 +1983,26 @@ fn parse_request_tokens(
         "xz" => PolarProjectionSelection::Xz,
         "3d" | "full-3d" => PolarProjectionSelection::Full3d,
         #[cfg(feature = "showcase")]
-        "dynamic-axis" if source == BreathCompositionSource::PolarAcc
-            && mapping == BreathCompositionMapping::State => PolarProjectionSelection::DynamicAxis,
+        "dynamic-axis"
+            if source == BreathCompositionSource::PolarAcc
+                && mapping == BreathCompositionMapping::State =>
+        {
+            PolarProjectionSelection::DynamicAxis
+        }
         #[cfg(feature = "showcase")]
-        "tilt-classifier" if source == BreathCompositionSource::PolarAcc
-            && mapping == BreathCompositionMapping::State => PolarProjectionSelection::TiltClassifier,
+        "tilt-classifier"
+            if source == BreathCompositionSource::PolarAcc
+                && mapping == BreathCompositionMapping::State =>
+        {
+            PolarProjectionSelection::TiltClassifier
+        }
         #[cfg(feature = "showcase")]
-        "adaptive-tilt" if source == BreathCompositionSource::PolarAcc
-            && mapping == BreathCompositionMapping::State => PolarProjectionSelection::AdaptiveTiltClassifier,
+        "adaptive-tilt"
+            if source == BreathCompositionSource::PolarAcc
+                && mapping == BreathCompositionMapping::State =>
+        {
+            PolarProjectionSelection::AdaptiveTiltClassifier
+        }
         _ => return Err("unsupported-polar-projection"),
     };
     Ok(BreathCompositionRequest {

@@ -260,7 +260,12 @@ impl OpenXrControllerBreathAdapter {
     }
 
     #[cfg(feature = "showcase")]
-    pub(crate) fn start_phase_only(&mut self, generation: BreathGeneration, inverted: bool, dynamic_axis: bool) {
+    pub(crate) fn start_phase_only(
+        &mut self,
+        generation: BreathGeneration,
+        inverted: bool,
+        dynamic_axis: bool,
+    ) {
         self.generation = Some(generation);
         self.phase_only_inverted = Some(inverted);
         self.phase_estimator.use_dynamic_axis(dynamic_axis);
@@ -712,7 +717,10 @@ mod tests {
             generation,
             OpenXrControllerPoseInput::Missing { sequence_id: 2 },
         );
-        assert_eq!(missing.assessment.unwrap().tracking, BreathTrackingState::Missing);
+        assert_eq!(
+            missing.assessment.unwrap().tracking,
+            BreathTrackingState::Missing
+        );
         start(&mut adapter, 30_000, 2);
         assert_eq!(adapter.phase_only_inverted, None);
     }
@@ -734,8 +742,14 @@ mod tests {
             let distance = (i as f64 * 0.05).sin() * 0.010;
             let position = [distance * 0.4, distance, 0.0];
             let observation = |adapter: &mut OpenXrControllerBreathAdapter| {
-                adapter.observe(BreathTimestampMicros::new(at), generation, frame(i, at, position))
-                    .assessment.unwrap()
+                adapter
+                    .observe(
+                        BreathTimestampMicros::new(at),
+                        generation,
+                        frame(i, at, position),
+                    )
+                    .assessment
+                    .unwrap()
             };
             let direct = observation(&mut normal);
             let flipped = observation(&mut inverted);
@@ -755,11 +769,20 @@ mod tests {
         }
         assert!(saw_inhale && saw_exhale);
         let position = [2.0, 0.0, 0.0];
-        let jump = normal.observe(BreathTimestampMicros::new(4_800_000), generation,
-            frame(300, 4_800_000, position));
-        assert_eq!(jump.assessment.unwrap().tracking, BreathTrackingState::RejectedMotion);
-        let recovered = normal.observe(BreathTimestampMicros::new(4_816_000), generation,
-            frame(301, 4_816_000, position));
+        let jump = normal.observe(
+            BreathTimestampMicros::new(4_800_000),
+            generation,
+            frame(300, 4_800_000, position),
+        );
+        assert_eq!(
+            jump.assessment.unwrap().tracking,
+            BreathTrackingState::RejectedMotion
+        );
+        let recovered = normal.observe(
+            BreathTimestampMicros::new(4_816_000),
+            generation,
+            frame(301, 4_816_000, position),
+        );
         let assessment = recovered.assessment.unwrap();
         assert_eq!(assessment.tracking, BreathTrackingState::Valid);
         assert_eq!(assessment.phase, CommonBreathPhase::Hold);

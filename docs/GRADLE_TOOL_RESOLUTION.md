@@ -22,10 +22,35 @@ instead call `Resolve-GradleTool.ps1 -Mode VerifyCache`: they neither download
 nor repair a cache, and fail before Gradle execution when the exact pinned
 archive, verified tree manifest, or installation is absent or corrupt.
 
-The resolver writes only ignored repository-local paths:
+By default the resolver writes only ignored repository-local paths:
 
 - `local-artifacts/downloads/gradle-9.4.1-bin.zip` and its non-secret download record;
 - `local-artifacts/tools/gradle-9.4.1`.
+
+For repeated staged checkouts, explicitly select an existing, dedicated ordinary
+local-drive directory outside the source repositories with `-SharedGradleToolRoot
+<absolute-tool-root>`. Run `-Mode Resolve` once with that same option; the
+Camera builder accepts `-SharedGradleToolRoot` and passes it to `-Mode
+VerifyCache`. No environment variable selects this tool root. Staged repositories
+retain their pinned config and resolver; they need no archive or installed-tree
+copy. The shared root contains only `tool-identity.json`, `downloads/` (the
+archive and exact tree/download records), and `tools/gradle-9.4.1/`.
+
+The immutable identity marker binds archive/tree pins and the exact resolver and
+config file SHA-256 hashes. Changing either source file requires a new empty
+shared root or explicit operator-managed retirement of the old one. The resolver
+rejects unknown payload, file/directory collisions, root/repository overlap,
+linked ancestors, reparse points and available hardlink evidence. Verification
+still hashes the whole archive and installed tree on every use; it neither
+creates the marker nor repairs state. Shared acquisition and verification use
+the existing mutex, keyed by the shared root's stable Windows file identity.
+The shared tool distribution stays separate from Gradle user homes, dependency
+caches, task outputs, and the builder's `BuildCacheRoot`.
+
+Shared builds add a `gradle_tool_distribution` identity to their build-input
+lock and manifest. This records resolver/config/archive/tree/marker hashes and
+the explicit storage kind without machine paths; existing local-mode receipt
+shapes and previously emitted artifacts remain valid.
 
 It does not alter `PATH`, a system/user Gradle installation, SDKs, profiles,
 devices, APK outputs, or Gradle user homes. It verifies the pinned archive hash
@@ -49,8 +74,8 @@ promotion, preventing path escape for validated inputs and non-adversarial
 races; it does not claim to defend against an actively malicious local process
 that races handle/path replacement after those observations.
 
-Its mutex identity uses stable Windows volume/FileId evidence for the repository
-cache parent plus the fixed Gradle tool identity. This makes ordinary path
+Its mutex identity uses stable Windows volume/FileId evidence for the selected
+repository or explicit shared cache parent plus the fixed Gradle tool identity. This makes ordinary path
 spelling and case aliases share one lock. Where Windows cannot provide that
 evidence, it falls back to an upper-cased canonical non-reparse repository path
 on the local host; that fallback is documented rather than treated as a hostile
@@ -67,6 +92,9 @@ missing verified-tree marker, concurrent/idempotent resolution and case-alias lo
 temporary-file cleanup, reparse/target escape, and executable Windows ZIP-path
 fixtures (backslash/dot traversal, ADS, case collisions, reserved names, and
 symlink entries). It creates only a temporary fixture tree and removes it.
+Shared fixtures additionally cover empty-root verification without writes,
+concurrent provisioning, changed resolver/config/marker/archive/tree bytes,
+unknown payload, file/directory collisions and linked root/ancestor/install files.
 
 Existing `-GradleVersion 9.4.1` callers remain compatible. Other versions fail
 parameter validation before acquisition or build work; changing the pinned tool

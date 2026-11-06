@@ -1,0 +1,65 @@
+{
+  "schema": "rusty.quest.public_word_probe.patterns.v1",
+  "proof": "Source-defined expected bits only; no shader compile or device result. AUX NaN preservation is an experiment.",
+  "finite": {
+    "source": "hotload_words_finite.comp",
+    "primaryXYZ": [
+      [
+        "be012345",
+        "3fd9999a",
+        "bf99999a"
+      ],
+      [
+        "3e765432",
+        "3fd9999a",
+        "bf99999a"
+      ]
+    ],
+    "auxXYZW": [
+      [
+        "00000000",
+        "00000000",
+        "be012345",
+        "3e765432"
+      ],
+      [
+        "00000000",
+        "00000000",
+        "3f012345",
+        "bf765432"
+      ]
+    ]
+  },
+  "quietNaN": {
+    "source": "hotload_words_qnan.comp",
+    "primaryXYZ": [
+      [
+        "be012345",
+        "3fd9999a",
+        "bf99999a"
+      ],
+      [
+        "3e765432",
+        "3fd9999a",
+        "bf99999a"
+      ]
+    ],
+    "auxXYZW": [
+      [
+        "00000000",
+        "00000000",
+        "7fc12345",
+        "ffc54321"
+      ],
+      [
+        "00000000",
+        "00000000",
+        "ffc54321",
+        "7fc12345"
+      ]
+    ]
+  },
+  "radiusEncoding": "round(clamp(float32(0.035)/2,0,1)*65535), low16; high16 flags include frame-low6; not float bits",
+  "normalEncoding": "octahedral SNORM16; not float bits",
+  "colorEncoding": "rounded/clamped UNORM8 RGBA"
+}

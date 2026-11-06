@@ -1,5 +1,36 @@
 # Rusty Quest
 
+The standalone [renewal wire codec](crates/rusty-quest-peer-wire/README.md)
+and [desktop codec lab](examples/duplex-control-lab/README.md) provide lossless
+renewal projection and bounded JSON inspection through independent Rust
+workspaces. Their pure contract and CLI process checks require no APK or
+private runtime fixtures. Public app/facade and connected-runtime adoption
+remain separate owner integrations.
+
+Owned display capture producers are explicit opt-in utilities. See
+[display/projection capture](apps/display-stream-android/README.md),
+[experimental native square capture](apps/native-browser-capture-android/README.md)
+and their [RMANVID1 process/wire contract](docs/DISPLAY_CAPTURE_WIRE.md).
+
+The optional [shell recenter adapter](docs/SHELL_RECENTER.md) supplies one fixed
+privileged Quest `recenterView` operation for explicit developer/operator
+consumers. It requires a genuine shell process and preserves original callback,
+pending and cleanup ownership separately from physical-effect evidence.
+
+The host-only [SDK graphics preparation provider](docs/SDK_GRAPHICS_PREPARATION.md)
+compiles explicit compatible sources, validates the selected material/variant ABI,
+and joins actual APK primary/alias/baseline bytes without device operations.
+
+The optional Java observer in `apps/navigator-visibility-android` exposes the
+firmware CRCS Navigator visibility signal with explicit subscription and cleanup.
+It includes a neutral host conformance consumer and activates no app feature.
+See [Navigator visibility](docs/NAVIGATOR_VISIBILITY.md) for availability,
+generation, initial-state and lifecycle limits.
+
+Optional [Meta XR input automation](docs/META_XR_INPUT_AUTOMATION.md) provides
+closed debug-layer packaging checks and a finite exact-runtime host rehearsal.
+It leaves application activation, original actions and optional capture separate.
+
 Reusable Android media lives in `crates/rusty-quest-media-stream-android`.
 Its AAR and Rust library are consumed by the standalone broker and the neutral
 `apps/media-stream-conformance-android` host. Application permissions, defaults,

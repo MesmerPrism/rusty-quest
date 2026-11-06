@@ -18,6 +18,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     private final EmbeddedDuplexReceiver incoming;
     private MediaProductBinding binding;
     private final Context context;
+    private final java.io.File operationalRoot;
     private final JSONObject nativeInitialization, outgoingSpec;
     private final long maxPairDeltaNs;
     private final Lane source;
@@ -34,6 +35,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             throw new IllegalArgumentException("embedded resource initialization");
         }
         this.context = context;
+        this.operationalRoot=EmbeddedDuplexProcessHost.operationalRoot(context);
         this.nativeInitialization = nativeInitialization;
         this.maxPairDeltaNs = maxPairDeltaNs;
         generation = nativeInitialization.getLong("executor_generation");
@@ -60,27 +62,33 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     }
 
     /** Host retains this owner before any Own capture or display effect runs. */
-    void install() throws Exception {
+    void install() throws Exception { install(null); }
+    void install(EmbeddedDuplexBootstrap.Trace trace) throws Exception {
         if (installationAttempted) throw new IllegalStateException("resource installation already attempted");
         installationAttempted = true;
         try {
         if (ownCapture != null) {
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_OWN_CAPTURE);
             io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner capture = ownCapture.startAccepted(
                     new OwnStereoCaptureRuntime.Configuration(source.width / 2, source.height,
                             source.fps, leftCamera, rightCamera, maxPairDeltaNs));
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_OWN_PROJECTION);
             display.activateOwnProjection();
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_PIPELINE);
             pipeline = PackedStereoMediaSourceRuntime.createSharedCapturePipeline(context, source.plan.getString("session_id"),
                     source.source.getString("source_kind"), source.endpoint.getString("source_host"),
                     source.endpoint.getInt("source_port"), source.width, source.height,
                     source.width / 2, source.height, source.fps, source.bitrate,
                     leftCamera, rightCamera, maxPairDeltaNs, capture, generation);
         } else {
+        EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_PIPELINE);
         pipeline = PackedStereoMediaSourceRuntime.createPipeline(context, source.plan.getString("session_id"),
                 source.source.getString("source_kind"), source.endpoint.getString("source_host"),
                 source.endpoint.getInt("source_port"), source.width, source.height,
                 source.width / 2, source.height, source.fps, source.bitrate,
                 leftCamera, rightCamera, maxPairDeltaNs);
         }
+        EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_ROUTE);
         pipeline.configureAcceptedLanRoute(source.sourceTransportHost,
                 source.sinkTransportHost, source.sinkTransportPort);
         } catch (Exception invalid) {
@@ -89,8 +97,11 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             throw invalid;
         }
         try {
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_OUTGOING);
             outgoing = new PackedStereoMediaOwnerSet(generation, pipeline, incoming);
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_BINDING_CREATE);
             MediaProductBinding.Builder builder = new MediaProductBinding.Builder(outgoingSpec.getString("runtime_spec_id"));
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_BINDINGS);
             JSONArray outgoingPlacements = nativeInitialization.getJSONArray("owner_placements");
             JSONArray incomingPlacements = nativeInitialization.getJSONArray("incoming_owner_placements");
             int localOutgoing = 0;
@@ -118,6 +129,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                     || localOutgoing != 6 || localIncoming != 1) {
                 throw new IllegalArgumentException("embedded seven-family placement shape");
             }
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_BINDING_BUILD);
             binding = builder.build();
         } catch (Exception invalid) {
             // Peer Start has not run. Own capture may already be Live; it remains
@@ -134,6 +146,70 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     @Override public long generation() { return generation; }
     MediaProductBinding binding() { return binding; }
     EmbeddedDuplexReceiver incoming() { return incoming; }
+    /** Immutable source facts only; never resource readiness or an authority ticket. */
+    JSONObject preparationTarget(String actualConfigurationSha256) throws Exception {
+        if(!actualConfigurationSha256.matches("[0-9a-f]{64}") || binding==null || pipeline==null || generation<=0)
+            throw new IllegalStateException("actual installed preparation resource source absent");
+        JSONObject shape=new JSONObject().put("packed_width",source.width).put("packed_height",source.height)
+            .put("per_eye_width",source.width/2).put("per_eye_height",source.height).put("frame_rate_hz",source.fps)
+            .put("bitrate_bps",source.bitrate).put("left_camera_id",leftCamera).put("right_camera_id",rightCamera);
+        return new JSONObject().put("$schema","rusty.quest.embedded_duplex.peer_start_resource_target.v1")
+            .put("runtime_config_sha256",actualConfigurationSha256).put("executor_generation",generation)
+            .put("product_binding",binding.preparationDescriptor()).put("source_dimensions",shape)
+            .put("own_capture_selected",ownCapture!=null).put("max_pair_delta_ns",maxPairDeltaNs)
+            .put("outgoing_runtime_spec_id",outgoingSpec.getString("runtime_spec_id"))
+            .put("incoming_runtime_spec_id",incomingRuntimeSpecId);
+    }
+    JSONObject prepareSender(java.util.function.BooleanSupplier desiredStop)throws Exception {
+        if(pipeline==null||outgoing==null||binding==null)throw new IllegalStateException("actual prepared product source absent");
+        outgoing.prepareNextSdkIncarnation();return pipeline.prepareSender(desiredStop);
+    }
+    JSONObject prepareDecoder(String id,JSONObject peerFormat,java.util.function.BooleanSupplier stop)throws Exception {
+        return incoming.prepareDormantDecoder(id,peerFormat,stop);
+    }
+    void finalizePreparedTransport()throws Exception {pipeline.prepareTransport();}
+    boolean preparedTransportConnected(){return pipeline!=null&&pipeline.preparedTransportConnected();}
+    void retireArchivedPreparedMetadata(String id) {
+        if(!productResourcesTerminal())throw new IllegalStateException("archived SDK owners remain Pending");
+        incoming.retireArchivedPreparedMetadata(id);
+    }
+    boolean preparedSenderOwned(){return pipeline!=null&&pipeline.preparedSenderHeld();}
+    boolean preparedDecoderOwned(){return incoming.preparedDecoderOwned();}
+    boolean preparedDeliveryOpened(){return (pipeline!=null&&pipeline.preparedDeliveryOpened())||incoming.preparedDeliveryOpened();}
+    boolean preparedSenderClosed(){return pipeline!=null&&pipeline.preparedDeliveryClosed();}
+    boolean preparedDecoderClosed(){return incoming.preparedDecoderClosed();}
+    boolean preparedDecoderStartable(String id){return incoming.preparedDecoderStartable(id);}
+    String preparedSenderHandle(){return pipeline.handleId();}
+    String preparedDecoderHandle(){return incoming.snapshot().providerHandleId();}
+    void requestPreparedStop(){if(pipeline!=null)pipeline.requestPreparedStop();incoming.requestPreparedStop();}
+    long preparedPeerDeliveryCount(){return Math.addExact(pipeline.preparedPeerDeliveryCount(),incoming.preparedPeerDeliveryCount());}
+    org.json.JSONArray preparedTerminalOwners()throws Exception {
+        if(!productResourcesTerminal())throw new IllegalStateException("actual seven SDK owners not terminal");
+        org.json.JSONArray rows=new org.json.JSONArray(),targets=binding.preparationDescriptor().getJSONArray("providers");
+        for(int i=0;i<targets.length();i++) {
+            JSONObject target=targets.getJSONObject(i);String kind=target.getString("owner_kind");
+            io.github.mesmerprism.rustyquest.media.MediaRuntimeSnapshot snapshot=(kind.equals("sink")?incoming:outgoing.provider(kind)).snapshot();
+            if(!snapshot.terminal()||snapshot.generation()!=generation)throw new IllegalStateException("actual SDK owner snapshot not terminal");
+            JSONObject terminal=new JSONObject().put("$schema","rusty.quest.android.media.prepared_owner_runtime_terminal.v1")
+                .put("executor_generation",snapshot.generation()).put("provider_state_revision",snapshot.revision())
+                .put("provider_handle_id",snapshot.providerHandleId()).put("state",snapshot.state()).put("terminal",snapshot.terminal());
+            rows.put(new JSONObject(target.toString()).put("$schema","rusty.quest.android.media.prepared_owner_terminal.v1")
+                .put("construction_state","closed_joined").put("terminal_receipt",terminal));
+        }
+        return rows;
+    }
+    JSONObject abortPreparedResources(String id)throws Exception {
+        Exception failure=null;JSONObject renderer=null;
+        try{if(pipeline!=null)pipeline.abortPreparedSender();}catch(RuntimeException e){failure=e;}
+        try{renderer=incoming.abortDormantDecoder(id);}catch(Exception e){if(failure==null)failure=e;else failure.addSuppressed(e);}
+        if(failure!=null)throw failure;return renderer;
+    }
+    String preparationTargetSha256(String actualConfigurationSha256) throws Exception {
+        byte[] domain=("rusty.quest.embedded_duplex.peer_start_resource_target.v1"+'\0').getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] body=EmbeddedDuplexCanonicalJson.encode(preparationTarget(actualConfigurationSha256)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] all=new byte[domain.length+body.length];System.arraycopy(domain,0,all,0,domain.length);System.arraycopy(body,0,all,domain.length,body.length);
+        return "sha256:"+EmbeddedDuplexCanonicalJson.sha256Bytes(all);
+    }
     JSONObject sourceSnapshot() throws Exception {
         JSONObject snapshot = pipeline.snapshot();
         if (ownCapture != null) {
@@ -151,6 +227,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         return retained.diagnosticDropoutSnapshot();
     }
     JSONObject receiverStageSnapshot() throws Exception { return incoming.diagnosticStages(); }
+    JSONObject receiverPhysicalSnapshot() throws Exception { return incoming.physicalSnapshot(); }
     boolean ownAppCaptureEnabled() { return ownCapture != null; }
     void armOwnCaptureTrace(String processEpoch, long appGeneration, long armGeneration) {
         io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner retained =
@@ -170,7 +247,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     @Override public void recordActivationFailure(String closedRecord) {
         if (!closedActivationRecord(closedRecord, false)) return;
         synchronized (EmbeddedDuplexResources.class) {
-            java.io.File file = new java.io.File(context.getNoBackupFilesDir(),
+            java.io.File file = new java.io.File(operationalRoot,
                     "embedded-duplex-activation-diagnostics.v1.txt");
             android.util.AtomicFile atomic = new android.util.AtomicFile(file);
             java.util.ArrayDeque<String> lines = new java.util.ArrayDeque<>();
@@ -211,6 +288,9 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     }
     @Override public long[] currentIncomingFrame(long maxAgeNs) { return incoming.currentFrame(maxAgeNs); }
     @Override public void awaitFirstSurfaceImage() throws Exception { incoming.awaitFirstSurfaceImage(); }
+    @Override public void awaitFirstSurfaceImage(java.util.function.BooleanSupplier currentAuthority) throws Exception {
+        incoming.awaitFirstSurfaceImage(currentAuthority);
+    }
     @Override public long[] currentIncomingAcquiredFrame(long maxAgeNs) {
         return incoming.currentAcquiredFrameTimed(maxAgeNs);
     }
@@ -225,6 +305,52 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     }
     @Override public long[] currentProjection() { return display.currentProjection(routeGeneration()); }
 
+    /** Close only resources owned by this exact retained object. No fake owner
+     * action/readback is inserted into the signed logical registry. */
+    void retireOwnedLocalResources() {
+        final Throwable[] failures=new Throwable[2];
+        final PackedStereoMediaSourceRuntime.Pipeline held=pipeline;
+        // Both directions must receive their own local Stop even when the other
+        // direction is still draining. Neither callback is run under Native or
+        // authority locks, and the carried command joins this exact worker.
+        Thread sender=null;
+        if(held!=null){
+            sender=new Thread(EmbeddedDuplexOriginals.carryActual(EmbeddedDuplexOriginals.capture(),()->{
+                try{held.stopOwnedLocalResources("whole_actual_local_resources");}
+                catch(Throwable failure){failures[1]=failure;}
+            }),"embedded-whole-source-drain");
+            try{sender.start();}catch(Throwable failure){failures[1]=failure;}
+        }
+        try{incoming.retireOwnedLocalResources();}catch(Throwable failure){failures[0]=failure;}
+        if(sender!=null){
+            try{while(sender.isAlive()){
+                sender.join(10_000L);
+                if(sender.isAlive())System.err.println("embedded Whole source drain remains Pending generation="+generation);
+            }}catch(InterruptedException interrupted){
+                Thread.currentThread().interrupt();throw new IllegalStateException("actual Whole local resource join interrupted",interrupted);
+            }
+        }
+        Throwable failure=failures[0]==null?failures[1]:failures[0];
+        if(failures[0]!=null&&failures[1]!=null)failure.addSuppressed(failures[1]);
+        if(failure!=null)throw new IllegalStateException("actual Whole local resource cleanup remains Pending",failure);
+        if(pipeline!=held)throw new IllegalStateException("actual Whole local source owner changed");
+        if(!incoming.snapshot().terminal())throw new IllegalStateException("actual Whole local receiver remains Pending");
+        if(held!=null)held.requireStopped();
+    }
+
+    /** Whole-product close may retire an incoming route that never entered a Sink effect. */
+    void closeUnusedIncomingForWholeProduct() {
+        if ("unprepared".equals(incoming.snapshot().state())) {
+            // The synchronized typed method rechecks every never-started identity.
+            // A staged/armed race is rejected rather than credited as cleanup.
+            incoming.closeUnstartedAndVerify();
+        }
+    }
+
+    boolean incomingNeverPrepared(){
+        io.github.mesmerprism.rustyquest.media.MediaRuntimeSnapshot actual=incoming.snapshot();
+        return actual.generation()==generation && actual.revision()==0 && "unprepared".equals(actual.state());
+    }
     boolean productResourcesTerminal() {
         if (!incoming.snapshot().terminal()) return false;
         // A pipeline is retained immediately on return from its factory. Its

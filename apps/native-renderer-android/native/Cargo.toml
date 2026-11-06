@@ -19,6 +19,7 @@ default = []
 showcase = []
 # Same-owner Vulkan presentation; never activates the experiment controller.
 showcase-vulkan-ui = ["showcase"]
+meta-xr-operator = []
 rusty-lsl-backend = ["dep:rusty-lsl"]
 
 [dependencies]

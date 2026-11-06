@@ -210,14 +210,21 @@ impl BreathGuidanceTimeline {
         official_active_time_ms: u64,
         bias_percent: u8,
     ) -> Option<BreathGuidanceTarget> {
-        if bias_percent == 0 { return None; }
+        if bias_percent == 0 {
+            return None;
+        }
         self.intended_target_at(official_active_time_ms, bias_percent)
     }
 
     // The same intended schedule exists when visual bias weight is zero.
-    pub(crate) fn intended_target_at(&self, official_active_time_ms: u64, bias_percent: u8)
-        -> Option<BreathGuidanceTarget> {
-        if bias_percent > 100 { return None; }
+    pub(crate) fn intended_target_at(
+        &self,
+        official_active_time_ms: u64,
+        bias_percent: u8,
+    ) -> Option<BreathGuidanceTarget> {
+        if bias_percent > 100 {
+            return None;
+        }
         let index = self
             .segments
             .partition_point(|segment| segment.end_ms <= official_active_time_ms);
@@ -232,7 +239,9 @@ impl BreathGuidanceTimeline {
     }
 
     pub(crate) fn phase_segment_at(&self, active_ms: u64) -> Option<(usize, u64, u64)> {
-        let index = self.segments.partition_point(|segment| segment.end_ms <= active_ms);
+        let index = self
+            .segments
+            .partition_point(|segment| segment.end_ms <= active_ms);
         let segment = self.segments.get(index)?;
         (active_ms >= segment.start_ms).then_some((index, segment.start_ms, segment.end_ms))
     }
@@ -256,8 +265,13 @@ impl BreathGuidanceTimeline {
             // The extra entry lets the caller reject an unsupported dense
             // window explicitly instead of silently omitting the current target.
             if segment.end_ms > start_ms && segment.start_ms <= end_ms && result.len() < 257 {
-                result.push(serde_json::json!([segment.start_ms, segment.end_ms,
-                    segment.phase.as_str(), from, to]));
+                result.push(serde_json::json!([
+                    segment.start_ms,
+                    segment.end_ms,
+                    segment.phase.as_str(),
+                    from,
+                    to
+                ]));
             }
         }
         result
@@ -342,22 +356,40 @@ mod tests {
             {"start_ms":16000,"end_ms":20000,"phase":"hold"}
         ]);
         let bytes = value.to_string().into_bytes();
-        identity.source_bytes=bytes.len() as u64;
-        identity.source_sha256=rusty_quest_broker_authority::packaged_json_sha256(std::str::from_utf8(&bytes).unwrap());
-        let timeline=BreathGuidanceTimeline::parse_exact(&bytes,identity,&"a".repeat(64)).unwrap();
-        for (time,index,phase) in [(0,0,"inhale"),(4000,1,"hold"),(8000,2,"exhale"),(12000,3,"hold"),(16000,4,"hold")] {
-            let target=timeline.intended_target_at(time,0).unwrap();
-            assert_eq!(target.expected_phase_token,phase);
-            assert_eq!(target.official_active_time_ms,time);
-            assert_eq!(timeline.phase_segment_at(time).unwrap().0,index);
+        identity.source_bytes = bytes.len() as u64;
+        identity.source_sha256 = rusty_quest_broker_authority::packaged_json_sha256(
+            std::str::from_utf8(&bytes).unwrap(),
+        );
+        let timeline =
+            BreathGuidanceTimeline::parse_exact(&bytes, identity, &"a".repeat(64)).unwrap();
+        for (time, index, phase) in [
+            (0, 0, "inhale"),
+            (4000, 1, "hold"),
+            (8000, 2, "exhale"),
+            (12000, 3, "hold"),
+            (16000, 4, "hold"),
+        ] {
+            let target = timeline.intended_target_at(time, 0).unwrap();
+            assert_eq!(target.expected_phase_token, phase);
+            assert_eq!(target.official_active_time_ms, time);
+            assert_eq!(timeline.phase_segment_at(time).unwrap().0, index);
         }
-        assert!(timeline.target_at(0,0).is_none()); // existing zero-bias contract unchanged
+        assert!(timeline.target_at(0, 0).is_none()); // existing zero-bias contract unchanged
         assert!(timeline.phase_segment_at(20000).is_none());
-        assert_eq!(timeline.phase_segment_at(15500),Some((3,12000,16000))); // seek/current only
+        assert_eq!(timeline.phase_segment_at(15500), Some((3, 12000, 16000))); // seek/current only
         let monitor = timeline.monitor_segments(4000, 16000);
-        assert_eq!(monitor[0], serde_json::json!([4000,8000,"hold",1.0,1.0]));
-        assert_eq!(monitor[1], serde_json::json!([8000,12000,"exhale",1.0,0.0]));
-        assert_eq!(monitor[2], serde_json::json!([12000,16000,"hold",0.0,0.0]));
+        assert_eq!(
+            monitor[0],
+            serde_json::json!([4000, 8000, "hold", 1.0, 1.0])
+        );
+        assert_eq!(
+            monitor[1],
+            serde_json::json!([8000, 12000, "exhale", 1.0, 0.0])
+        );
+        assert_eq!(
+            monitor[2],
+            serde_json::json!([12000, 16000, "hold", 0.0, 0.0])
+        );
     }
 
     #[test]
@@ -411,10 +443,16 @@ mod tests {
     #[test]
     fn dense_monitor_window_is_detectable_instead_of_silently_losing_the_target() {
         let (bytes, identity) = fixture();
-        let mut timeline = BreathGuidanceTimeline::parse_exact(&bytes, identity, &"a".repeat(64)).unwrap();
-        timeline.segments = (0..300).map(|t| BreathGuidanceSegment {
-            start_ms: t, end_ms: t + 1, phase: BreathGuidancePhase::Inhale,
-        }).collect::<Vec<_>>().into_boxed_slice();
+        let mut timeline =
+            BreathGuidanceTimeline::parse_exact(&bytes, identity, &"a".repeat(64)).unwrap();
+        timeline.segments = (0..300)
+            .map(|t| BreathGuidanceSegment {
+                start_ms: t,
+                end_ms: t + 1,
+                phase: BreathGuidancePhase::Inhale,
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         assert_eq!(timeline.monitor_segments(0, 300).len(), 257);
     }
 }

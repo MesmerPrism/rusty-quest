@@ -9,7 +9,10 @@ mod broker_peer_routes;
 
 #[path = "broker_concurrent_renewal.rs"]
 mod broker_concurrent_renewal;
-pub use broker_concurrent_renewal::QuestConcurrentAuthorityRenewalReceipt;
+pub use broker_concurrent_renewal::{
+    QuestConcurrentAuthorityRenewalReceipt, QuestConcurrentOwnerHistoryEpochs,
+    QuestCurrentConcurrentOngoingValidation,
+};
 #[path = "broker_revoker_cleanup.rs"]
 mod broker_revoker_cleanup;
 pub use broker_revoker_cleanup::QuestConcurrentPeerRevokerCleanupReceipt;
@@ -50,12 +53,12 @@ use rusty_manifold_peer::{
 use rusty_manifold_peer_runtime_host::{
     ManifoldPeerRuntimeAuthorityFamily, ManifoldPeerRuntimeBrokerLeaseAttemptOutcome,
     ManifoldPeerRuntimeHost, ManifoldPeerRuntimeHostError, ManifoldPeerRuntimeTrustPolicy,
-    PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA,
+    ManifoldPeerRuntimeTrustPolicyFieldsV1, PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA,
 };
 use rusty_manifold_runtime_host::{
     ManifoldRuntimeCommandDescriptor, ManifoldRuntimeCommandRequest, ManifoldRuntimeHostSnapshot,
     ManifoldRuntimeLease, ManifoldRuntimeTypedParamsDigest, HOST_COMMAND_REQUEST_SCHEMA,
-    HOST_SNAPSHOT_SCHEMA, HOST_TYPED_PARAMS_DIGEST_SCHEMA, MAX_TYPED_PARAMS_CANONICAL_BYTES,
+    HOST_TYPED_PARAMS_DIGEST_SCHEMA, MAX_TYPED_PARAMS_CANONICAL_BYTES,
 };
 use rusty_quest_broker_admission::{
     parse_entropy_hex, project_binder_caller, QuestBrokerAdmissionConfig,
@@ -564,7 +567,8 @@ impl<'a> QuestBrokerAndroidMediaOwnerProvider<'a> {
             action,
             owner_action,
             self.sequence,
-            self.executor.executor_generation(),
+            self.executor
+                .executor_generation_for(action, owner_action)?,
             self.capability.clone(),
         )
         .map_err(|error| error.to_string())?;
@@ -613,7 +617,7 @@ impl MediaStreamTrustedOwnerProvider for QuestBrokerAndroidMediaOwnerProvider<'_
                     action,
                     owner_action,
                     self.sequence,
-                    self.executor.executor_generation(),
+                    ticket.executor_generation,
                     self.capability.clone(),
                 )
                 .as_ref()
@@ -623,6 +627,10 @@ impl MediaStreamTrustedOwnerProvider for QuestBrokerAndroidMediaOwnerProvider<'_
         })
     }
 }
+
+#[path = "construction_custody.rs"]
+mod construction_custody;
+pub use construction_custody::QuestBrokerConstructionCustody;
 
 impl QuestBrokerRuntimeProvider {
     /// Returns the embedded-duplex façade for the currently initialized provider.
@@ -671,8 +679,37 @@ impl QuestBrokerRuntimeProvider {
         authority_wall_unix_ms: i64,
         authority_monotonic_elapsed_ns: u64,
     ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
+        self.initialize_with_lifetime_policy(
+            config_json,
+            expected_config_sha256,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            None,
+        )
+    }
+
+    /// Explicit trusted lifetime selection; the finite entrypoint remains unchanged.
+    pub fn initialize_with_lifetime_policy(
+        &mut self,
+        config_json: &str,
+        expected_config_sha256: &str,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
         let config: QuestBrokerRuntimeConfig =
             serde_json::from_str(config_json).map_err(QuestBrokerRuntimeError::Decode)?;
+        if config
+            .embedded_duplex
+            .as_ref()
+            .map_or(lifetime_policy.is_some(), |duplex| {
+                !duplex.require_lifetime_policy_selection(lifetime_policy)
+            })
+        {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
         let canonical = serde_json::to_vec(&config).map_err(QuestBrokerRuntimeError::Encode)?;
         let config_sha256 = sha256_hex(&canonical);
         if expected_config_sha256 != config_sha256 {
@@ -684,16 +721,87 @@ impl QuestBrokerRuntimeProvider {
             }
             return initialize_status(runtime, config_sha256, true);
         }
-        let runtime = QuestBrokerAuthorityRuntime::from_config(
+        let runtime = QuestBrokerAuthorityRuntime::from_config_retaining_with_lifetime_policy(
             config,
             provider_epoch_entropy_hex,
             authority_wall_unix_ms,
             authority_monotonic_elapsed_ns,
+            None,
+            lifetime_policy,
         )?;
         let status = initialize_status(&runtime, config_sha256.clone(), false)?;
         self.runtime = Some(runtime);
         self.config_sha256 = Some(config_sha256);
         Ok(status)
+    }
+
+    /// Constructs selected fresh authority while retaining the real unpublished owners on failure.
+    pub fn initialize_retaining_construction(
+        &mut self,
+        config_json: &str,
+        expected_config_sha256: &str,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        custody: &mut QuestBrokerConstructionCustody,
+    ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
+        self.initialize_retaining_construction_with_lifetime_policy(
+            config_json,
+            expected_config_sha256,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            custody,
+            None,
+        )
+    }
+
+    /// Explicit trusted lifetime selection; the finite entrypoint remains unchanged.
+    pub fn initialize_retaining_construction_with_lifetime_policy(
+        &mut self,
+        config_json: &str,
+        expected_config_sha256: &str,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        custody: &mut QuestBrokerConstructionCustody,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
+        if self.runtime.is_some() || self.config_sha256.is_some() || custody.entered {
+            return Err(QuestBrokerRuntimeError::RebindConfigMismatch);
+        }
+        let config: QuestBrokerRuntimeConfig =
+            serde_json::from_str(config_json).map_err(QuestBrokerRuntimeError::Decode)?;
+        if config
+            .embedded_duplex
+            .as_ref()
+            .and_then(|d| d.fresh_setup_local_peer_id.as_ref())
+            .is_none()
+        {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
+        let canonical = serde_json::to_vec(&config).map_err(QuestBrokerRuntimeError::Encode)?;
+        let sha = sha256_hex(&canonical);
+        if sha != expected_config_sha256 {
+            return Err(QuestBrokerRuntimeError::PackagedConfigDigestMismatch);
+        }
+        custody.entered = true;
+        let actual = QuestBrokerAuthorityRuntime::from_config_retaining_with_lifetime_policy(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            Some(custody),
+            lifetime_policy,
+        )?;
+        // Publish ownership to this retained provider BEFORE fallible formatting.
+        self.config_sha256 = Some(sha.clone());
+        self.runtime = Some(actual);
+        initialize_status(
+            self.runtime.as_ref().expect("stored real constructor"),
+            sha,
+            false,
+        )
     }
 
     /// Executes one admission operation through the live provider.
@@ -1101,6 +1209,58 @@ impl QuestBrokerAuthorityRuntime {
         authority_wall_unix_ms: i64,
         authority_monotonic_elapsed_ns: u64,
     ) -> Result<Self, QuestBrokerRuntimeError> {
+        Self::from_config_retaining(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            None,
+        )
+    }
+
+    /// Constructs selected delegated authority from independently trusted source policy.
+    pub fn from_config_with_lifetime_policy(
+        config: QuestBrokerRuntimeConfig,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        policy: &rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy,
+    ) -> Result<Self, QuestBrokerRuntimeError> {
+        Self::from_config_retaining_with_lifetime_policy(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            None,
+            Some(policy),
+        )
+    }
+
+    fn from_config_retaining(
+        config: QuestBrokerRuntimeConfig,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        custody: Option<&mut QuestBrokerConstructionCustody>,
+    ) -> Result<Self, QuestBrokerRuntimeError> {
+        Self::from_config_retaining_with_lifetime_policy(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            custody,
+            None,
+        )
+    }
+
+    fn from_config_retaining_with_lifetime_policy(
+        config: QuestBrokerRuntimeConfig,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        mut custody: Option<&mut QuestBrokerConstructionCustody>,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Result<Self, QuestBrokerRuntimeError> {
         if config.schema_id == LEGACY_QUEST_BROKER_RUNTIME_CONFIG_V1_SCHEMA {
             return Err(QuestBrokerRuntimeError::LegacyRuntimeConfigRequiresRebuild);
         }
@@ -1109,6 +1269,52 @@ impl QuestBrokerAuthorityRuntime {
         }
         if config.admission.schema_id != QUEST_ADMISSION_CONFIG_SCHEMA {
             return Err(QuestBrokerRuntimeError::SchemaMismatch);
+        }
+        if config
+            .embedded_duplex
+            .as_ref()
+            .map_or(lifetime_policy.is_some(), |duplex| {
+                !duplex.require_lifetime_policy_selection(lifetime_policy)
+            })
+        {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
+        for policy in &config.admission.snapshot.root_renewal_policies {
+            let grant = config
+                .admission
+                .snapshot
+                .grants
+                .iter()
+                .find(|g| g.grant_id == policy.grant_id)
+                .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+            let now = u64::try_from(authority_wall_unix_ms)
+                .ok()
+                .filter(|now| *now > 0)
+                .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+            // Issuance precedes native construction. Preserve the issued expiry;
+            // the current authority clock bounds remaining validity, not issuance.
+            let remaining = grant
+                .expires_at_ms
+                .checked_sub(now)
+                .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+            if !(300_000
+                ..=rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                    lifetime_policy,
+                    3_600_000,
+                ))
+                .contains(&policy.horizon_ms)
+                || policy.horizon_ms % 60_000 != 0
+                || grant.expires_at_ms > i64::MAX as u64
+                || remaining == 0
+                || remaining > policy.horizon_ms
+                || !config.initial_leases.iter().any(|lease| {
+                    lease.holder_id == grant.identity.client_id
+                        && lease.scope.as_str() == "lease.media.session"
+                        && lease.expires_at_ms == grant.expires_at_ms
+                })
+            {
+                return Err(QuestBrokerRuntimeError::ControlLeaseBootstrap);
+            }
         }
         validate_initial_lease_request_ids(&config.initial_leases)?;
         validate_media_session_binding(&config)?;
@@ -1123,31 +1329,148 @@ impl QuestBrokerAuthorityRuntime {
         validate_bridge_mode(&config.bridge_kind, &config.adapter_config.mode)?;
         let media_bindings = effective_media_bindings(&config);
         let provider_epoch_id = provider_epoch(provider_epoch_entropy_hex)?;
-        let peer_runtime_host = build_media_peer_runtime_host(&config, &provider_epoch_id)?;
+        let peer_runtime_host = build_media_peer_runtime_host_with_lifetime_policy(
+            &config,
+            &provider_epoch_id,
+            lifetime_policy,
+        )?;
+        if let Some(held) = custody.as_deref_mut() {
+            held.capture_peer(&peer_runtime_host);
+        }
         let control_lease_authority = build_initial_control_lease_authority(
             &config,
             &provider_epoch_id,
             authority_wall_unix_ms,
             authority_monotonic_elapsed_ns,
         )?;
+        let mut local_control = Some(control_lease_authority);
+        if let Some(held) = custody.as_deref_mut() {
+            held.control = local_control.take();
+        }
+        let control_lease_authority = match custody.as_deref() {
+            Some(held) => held.control.as_ref(),
+            None => local_control.as_ref(),
+        }
+        .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+        let ongoing_policy = config
+            .embedded_duplex
+            .as_ref()
+            .and_then(|duplex| duplex.ongoing_media_policy.clone());
+        let root_target = if config
+            .embedded_duplex
+            .as_ref()
+            .is_some_and(|d| d.fresh_setup_local_peer_id.is_some())
+        {
+            let selected: Vec<_> = config
+                .packaged_authority
+                .client_locks
+                .iter()
+                .filter(|c| c.media_lifecycle_authority.is_some())
+                .collect();
+            if selected.len() != 1 {
+                return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+            }
+            let grant = config
+                .admission
+                .snapshot
+                .grants
+                .iter()
+                .find(|g| g.grant_id == selected[0].grant_id)
+                .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+            let leases: Vec<_> = config
+                .initial_leases
+                .iter()
+                .filter(|l| {
+                    l.holder_id == grant.identity.client_id
+                        && l.scope.as_str() == "lease.media.session"
+                })
+                .collect();
+            if leases.len() != 1 {
+                return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+            }
+            Some((grant.grant_id.clone(), leases[0].lease_id.clone()))
+        } else {
+            None
+        };
         let packaged_product_lock = config.packaged_authority.product_lock_json.into_bytes();
         let adapter = ManifoldBrokerAdapter::new(
             config.adapter_config,
             &packaged_product_lock,
-            &control_lease_authority,
+            control_lease_authority,
         )
         .map_err(QuestBrokerRuntimeError::Adapter)?;
-        let runtime = ManifoldBrokerRuntime::new(
-            provider_epoch_id.clone(),
-            adapter,
-            control_lease_authority,
-            config.admission.snapshot,
-        )
-        .map_err(QuestBrokerRuntimeError::RuntimeState)?;
+        let control = match custody.as_deref_mut() {
+            Some(held) => held.control.take(),
+            None => local_control.take(),
+        }
+        .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+        let mut local_owner = Some(
+            match lifetime_policy {
+                Some(policy) => rusty_manifold_broker_adapter::ManifoldBrokerUnpublishedConstruction::new_with_lifetime_policy(
+                    provider_epoch_id.clone(), adapter, control, config.admission.snapshot, policy),
+                None => rusty_manifold_broker_adapter::ManifoldBrokerUnpublishedConstruction::new(
+                    provider_epoch_id.clone(), adapter, control, config.admission.snapshot),
+            },
+        );
+        let staging = match custody.as_deref_mut() {
+            Some(held) => {
+                held.unpublished = local_owner.take();
+                held.unpublished
+                    .as_mut()
+                    .expect("retained real constructor")
+            }
+            None => local_owner.as_mut().expect("local real constructor"),
+        };
+        staging
+            .try_construct()
+            .map_err(QuestBrokerRuntimeError::RuntimeState)?;
+        let runtime = staging
+            .runtime_mut()
+            .map_err(QuestBrokerRuntimeError::RuntimeState)?;
+        if let Some(policy) = ongoing_policy {
+            if policy
+                == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()
+            {
+                runtime
+                    .enable_ongoing_history()
+                    .map_err(QuestBrokerRuntimeError::RuntimeState)?;
+            }
+            peer_runtime_host
+                .as_ref()
+                .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+                .write()
+                .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+                .enable_ongoing_media_continuation(&runtime, policy)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        }
+        if let Some((grant, lease)) = root_target {
+            peer_runtime_host
+                .as_ref()
+                .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+                .write()
+                .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+                .register_source_bound_root_broker(
+                    runtime,
+                    grant,
+                    lease,
+                    u64::try_from(authority_wall_unix_ms)
+                        .map_err(|_| QuestBrokerRuntimeError::InvalidAuthorityClock)?,
+                )
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        }
+        let runtime = Arc::new(RwLock::new(
+            staging
+                .take_runtime()
+                .map_err(QuestBrokerRuntimeError::RuntimeState)?,
+        ));
+        if let Some(held) = custody.as_deref_mut() {
+            held.capture_broker(&runtime);
+            held.unpublished = None;
+        }
         Ok(Self {
             bridge_kind: config.bridge_kind,
             provider_epoch_id,
-            runtime: Arc::new(RwLock::new(runtime)),
+            runtime,
             media_bindings,
             peer_runtime_host,
             media_sessions: BTreeMap::new(),
@@ -1349,12 +1672,18 @@ impl QuestBrokerAuthorityRuntime {
             })
             .cloned()
             .ok_or(QuestBrokerRuntimeError::MediaProductNotSelected)?;
-        let acceptance_request_id =
-            derived_request_id("request.quest.media.accept", &mutation.command.request_id)?;
-        let runtime_request_id = derived_request_id(
-            "request.quest.media.runtime.accept",
-            &mutation.command.request_id,
-        )?;
+        let acceptance_request_id = peer
+            .current_media_history_request_id(&derived_request_id(
+                "request.quest.media.accept",
+                &mutation.command.request_id,
+            )?)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        let runtime_request_id = peer
+            .current_media_history_request_id(&derived_request_id(
+                "request.quest.media.runtime.accept",
+                &mutation.command.request_id,
+            )?)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         let acceptance = ManifoldMediaSessionAcceptanceRequest {
             schema_id: schema(MANIFOLD_MEDIA_SESSION_ACCEPTANCE_REQUEST_SCHEMA),
             request_id: acceptance_request_id,
@@ -1482,15 +1811,19 @@ impl QuestBrokerAuthorityRuntime {
             .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let termination = ManifoldMediaSessionTerminationRequest {
             schema_id: schema(MANIFOLD_MEDIA_SESSION_TERMINATION_REQUEST_SCHEMA),
-            request_id: derived_request_id(
-                "request.quest.media.stop",
-                &mutation.command.request_id,
-            )?,
+            request_id: peer
+                .current_media_history_request_id(&derived_request_id(
+                    "request.quest.media.stop",
+                    &mutation.command.request_id,
+                )?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
             expected_authority_revision: peer.snapshot().media_sessions.authority_revision,
-            runtime_command_request_id: derived_request_id(
-                "request.quest.media.runtime.stop",
-                &mutation.command.request_id,
-            )?,
+            runtime_command_request_id: peer
+                .current_media_history_request_id(&derived_request_id(
+                    "request.quest.media.runtime.stop",
+                    &mutation.command.request_id,
+                )?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
             decision_id: current.decision_id,
             session_id: current.session_id,
             expected_provider_epoch_id: self.provider_epoch_id.clone(),
@@ -2145,6 +2478,14 @@ fn build_media_peer_runtime_host(
     config: &QuestBrokerRuntimeConfig,
     provider_epoch_id: &DottedId,
 ) -> Result<Option<Arc<RwLock<ManifoldPeerRuntimeHost>>>, QuestBrokerRuntimeError> {
+    build_media_peer_runtime_host_with_lifetime_policy(config, provider_epoch_id, None)
+}
+
+fn build_media_peer_runtime_host_with_lifetime_policy(
+    config: &QuestBrokerRuntimeConfig,
+    provider_epoch_id: &DottedId,
+    lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+) -> Result<Option<Arc<RwLock<ManifoldPeerRuntimeHost>>>, QuestBrokerRuntimeError> {
     if effective_media_bindings(config).is_empty() {
         return Ok(None);
     }
@@ -2281,43 +2622,54 @@ fn build_media_peer_runtime_host(
         return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
     }
     let duplex = config.embedded_duplex.as_ref();
-    let trust_policy = ManifoldPeerRuntimeTrustPolicy {
-        schema_id: schema(PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA),
-        policy_id: DottedId::new(format!(
-            "policy.quest.media-runtime.{}",
-            config.product_lock.product_id.as_str()
-        ))
-        .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?,
-        revision: Revision::INITIAL,
-        enabled_authority_families: if duplex.is_some() {
-            vec![
-                ManifoldPeerRuntimeAuthorityFamily::PeerStatus,
-                ManifoldPeerRuntimeAuthorityFamily::Enrollment,
-                ManifoldPeerRuntimeAuthorityFamily::Rendezvous,
-                ManifoldPeerRuntimeAuthorityFamily::MediaSession,
-            ]
-        } else {
-            vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession]
-        },
-        trusted_operator_ids: duplex
-            .map_or_else(Vec::new, |value| value.trusted_operator_ids.clone()),
-        trusted_key_fingerprints: duplex
-            .map_or_else(Vec::new, |value| value.trusted_key_fingerprints.clone()),
-        trusted_adapter_ids: duplex
-            .map_or_else(Vec::new, |value| value.trusted_adapter_ids.clone()),
-        trusted_mesh_proposer_ids: Vec::new(),
-        media_client_grants: grants,
-        trusted_media_revoker_ids: duplex.map_or_else(
-            || vec![DottedId::new("operator.quest.media-runtime").expect("static revoker")],
-            |value| value.trusted_media_revoker_ids.clone(),
-        ),
-        direct_lane_client_grants: Vec::new(),
-        trusted_direct_lane_revoker_ids: Vec::new(),
-        media_runtime_host_id: media_runtime_host_id.clone(),
-        media_runtime_lease_scope_id: media_scope.clone(),
-        direct_lane_runtime_lease_scope_id: DottedId::new("lease.direct-lane")
-            .expect("static direct lane scope"),
-    };
+    let mut trust_policy =
+        ManifoldPeerRuntimeTrustPolicy::finite(ManifoldPeerRuntimeTrustPolicyFieldsV1 {
+            schema_id: schema(PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA),
+            policy_id: DottedId::new(format!(
+                "policy.quest.media-runtime.{}",
+                config.product_lock.product_id.as_str()
+            ))
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?,
+            revision: Revision::INITIAL,
+            enabled_authority_families: if duplex.is_some() {
+                vec![
+                    ManifoldPeerRuntimeAuthorityFamily::PeerStatus,
+                    ManifoldPeerRuntimeAuthorityFamily::Enrollment,
+                    ManifoldPeerRuntimeAuthorityFamily::Rendezvous,
+                    ManifoldPeerRuntimeAuthorityFamily::MediaSession,
+                ]
+            } else {
+                vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession]
+            },
+            trusted_operator_ids: duplex
+                .map_or_else(Vec::new, |value| value.trusted_operator_ids.clone()),
+            trusted_key_fingerprints: duplex
+                .map_or_else(Vec::new, |value| value.trusted_key_fingerprints.clone()),
+            trusted_adapter_ids: duplex
+                .map_or_else(Vec::new, |value| value.trusted_adapter_ids.clone()),
+            trusted_mesh_proposer_ids: Vec::new(),
+            media_client_grants: grants,
+            trusted_media_revoker_ids: duplex.map_or_else(
+                || vec![DottedId::new("operator.quest.media-runtime").expect("static revoker")],
+                |value| value.trusted_media_revoker_ids.clone(),
+            ),
+            direct_lane_client_grants: Vec::new(),
+            trusted_direct_lane_revoker_ids: Vec::new(),
+            media_runtime_host_id: media_runtime_host_id.clone(),
+            media_runtime_lease_scope_id: media_scope.clone(),
+            direct_lane_runtime_lease_scope_id: DottedId::new("lease.direct-lane")
+                .expect("static direct lane scope"),
+        });
+    if lifetime_policy.is_some() {
+        trust_policy.schema_id =
+            schema(rusty_manifold_peer_runtime_host::DEVELOPMENT_PEER_TRUST_POLICY_SCHEMA);
+    }
+    trust_policy.fresh_setup_local_peer_id =
+        duplex.and_then(|d| d.fresh_setup_local_peer_id.clone());
+    trust_policy.fresh_setup_enrollment_selection =
+        duplex.and_then(|d| d.fresh_setup_enrollment_selection.clone());
+    trust_policy.fresh_setup_policy = duplex
+        .and_then(|d| d.selected_fresh_setup_build_policy_with_lifetime_policy(lifetime_policy));
     let mut media_command_ids = vec![
         MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND,
         rusty_manifold_media_session::MANIFOLD_MEDIA_SESSION_REVOKE_COMMAND,
@@ -2340,24 +2692,38 @@ fn build_media_peer_runtime_host(
         .collect::<Vec<_>>();
     media_commands.sort_by(|left, right| left.command_id.cmp(&right.command_id));
     let peer_runtime_host_id = media_runtime_host_id.clone();
-    let media_command_runtime = ManifoldRuntimeHostSnapshot {
-        schema_id: schema(HOST_SNAPSHOT_SCHEMA),
-        host_id: media_runtime_host_id,
-        authority_revision: Revision::INITIAL,
-        commands: media_commands,
-        leases: Vec::new(),
-        applied_request_ids: Vec::new(),
-        reviewed_sweep_ids: Vec::new(),
-        reviewed_control_lease_adoption_ids: Vec::new(),
-        reviewed_derivative_lease_revocation_ids: Vec::new(),
-        audit_events: Vec::new(),
-    };
-    let host = ManifoldPeerRuntimeHost::new(
-        peer_runtime_host_id,
-        trust_policy,
-        provider_epoch_id.clone(),
-        media_command_runtime,
-    )
+    let media_command_runtime =
+        ManifoldRuntimeHostSnapshot::initial(media_runtime_host_id, media_commands, Vec::new());
+    let host = match (trust_policy.fresh_setup_policy.is_some(), lifetime_policy) {
+        (true, Some(policy)) => {
+            ManifoldPeerRuntimeHost::new_with_fresh_pair_setup_and_lifetime_policy(
+                peer_runtime_host_id,
+                trust_policy,
+                provider_epoch_id.clone(),
+                media_command_runtime,
+                policy,
+            )
+        }
+        (false, Some(policy)) => ManifoldPeerRuntimeHost::new_with_lifetime_policy(
+            peer_runtime_host_id,
+            trust_policy,
+            provider_epoch_id.clone(),
+            media_command_runtime,
+            policy,
+        ),
+        (true, None) => ManifoldPeerRuntimeHost::new_with_fresh_pair_setup(
+            peer_runtime_host_id,
+            trust_policy,
+            provider_epoch_id.clone(),
+            media_command_runtime,
+        ),
+        (false, None) => ManifoldPeerRuntimeHost::new(
+            peer_runtime_host_id,
+            trust_policy,
+            provider_epoch_id.clone(),
+            media_command_runtime,
+        ),
+    }
     .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
     Ok(Some(Arc::new(RwLock::new(host))))
 }
@@ -3112,8 +3478,10 @@ impl std::error::Error for QuestBrokerRuntimeError {}
 
 #[cfg(test)]
 mod tests {
+    include!("construction_custody_tests.rs");
     include!("pair_renewal_tests.rs");
     include!("coupled_renewal_tests.rs");
+    include!("source_bound_roots_tests.rs");
     include!("broker_peer_routes_tests.rs");
     fn concurrent_provider() -> QuestBrokerRuntimeProvider {
         let runtime = runtime_for(
@@ -3247,7 +3615,6 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use rusty_manifold_admission::{
         ManifoldAdmissionGrant, ManifoldAdmissionSnapshot, ManifoldClientIdentity,
-        ADMISSION_SNAPSHOT_SCHEMA,
     };
     use rusty_manifold_broker_adapter::{
         command_capability, ManifoldBrokerMutationRejectionReason, BROKER_ADAPTER_CONFIG_SCHEMA,
@@ -3277,6 +3644,10 @@ mod tests {
         QuestAndroidBinderCaller, QUEST_ADMISSION_OPERATION_SCHEMA,
     };
     use rusty_quest_media_stream_android::DeterministicAndroidMediaOwnerExecutor;
+
+    mod recipient_generation {
+        include!("recipient_generation_tests.rs");
+    }
 
     fn id(value: &str) -> DottedId {
         DottedId::new(value).expect("id")
@@ -3619,11 +3990,9 @@ mod tests {
             initial_leases: lease.into_iter().collect(),
             admission: QuestBrokerAdmissionConfig {
                 schema_id: QUEST_ADMISSION_CONFIG_SCHEMA.to_owned(),
-                snapshot: ManifoldAdmissionSnapshot {
-                    schema_id: schema(ADMISSION_SNAPSHOT_SCHEMA),
-                    authority_id: id("authority.admission.quest.runtime"),
-                    authority_revision: Revision::new(1).expect("revision"),
-                    grants: vec![ManifoldAdmissionGrant {
+                snapshot: ManifoldAdmissionSnapshot::initial(
+                    id("authority.admission.quest.runtime"),
+                    vec![ManifoldAdmissionGrant {
                         grant_id: id("grant.quest.runtime"),
                         client_lock_id: client_lock.feature_lock_id.clone(),
                         client_lock_fingerprint: format!("sha256:{}", client_lock_sha256),
@@ -3632,14 +4001,9 @@ mod tests {
                         expires_at_ms: 100_000,
                         revoked: false,
                     }],
-                    active_tokens: Vec::new(),
-                    revoked_token_ids: Vec::new(),
-                    consumed_request_ids: Vec::new(),
-                    consumed_use_request_ids: Vec::new(),
-                    reviewed_sweep_ids: Vec::new(),
-                    audit_events: Vec::new(),
-                    max_token_ttl_ms: 30_000,
-                },
+                    Vec::new(),
+                    30_000,
+                ),
             },
             media_session,
             media_sessions: Vec::new(),
@@ -3907,6 +4271,98 @@ mod tests {
     }
 
     #[test]
+    fn development_constructor_preserves_legacy_literal_and_requires_trusted_selection() {
+        // Exact public literal shape predating lifetime selection: no new field.
+        let legacy = QuestEmbeddedDuplexAuthorityConfig {
+            fresh_setup_local_peer_id: None,
+            fresh_setup_enrollment_selection: None,
+            ongoing_media_policy: None,
+            schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.into(),
+            runtime_host_id: id("host.quest.development"),
+            trusted_operator_ids: vec![id("operator.quest.peer-enrollment")],
+            trusted_key_fingerprints: vec![id("fingerprint.peer.quest-a")],
+            trusted_adapter_ids: vec![id("adapter.quest.embedded-duplex")],
+            trusted_media_revoker_ids: vec![id("operator.quest.media-revoker")],
+        };
+        let mut selected = config(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        )
+        .with_embedded_duplex(legacy)
+        .unwrap();
+        selected.embedded_duplex.as_mut().unwrap().schema_id =
+            crate::QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA.into();
+        selected.admission.snapshot.schema_id =
+            schema(rusty_manifold_admission::DEVELOPMENT_ADMISSION_SNAPSHOT_SCHEMA);
+        let policy = rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::source_owned_v1();
+        let entropy = "12".repeat(32);
+        assert!(QuestBrokerAuthorityRuntime::from_config(
+            selected.clone(),
+            &entropy,
+            1_000,
+            1_000_000
+        )
+        .is_err());
+        let runtime = QuestBrokerAuthorityRuntime::from_config_with_lifetime_policy(
+            selected.clone(),
+            &entropy,
+            1_000,
+            1_000_000,
+            policy,
+        )
+        .unwrap();
+        assert_eq!(
+            runtime
+                .runtime
+                .read()
+                .unwrap()
+                .development_lifetime_policy(),
+            Some(policy)
+        );
+        assert_eq!(
+            runtime
+                .peer_runtime_host
+                .as_ref()
+                .unwrap()
+                .read()
+                .unwrap()
+                .development_lifetime_policy(),
+            Some(policy)
+        );
+        let authority = runtime.embedded_duplex_authority().unwrap();
+        let retained = authority.snapshot_json().unwrap();
+        authority.restore_snapshot_json(&retained).unwrap();
+        assert_eq!(authority.snapshot_json().unwrap(), retained);
+        let json = serde_json::to_string(&selected).unwrap();
+        assert!(!json.contains("\"development_lifetime_policy\""));
+        let sha = canonical_runtime_config_sha256(&json).unwrap();
+        let mut provider = QuestBrokerRuntimeProvider::default();
+        assert!(provider
+            .initialize(&json, &sha, &entropy, 1_000, 1_000_000)
+            .is_err());
+        provider
+            .initialize_with_lifetime_policy(&json, &sha, &entropy, 1_000, 1_000_000, Some(policy))
+            .unwrap();
+        assert!(provider
+            .initialize(&json, &sha, &entropy, 1_000, 1_000_000)
+            .is_err());
+        let mut changed = policy.clone();
+        changed.delegated_authority_horizon_ms += 1;
+        assert!(provider
+            .initialize_with_lifetime_policy(
+                &json,
+                &sha,
+                &entropy,
+                1_000,
+                1_000_000,
+                Some(&changed)
+            )
+            .is_err());
+    }
+
+    #[test]
     fn embedded_duplex_enables_exact_mixed_authority_and_route_commands() {
         let mut runtime_config = config(
             QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
@@ -3916,6 +4372,9 @@ mod tests {
         );
         runtime_config = runtime_config
             .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+                fresh_setup_local_peer_id: None,
+                fresh_setup_enrollment_selection: None,
+                ongoing_media_policy: None,
                 schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),
                 runtime_host_id: id("host.quest-a.media-runtime"),
                 trusted_operator_ids: vec![id("operator.quest.peer-enrollment")],
@@ -4191,6 +4650,201 @@ mod tests {
             ),
             Err(QuestBrokerRuntimeError::LegacyRuntimeConfigRequiresRebuild)
         ));
+    }
+
+    fn finite_initialization_fixture(horizon: u64) -> QuestBrokerRuntimeConfig {
+        let mut config = config(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        config.admission.snapshot.grants[0].expires_at_ms = 1_000 + horizon;
+        config.initial_leases[0].expires_at_ms = 1_000 + horizon;
+        config.admission.snapshot.root_renewal_policies = vec![
+            rusty_manifold_admission::ManifoldAdmissionRootRenewalPolicy {
+                grant_id: config.admission.snapshot.grants[0].grant_id.clone(),
+                horizon_ms: horizon,
+            },
+        ];
+        config
+    }
+
+    fn initialize_fixture(
+        config: &QuestBrokerRuntimeConfig,
+        now: i64,
+    ) -> Result<QuestBrokerRuntimeProvider, QuestBrokerRuntimeError> {
+        let raw = serde_json::to_string(config).unwrap();
+        let sha = sha256_hex(raw.as_bytes());
+        let mut provider = QuestBrokerRuntimeProvider::default();
+        let status = provider.initialize(&raw, &sha, &"12".repeat(32), now, 1_000_000_000)?;
+        assert_eq!(status.config_sha256, sha);
+        assert!(!status.existing_authority_preserved);
+        Ok(provider)
+    }
+
+    #[test]
+    fn finite_initialization_accepts_elapsed_issuance_without_extending_expiry() {
+        for horizon in [300_000, 1_800_000, 3_600_000] {
+            for delay in [0, 1, 100, 1_000, 60_000] {
+                let config = finite_initialization_fixture(horizon);
+                let provider =
+                    initialize_fixture(&config, 1_000 + delay).expect("live delayed provider");
+                let runtime = provider.runtime.as_ref().unwrap();
+                let evidence = runtime.evidence().unwrap();
+                assert_eq!(
+                    evidence.runtime.host_snapshot.leases[0].expires_at_ms,
+                    1_000 + horizon
+                );
+                let admission: serde_json::Value =
+                    serde_json::from_str(&provider.admission_snapshot_json().unwrap()).unwrap();
+                assert_eq!(
+                    admission["grants"][0]["expires_at_ms"],
+                    serde_json::json!(1_000 + horizon)
+                );
+            }
+        }
+        let legacy = config(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        assert!(legacy.admission.snapshot.root_renewal_policies.is_empty());
+        initialize_fixture(&legacy, 2_000).expect("unchanged legacy default with delay");
+    }
+
+    #[test]
+    fn finite_initialization_rejects_expiry_future_and_mismatched_authority() {
+        let config = finite_initialization_fixture(1_800_000);
+        for now in [-1, 0, 999, 1_801_000, 1_801_001, i64::MAX] {
+            assert!(
+                matches!(
+                    initialize_fixture(&config, now),
+                    Err(QuestBrokerRuntimeError::ControlLeaseBootstrap)
+                ),
+                "clock {now}"
+            );
+        }
+        for horizon in [0, 299_999, 300_001, 3_600_001, u64::MAX] {
+            let mut bad = config.clone();
+            bad.admission.snapshot.root_renewal_policies[0].horizon_ms = horizon;
+            assert!(matches!(
+                initialize_fixture(&bad, 1_000),
+                Err(QuestBrokerRuntimeError::ControlLeaseBootstrap)
+            ));
+        }
+        for case in 0..5 {
+            let mut bad = config.clone();
+            match case {
+                0 => bad.initial_leases[0].expires_at_ms += 1,
+                1 => bad.initial_leases[0].holder_id = id("client.other"),
+                2 => bad.initial_leases[0].scope = id("lease.other"),
+                3 => bad.admission.snapshot.root_renewal_policies[0].grant_id = id("grant.other"),
+                _ => {
+                    bad.admission.snapshot.grants[0].expires_at_ms = u64::MAX;
+                    bad.initial_leases[0].expires_at_ms = u64::MAX;
+                }
+            }
+            assert!(
+                matches!(
+                    initialize_fixture(&bad, 1_000),
+                    Err(QuestBrokerRuntimeError::ControlLeaseBootstrap)
+                ),
+                "binding {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn finite_media_construction_preserves_initial_state_and_product_scope() {
+        for kind in [
+            QuestBrokerAuthorityBridgeKind::StandaloneProcessJni,
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+        ] {
+            let config = config(
+                kind,
+                vec![ManifoldBrokerFeature::MediaSession],
+                "command.media.session.start",
+                true,
+            );
+            let admission = &config.admission.snapshot;
+            assert_eq!(
+                admission.authority_id,
+                id("authority.admission.quest.runtime")
+            );
+            assert_eq!(admission.authority_revision, Revision::INITIAL);
+            assert_eq!(admission.max_token_ttl_ms, 30_000);
+            assert_eq!(admission.grants.len(), 1);
+            assert_eq!(admission.grants[0].grant_id, id("grant.quest.runtime"));
+            assert!(admission.root_renewal_policies.is_empty());
+            assert!(admission.active_tokens.is_empty());
+            assert!(admission.revoked_token_ids.is_empty());
+            assert!(admission.consumed_request_ids.is_empty());
+            assert!(admission.consumed_use_request_ids.is_empty());
+            assert!(admission.reviewed_sweep_ids.is_empty());
+            assert!(admission.audit_events.is_empty());
+
+            let epoch = id("epoch.quest.finite-construction");
+            let host = build_media_peer_runtime_host(&config, &epoch)
+                .expect("finite media host")
+                .expect("selected media host");
+            let host = host.read().expect("host read");
+            let snapshot = host.snapshot();
+            let policy = &snapshot.trust_policy;
+            assert_eq!(snapshot.provider_epoch_id, epoch);
+            assert_eq!(policy.revision, Revision::INITIAL);
+            assert_eq!(
+                policy.enabled_authority_families,
+                vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession]
+            );
+            assert!(policy.trusted_operator_ids.is_empty());
+            assert!(policy.trusted_key_fingerprints.is_empty());
+            assert!(policy.trusted_adapter_ids.is_empty());
+            assert!(policy.trusted_mesh_proposer_ids.is_empty());
+            assert_eq!(policy.media_client_grants.len(), 1);
+            assert_eq!(
+                policy.trusted_media_revoker_ids,
+                vec![id("operator.quest.media-runtime")]
+            );
+            assert!(policy.direct_lane_client_grants.is_empty());
+            assert!(policy.trusted_direct_lane_revoker_ids.is_empty());
+            assert_eq!(
+                policy.media_runtime_lease_scope_id,
+                id("lease.media.session")
+            );
+            assert_eq!(
+                policy.direct_lane_runtime_lease_scope_id,
+                id("lease.direct-lane")
+            );
+
+            let runtime = &snapshot.media_command_runtime;
+            assert_eq!(runtime.host_id, policy.media_runtime_host_id);
+            assert_eq!(runtime.authority_revision, Revision::INITIAL);
+            assert_eq!(
+                runtime
+                    .commands
+                    .iter()
+                    .map(|command| command.command_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![
+                    MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND,
+                    rusty_manifold_media_session::MANIFOLD_MEDIA_SESSION_REVOKE_COMMAND,
+                    MANIFOLD_MEDIA_SESSION_STOP_COMMAND
+                ]
+            );
+            assert!(runtime
+                .commands
+                .iter()
+                .all(|command| command.required_lease_scope.as_ref()
+                    == Some(&policy.media_runtime_lease_scope_id)));
+            assert!(runtime.leases.is_empty());
+            assert!(runtime.applied_request_ids.is_empty());
+            assert!(runtime.reviewed_sweep_ids.is_empty());
+            assert!(runtime.reviewed_control_lease_adoption_ids.is_empty());
+            assert!(runtime.reviewed_derivative_lease_revocation_ids.is_empty());
+            assert!(runtime.audit_events.is_empty());
+        }
     }
 
     #[test]
@@ -5233,5 +5887,302 @@ mod tests {
             old_epoch.mutation_receipt.admission_rejection_reason,
             Some(ManifoldBrokerMutationRejectionReason::ProviderEpochMismatch)
         );
+    }
+}
+
+// Derive from the SAME immutable product factory used by actual construction.
+impl QuestEmbeddedDuplexAuthorityConfig {
+    pub fn selected_fresh_setup_build_policy(
+        &self,
+    ) -> Option<rusty_manifold_peer::ManifoldFreshPairSetupPolicy> {
+        self.selected_fresh_setup_build_policy_with_lifetime_policy(None)
+    }
+    /// Derives the build policy only with exact trusted source lifetime selection.
+    pub fn selected_fresh_setup_build_policy_with_lifetime_policy(
+        &self,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Option<rusty_manifold_peer::ManifoldFreshPairSetupPolicy> {
+        if !self.require_lifetime_policy_selection(lifetime_policy) {
+            return None;
+        }
+        self.fresh_setup_local_peer_id.as_ref().map(|_| {
+            rusty_manifold_peer::ManifoldFreshPairSetupPolicy {
+                schema_id: schema("rusty.manifold.peer.fresh_pair_setup_policy.v2"),
+                policy_id: DottedId::new("policy.quest.embedded-duplex.fresh-setup.v2")
+                    .expect("static policy"),
+                revision: Revision::INITIAL,
+                authorization:
+                    rusty_manifold_peer::ManifoldFreshPairSetupAuthorization::SourceBound,
+                credential_validity_ms:
+                    rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                        lifetime_policy,
+                        300_000,
+                    ),
+                initial_status: rusty_manifold_peer::ManifoldFreshPairSetupInitialStatusTemplate {
+                    schema_id: schema(
+                        "rusty.manifold.peer.fresh_pair_setup_initial_status_template.v1",
+                    ),
+                    trust_domain: DottedId::new("trust.morphospace.peer")
+                        .expect("static trust domain"),
+                    roles: vec![
+                        rusty_manifold_peer::ManifoldPeerRole::Observer,
+                        rusty_manifold_peer::ManifoldPeerRole::Rendezvous,
+                    ],
+                    capability_ids: vec![
+                        "capability.rendezvous.ble",
+                        "capability.route.rust-direct-p2p",
+                        "capability.topology.wifi-direct",
+                    ]
+                    .into_iter()
+                    .map(|id| DottedId::new(id).expect("static capability"))
+                    .collect(),
+                },
+            }
+        })
+    }
+    pub fn fresh_setup_build_policy_projection(&self) -> Result<Option<serde_json::Value>, String> {
+        self.fresh_setup_build_policy_projection_with_lifetime_policy(None)
+    }
+    /// Canonical selected projection requires independently trusted source selection.
+    pub fn fresh_setup_build_policy_projection_with_lifetime_policy(
+        &self,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Result<Option<serde_json::Value>, String> {
+        if !self.require_lifetime_policy_selection(lifetime_policy) {
+            return Err("lifetime policy selection differs".into());
+        }
+        let Some(policy) =
+            self.selected_fresh_setup_build_policy_with_lifetime_policy(lifetime_policy)
+        else {
+            if self.fresh_setup_enrollment_selection.is_some() {
+                return Err("unselected fresh config carries target".into());
+            }
+            return Ok(None);
+        };
+        if !self.validate() {
+            return Err("fresh build projection config invalid".into());
+        }
+        let selection = self
+            .fresh_setup_enrollment_selection
+            .as_ref()
+            .ok_or("fresh build target absent")?;
+        if !rusty_manifold_peer::fresh_setup_enrollment_selection_is_well_formed(selection) {
+            return Err("fresh build target invalid".into());
+        }
+        let digest = |domain: &str, value: &serde_json::Value| -> Result<String, String> {
+            let canonical =
+                rusty_manifold_peer::fresh_history_canonical(value).map_err(str::to_owned)?;
+            let mut bytes = domain.as_bytes().to_vec();
+            bytes.push(0);
+            bytes.extend(canonical);
+            Ok(format!(
+                "sha256:{}",
+                crate::packaged_json_sha256(
+                    std::str::from_utf8(&bytes).map_err(|_| "fresh build canonical UTF8")?
+                )
+            ))
+        };
+        let policy =
+            serde_json::to_value(policy).map_err(|_| "fresh policy projection encoding")?;
+        let target =
+            serde_json::to_value(selection).map_err(|_| "fresh target projection encoding")?;
+        Ok(Some(
+            serde_json::json!({"$schema":"rusty.quest.embedded_duplex.fresh_setup_build_policy.v1",
+            "selection":"source-bound-v2","policy_sha256":digest("rusty.quest.embedded_duplex.fresh_setup_build_policy.v1",&policy)?,
+            "enrollment_selection_sha256":digest("rusty.quest.embedded_duplex.fresh_setup_build_enrollment.v1",&target)?,"policy":policy}),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod fresh_build_policy_projection_controls {
+    use super::*;
+    #[test]
+    fn actual_typed_factory_and_canonical_projection_controls() {
+        use sha2::{Digest, Sha256};
+        let public = [
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        ];
+        let keys=public.iter().enumerate().map(|(i,value)|{
+            let bytes=(0..32).map(|n|u8::from_str_radix(&value[n*2..n*2+2],16).unwrap()).collect::<Vec<_>>();
+            let hash=format!("{:x}",Sha256::digest(bytes));let peer=if i==0{"peer.a"}else{"peer.b"};
+            serde_json::json!({"$schema":"rusty.manifold.peer.fresh_setup_enrollment_key.v1","peer_id":peer,
+                "credential_id":format!("credential.duplex.{peer}.1"),"trust_domain":"trust.morphospace.peer",
+                "key_id":format!("ed25519.{hash}"),"key_generation":1,"algorithm":"ed25519","public_key_hex":value,
+                "public_key_sha256":format!("sha256:{hash}"),"key_fingerprint":format!("fingerprint.{hash}")})
+        }).collect::<Vec<_>>();
+        let mut fingerprints = keys
+            .iter()
+            .map(|k| k["key_fingerprint"].clone())
+            .collect::<Vec<_>>();
+        fingerprints.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+        let mut config:QuestEmbeddedDuplexAuthorityConfig=serde_json::from_value(serde_json::json!({
+            "$schema":"rusty.quest.embedded_duplex.authority_config.v1","runtime_host_id":"host.fixture",
+            "trusted_operator_ids":["operator.quest.peer-enrollment"],"trusted_key_fingerprints":fingerprints,
+            "trusted_adapter_ids":["adapter.fixture"],"trusted_media_revoker_ids":["operator.fixture.revoker"],
+            "ongoing_media_policy":{"$schema":"rusty.manifold.peer.ongoing_media_policy.v2"},
+            "fresh_setup_local_peer_id":"peer.a","fresh_setup_enrollment_selection":{
+                "$schema":"rusty.manifold.peer.fresh_setup_enrollment_selection.v1","operator_id":"operator.quest.peer-enrollment","keys":keys}
+        })).unwrap();
+        assert!(config.validate());
+        let projection = config
+            .fresh_setup_build_policy_projection()
+            .unwrap()
+            .unwrap();
+        let policy = config.selected_fresh_setup_build_policy().unwrap();
+        assert_eq!(projection["policy"], serde_json::to_value(&policy).unwrap());
+        let mut development = config.clone();
+        let selected =
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::source_owned_v1().clone();
+        development.schema_id =
+            crate::QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA.into();
+        assert!(development.validate());
+        let long_policy = development
+            .selected_fresh_setup_build_policy_with_lifetime_policy(Some(&selected))
+            .unwrap();
+        assert_eq!(
+            long_policy.credential_validity_ms,
+            selected.delegated_authority_horizon_ms
+        );
+        assert!(long_policy.credential_validity_ms > i32::MAX as u64);
+        assert_ne!(
+            development
+                .fresh_setup_build_policy_projection_with_lifetime_policy(Some(&selected))
+                .unwrap()
+                .unwrap()["policy_sha256"],
+            projection["policy_sha256"]
+        );
+
+        assert_eq!(
+            policy.authorization,
+            rusty_manifold_peer::ManifoldFreshPairSetupAuthorization::SourceBound
+        );
+        if let Ok(path) = std::env::var("RQ_FRESH_BUILD_POLICY_VECTOR_OUTPUT") {
+            use std::io::Write;
+            let record = serde_json::json!({"$schema":"rusty.quest.fresh_setup_build_policy_vector.v1","config":config,"projection":projection,
+                "policy_canonical_json":String::from_utf8(rusty_manifold_peer::fresh_history_canonical(&policy).unwrap()).unwrap(),
+                "enrollment_selection_canonical_json":String::from_utf8(rusty_manifold_peer::fresh_history_canonical(config.fresh_setup_enrollment_selection.as_ref().unwrap()).unwrap()).unwrap()});
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap();
+            file.write_all(&serde_json::to_vec(&record).unwrap())
+                .unwrap();
+            file.sync_all().unwrap();
+        }
+        // Dotted peer identities are selected by exact immutable key membership,
+        // not by a fixture-only prefix. This models a namespaced product target.
+        let namespaced = serde_json::to_string(&config)
+            .unwrap()
+            .replace("peer.a", "product.peer.a")
+            .replace("peer.b", "product.peer.b");
+        let namespaced: QuestEmbeddedDuplexAuthorityConfig =
+            serde_json::from_str(&namespaced).unwrap();
+        assert!(namespaced.validate());
+        assert!(namespaced.fresh_setup_build_policy_projection().is_ok());
+        let mut foreign = namespaced.clone();
+        foreign.fresh_setup_local_peer_id = Some(DottedId::new("product.peer.other").unwrap());
+        assert!(
+            !foreign.validate(),
+            "local peer must match selected enrollment key"
+        );
+        foreign.fresh_setup_local_peer_id = namespaced.fresh_setup_local_peer_id.clone();
+        foreign.ongoing_media_policy = Some(
+            rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1(),
+        );
+        assert!(
+            !foreign.validate(),
+            "selected fresh requires actual ongoing v2"
+        );
+        let mut bad = config.clone();
+        bad.fresh_setup_enrollment_selection.as_mut().unwrap().keys[0].public_key_sha256 =
+            "sha256:".to_owned() + &"0".repeat(64);
+        assert!(bad.fresh_setup_build_policy_projection().is_err());
+        config.fresh_setup_local_peer_id = None;
+        assert!(config.fresh_setup_build_policy_projection().is_err());
+        config.fresh_setup_enrollment_selection = None;
+        assert!(config
+            .fresh_setup_build_policy_projection()
+            .unwrap()
+            .is_none());
+    }
+}
+
+/// Effect-free owning projection from caller-pinned typed CONFIGURATION DATA.
+/// This does not construct an authority, reserve a future runtime incarnation,
+/// certify installed keys, or certify the later ARM runtime_config_sha256.
+#[cfg(test)]
+mod fresh_build_target_data_export {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+    #[test]
+    fn export_pinned_actual_target_configuration_data() {
+        let values = (
+            std::env::var("RQ_FRESH_BUILD_TARGET_CONFIG_INPUT"),
+            std::env::var("RQ_FRESH_BUILD_TARGET_CONFIG_RAW_SHA256"),
+            std::env::var("RQ_FRESH_BUILD_TARGET_PROJECTION_OUTPUT"),
+        );
+        let (path, expected, output) = match values {
+            (
+                Err(std::env::VarError::NotPresent),
+                Err(std::env::VarError::NotPresent),
+                Err(std::env::VarError::NotPresent),
+            ) => return,
+            (Ok(path), Ok(expected), Ok(output)) => (path, expected, output),
+            _ => panic!("target exporter requires all three explicit DATA bindings"),
+        };
+        assert_ne!(std::path::Path::new(&path), std::path::Path::new(&output));
+        let raw = std::fs::read(&path).expect("target Config DATA read");
+        let raw_sha = format!("{:x}", Sha256::digest(&raw));
+        assert_eq!(
+            expected, raw_sha,
+            "caller-pinned target Config DATA changed"
+        );
+        let config: QuestEmbeddedDuplexAuthorityConfig =
+            serde_json::from_slice(&raw).expect("closed owning typed config");
+        assert!(config.validate(), "actual typed target config invalid");
+        let policy = config
+            .selected_fresh_setup_build_policy()
+            .expect("explicit selected fresh target required");
+        let projection = config
+            .fresh_setup_build_policy_projection()
+            .expect("owning typed projection")
+            .expect("selected projection");
+        let selection = config
+            .fresh_setup_enrollment_selection
+            .as_ref()
+            .expect("selected immutable enrollment target");
+        let policy_bytes =
+            rusty_manifold_peer::fresh_history_canonical(&policy).expect("owning canonical policy");
+        let selection_bytes = rusty_manifold_peer::fresh_history_canonical(selection)
+            .expect("owning canonical target");
+        let record = serde_json::json!({
+            "$schema":"rusty.quest.fresh_setup_build_target_projection.v1",
+            "evidence_kind":"effect_free_configuration_data_projection",
+            "input_raw_sha256":raw_sha,
+            "config":config,
+            "projection":projection,
+            "policy_canonical_json":String::from_utf8(policy_bytes).expect("canonical UTF8"),
+            "enrollment_selection_canonical_json":String::from_utf8(selection_bytes).expect("canonical UTF8"),
+            "authority_constructed":false,
+            "installed_keys_observed":false,
+            "future_runtime_config_bound":false
+        });
+        assert_eq!(
+            std::fs::read(&path).expect("final target DATA race check"),
+            raw,
+            "target DATA changed during projection"
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)
+            .expect("new immutable projection output");
+        file.write_all(&serde_json::to_vec(&record).expect("typed projection output"))
+            .expect("projection write");
+        file.sync_all().expect("projection durable output");
     }
 }

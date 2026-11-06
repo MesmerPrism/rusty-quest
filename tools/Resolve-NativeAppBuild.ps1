@@ -1026,8 +1026,8 @@ function Resolve-NativePanelComposition {
         if ($selectedModuleId -cne 'visual-showcase-controls') { throw 'Showcase presentation requires its own controls.' }
         $presentation = $Features['ui.native_mesh_panel.showcase'].descriptor.panel_source_module
         $base = 'apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/'
-        $exact = @('NativeMeshUiProducer.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' | ForEach-Object { $base + $_ }) + @('apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseNativeActivity.java')
-        if ($presentation.module_id -cne 'showcase-native-presentation' -or [string]$presentation.entry_class -cne '' -or @($presentation.dependencies).Count -ne 0 -or @($presentation.source_files).Count -ne 6 -or [string]::Join('|',@($presentation.source_files | Sort-Object)) -cne [string]::Join('|',@($exact | Sort-Object))) { throw 'Exact neutral showcase presentation source closure required.' }
+        $exact = @('NativeMeshUiProducer.java','NativeInputWidgetGeometry.java','NativePageSnapshot.java','NativePanelFont.java','NativeSystemKeyboard.java','NativeRendererActivityComponents.java' | ForEach-Object { $base + $_ }) + @('apps/native-renderer-android/panel-modules/showcase/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ShowcaseNativeActivity.java')
+        if ($presentation.module_id -cne 'showcase-native-presentation' -or [string]$presentation.entry_class -cne '' -or @($presentation.dependencies).Count -ne 0 -or @($presentation.source_files).Count -ne 7 -or [string]::Join('|',@($presentation.source_files | Sort-Object)) -cne [string]::Join('|',@($exact | Sort-Object))) { throw 'Exact neutral showcase presentation source closure required.' }
         $modulesById['showcase-native-presentation'] = $presentation
         $modulesById[$selectedModuleId].dependencies = @($modulesById[$selectedModuleId].dependencies) + 'showcase-native-presentation'
     }

@@ -1,0 +1,25 @@
+[versions]
+spatial = "0.14.0"
+agp = "8.11.1"
+kotlin = "2.2.0"
+compose-bom = "2024.09.03"
+
+[libraries]
+meta-spatial-base = { module = "com.meta.spatial:meta-spatial-sdk", version.ref = "spatial" }
+meta-spatial-vr = { module = "com.meta.spatial:meta-spatial-sdk-vr", version.ref = "spatial" }
+meta-spatial-toolkit = { module = "com.meta.spatial:meta-spatial-sdk-toolkit", version.ref = "spatial" }
+meta-spatial-compose = { module = "com.meta.spatial:meta-spatial-sdk-compose", version.ref = "spatial" }
+meta-spatial-hotreload = { module = "com.meta.spatial:meta-spatial-sdk-hotreload", version.ref = "spatial" }
+meta-spatial-isdk = { module = "com.meta.spatial:meta-spatial-sdk-isdk", version.ref = "spatial" }
+androidx-core = { module = "androidx.core:core-ktx", version = "1.13.1" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version = "1.9.2" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-tooling = { module = "androidx.compose.ui:ui-tooling" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+meta-spatial = { id = "com.meta.spatial.plugin", version.ref = "spatial" }

@@ -504,7 +504,8 @@ impl SessionRecordingWriter {
         change: crate::session_recording_contract::BiasChange,
     ) -> Result<ControlReceipt<()>, String> {
         let (reply, receiver) = mpsc::channel();
-        self.control_sender.send(ControlCommand::RecordBiasChange { change, reply })
+        self.control_sender
+            .send(ControlCommand::RecordBiasChange { change, reply })
             .map_err(|_| "recording-writer-closed".to_owned())?;
         Ok(ControlReceipt { receiver })
     }
@@ -757,7 +758,9 @@ fn handle_control(
         }
         ControlCommand::RecordBiasChange { change, reply } => {
             let generation = change.generation;
-            let result = active.as_mut().ok_or_else(|| "recording-not-active".to_owned())
+            let result = active
+                .as_mut()
+                .ok_or_else(|| "recording-not-active".to_owned())
                 .and_then(|recording| {
                     if recording.generation != generation {
                         return Err("recording-generation-stale".to_owned());
@@ -766,21 +769,38 @@ fn handle_control(
                         return Err(format!("recording-writer-fault:{error}"));
                     }
                     let previous_bias = recording.last_bias_change.as_ref();
-                    let previous_percent = previous_bias.map_or(recording.spec.experiment_identity.breath_guidance_bias_percent, |c| c.new_bias_percent);
+                    let previous_percent = previous_bias.map_or(
+                        recording
+                            .spec
+                            .experiment_identity
+                            .breath_guidance_bias_percent,
+                        |c| c.new_bias_percent,
+                    );
                     let previous_revision = previous_bias.map_or(0, |c| c.bias_revision);
                     if recording.spec.experiment_identity.breath_guidance.is_none()
                         || change.old_bias_percent != previous_percent
                         || change.bias_revision != previous_revision + 1
-                        || previous_bias.is_some_and(|c| change.observed_at < c.observed_at) {
+                        || previous_bias.is_some_and(|c| change.observed_at < c.observed_at)
+                    {
                         return Err("recording-bias-chain-invalid".to_owned());
                     }
-                    recording.write_record(recording.written_sequence, &SessionRecord::BiasChange(change.clone()))?;
+                    recording.write_record(
+                        recording.written_sequence,
+                        &SessionRecord::BiasChange(change.clone()),
+                    )?;
                     recording.last_bias_change = Some(change);
-                    recording.checkpoint(recording.completion_durable,
-                        loss_snapshot(admission, external_loss, generation)).map(|_| ())
+                    recording
+                        .checkpoint(
+                            recording.completion_durable,
+                            loss_snapshot(admission, external_loss, generation),
+                        )
+                        .map(|_| ())
                 });
             if let Err(error) = &result {
-                if let Some(recording) = active.as_mut().filter(|recording| recording.generation == generation) {
+                if let Some(recording) = active
+                    .as_mut()
+                    .filter(|recording| recording.generation == generation)
+                {
                     recording.last_error = Some(error.clone());
                 }
             }
@@ -1467,8 +1487,8 @@ fn sync_directory(_directory: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::session_recording_recovery::recover_recordings;
     use super::*;
+    use crate::session_recording_recovery::recover_recordings;
     use std::{
         sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
@@ -1662,34 +1682,84 @@ pub(crate) mod tests {
         let root = temp_root("bias-checkpoint-failure");
         let writer = SessionRecordingWriter::spawn(config(root.clone(), 16, 1000)).unwrap();
         let mut start = spec(1_725_000_000_000_000_000);
-        start.experiment_identity.breath_guidance = Some(crate::breath_guidance::BreathGuidanceAssetIdentity {
-            logical_destination: "breath-guidance/condition-a.json".to_owned(),
-            source_sha256: "55".repeat(32), source_bytes: 123, media_type: "application/json".to_owned(),
-        });
+        start.experiment_identity.breath_guidance =
+            Some(crate::breath_guidance::BreathGuidanceAssetIdentity {
+                logical_destination: "breath-guidance/condition-a.json".to_owned(),
+                source_sha256: "55".repeat(32),
+                source_bytes: 123,
+                media_type: "application/json".to_owned(),
+            });
         let prepared = writer.prepare(1, start).unwrap().receive().unwrap();
-        let original_length = fs::metadata(prepared.directory.join("events.jsonl")).unwrap().len();
-        fs::create_dir(prepared.directory.join("checkpoint-00000000000000000002.json")).unwrap();
-        let result = writer.record_bias_change(crate::session_recording_contract::BiasChange {
-            observed_at: MonotonicNanos::new(2000), generation:1, operation_id:"bias-disk-failure".to_owned(),
-            operator_origin:"ui-session-v2".to_owned(), old_bias_percent:0,new_bias_percent:60,bias_revision:1,
-        }).unwrap().receive();
+        let original_length = fs::metadata(prepared.directory.join("events.jsonl"))
+            .unwrap()
+            .len();
+        fs::create_dir(
+            prepared
+                .directory
+                .join("checkpoint-00000000000000000002.json"),
+        )
+        .unwrap();
+        let result = writer
+            .record_bias_change(crate::session_recording_contract::BiasChange {
+                observed_at: MonotonicNanos::new(2000),
+                generation: 1,
+                operation_id: "bias-disk-failure".to_owned(),
+                operator_origin: "ui-session-v2".to_owned(),
+                old_bias_percent: 0,
+                new_bias_percent: 60,
+                bias_revision: 1,
+            })
+            .unwrap()
+            .receive();
         assert!(result.is_err());
         let failed_event_bytes = fs::read(prepared.directory.join("events.jsonl")).unwrap();
-        fs::remove_dir(prepared.directory.join("checkpoint-00000000000000000002.json")).unwrap();
+        fs::remove_dir(
+            prepared
+                .directory
+                .join("checkpoint-00000000000000000002.json"),
+        )
+        .unwrap();
         // Storage is writable again, but this actor has already lost durability.
         // Without the sticky-fault admission check this valid next revision succeeds.
-        let second = writer.record_bias_change(crate::session_recording_contract::BiasChange {
-            observed_at: MonotonicNanos::new(2500), generation:1, operation_id:"bias-after-fault".to_owned(),
-            operator_origin:"ui-session-v2".to_owned(), old_bias_percent:60,new_bias_percent:80,bias_revision:2,
-        }).unwrap().receive();
+        let second = writer
+            .record_bias_change(crate::session_recording_contract::BiasChange {
+                observed_at: MonotonicNanos::new(2500),
+                generation: 1,
+                operation_id: "bias-after-fault".to_owned(),
+                operator_origin: "ui-session-v2".to_owned(),
+                old_bias_percent: 60,
+                new_bias_percent: 80,
+                bias_revision: 2,
+            })
+            .unwrap()
+            .receive();
         assert!(second.unwrap_err().starts_with("recording-writer-fault:"));
-        assert_eq!(fs::read(prepared.directory.join("events.jsonl")).unwrap(), failed_event_bytes);
-        assert!(writer.try_finalize(1, MonotonicNanos::new(3000), FinalizationReason::SaveAndExit, false)
-            .unwrap().receive().is_err());
+        assert_eq!(
+            fs::read(prepared.directory.join("events.jsonl")).unwrap(),
+            failed_event_bytes
+        );
+        assert!(writer
+            .try_finalize(
+                1,
+                MonotonicNanos::new(3000),
+                FinalizationReason::SaveAndExit,
+                false
+            )
+            .unwrap()
+            .receive()
+            .is_err());
         writer.shutdown(Duration::from_secs(2)).unwrap();
         let recovery = crate::session_recording_recovery::recover_recordings(&root).unwrap();
-        assert_eq!(recovery.sessions[0].durable_stream_lengths["events.jsonl"], original_length);
-        assert!(fs::metadata(prepared.directory.join("events.jsonl")).unwrap().len() > original_length);
+        assert_eq!(
+            recovery.sessions[0].durable_stream_lengths["events.jsonl"],
+            original_length
+        );
+        assert!(
+            fs::metadata(prepared.directory.join("events.jsonl"))
+                .unwrap()
+                .len()
+                > original_length
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

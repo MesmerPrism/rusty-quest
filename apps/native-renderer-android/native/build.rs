@@ -7,11 +7,20 @@ use std::{
 
 fn main() {
     if env::var_os("CARGO_FEATURE_SHOWCASE").is_some() {
-        for name in ["RUSTY_QUEST_NATIVE_RECORDING_EXPORT","RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED"] {
+        for name in [
+            "RUSTY_QUEST_NATIVE_RECORDING_EXPORT",
+            "RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED",
+        ] {
             println!("cargo:rerun-if-env-changed={name}");
-            assert!(env::var(name).ok().is_none_or(|v|v=="false"), "forbidden showcase capability: {name}");
+            assert!(
+                env::var(name).ok().is_none_or(|v| v == "false"),
+                "forbidden showcase capability: {name}"
+            );
         }
-        assert!(env::var_os("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_none(), "showcase cannot select captured hand source");
+        assert!(
+            env::var_os("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_none(),
+            "showcase cannot select captured hand source"
+        );
     }
 
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDING_EXPORT");
@@ -24,6 +33,27 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/native_panel_ui.frag.glsl");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE");
+    println!("cargo:rustc-check-cfg=cfg(native_meta_xr_operator)");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED");
+    let operator_feature = env::var_os("CARGO_FEATURE_META_XR_OPERATOR").is_some();
+    let operator_selected =
+        env::var("RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED").as_deref() == Ok("true");
+    assert_eq!(
+        operator_feature, operator_selected,
+        "Operator feature requires its exact selected app build input"
+    );
+    if operator_selected {
+        assert_eq!(
+            env::var("RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED").as_deref(),
+            Ok("true"),
+            "Operator requires the development host"
+        );
+        println!("cargo:rustc-cfg=native_meta_xr_operator");
+    }
+    println!("cargo:rustc-check-cfg=cfg(native_development_feedback)");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED");
+    println!("cargo:rerun-if-changed=shaders/development_feedback_scene.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/development_feedback_scene.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/mesh_ui_panel.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/mesh_ui_panel.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/mesh_pointer.frag.glsl");
@@ -282,6 +312,18 @@ fn main() {
             "Android shader build needs glslc. Put glslc on PATH, set GLSLC, or set ANDROID_NDK_HOME."
         )
     });
+    if env::var("RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED").as_deref() == Ok("true")
+    {
+        println!("cargo:rustc-cfg=native_development_feedback");
+        for (stage, suffix) in [("vertex", "vert"), ("fragment", "frag")] {
+            compile_shader(
+                &glslc,
+                stage,
+                &PathBuf::from(format!("shaders/development_feedback_scene.{suffix}.glsl")),
+                &out_dir.join(format!("development_feedback_scene.{suffix}.spv")),
+            );
+        }
+    }
     compile_shader(
         &glslc,
         "vertex",
@@ -596,16 +638,27 @@ fn main() {
         let anchor_echo_alpha_define = anchor_echo_alpha.to_string();
         let anchor_echo_rotation_radians_define = anchor_echo_rotation_radians.to_string();
         let showcase = env::var_os("CARGO_FEATURE_SHOWCASE").is_some();
-        let extension_enabled = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1").ok().as_deref() == Some("true");
+        let extension_enabled =
+            env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1")
+                .ok()
+                .as_deref()
+                == Some("true");
         println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_FRAME_EXTENSION_V1");
-        assert_eq!(showcase, extension_enabled, "showcase and frame-extension source selections must match");
+        assert_eq!(
+            showcase, extension_enabled,
+            "showcase and frame-extension source selections must match"
+        );
         let frame_extension_define = if extension_enabled { "1" } else { "0" };
         compile_shader_with_defines(
             &glslc,
             "compute",
             &payload.shader,
             &out_dir.join("private_particles.comp.spv"),
-            &[("PRIVATE_PARTICLE_FRAME_EXTENSION_V1", frame_extension_define),
+            &[
+                (
+                    "PRIVATE_PARTICLE_FRAME_EXTENSION_V1",
+                    frame_extension_define,
+                ),
                 (
                     "PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT",
                     &anchor_echo_max_count_define,

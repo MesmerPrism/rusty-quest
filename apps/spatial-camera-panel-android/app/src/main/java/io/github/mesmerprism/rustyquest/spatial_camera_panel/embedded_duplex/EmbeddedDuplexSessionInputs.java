@@ -9,12 +9,14 @@ final class EmbeddedDuplexSessionInputs {
     final EmbeddedDuplexPackagedInputs.InstalledRole role;
     final JSONObject runtimeBindings;
     final JSONObject startup;
+    final EmbeddedDuplexSetupCredentials setupCredentials;
 
     private EmbeddedDuplexSessionInputs(EmbeddedDuplexPackagedInputs.InstalledRole role,
-            JSONObject runtimeBindings, JSONObject startup) {
+            JSONObject runtimeBindings, JSONObject startup, EmbeddedDuplexSetupCredentials setupCredentials) {
         this.role = role;
         this.runtimeBindings = runtimeBindings;
         this.startup = startup;
+        this.setupCredentials = setupCredentials;
     }
 
     static EmbeddedDuplexSessionInputs createLocalDiagnostic(EmbeddedDuplexEnrollment enrollment)
@@ -41,9 +43,13 @@ final class EmbeddedDuplexSessionInputs {
         random.nextBytes(nonce);
         long wallMs = System.currentTimeMillis();
         long monotonicNs = System.nanoTime();
-        if (wallMs <= 0L || monotonicNs <= 0L || wallMs > Long.MAX_VALUE - 300_000L) {
+        if (wallMs <= 0L || monotonicNs <= 0L) {
             throw new IllegalStateException("fresh bootstrap clock unavailable");
         }
+        EmbeddedDuplexSetupCredentials credentials = EmbeddedDuplexSetupCredentials.issueSelected(fixture,
+                fixture ? EmbeddedDuplexSetupCredentials.MIN_HORIZON_MS
+                        : io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_SETUP_HORIZON_MS,
+                wallMs);
         String grantId = (fixture ? "grant.localdiagnostic." : "grant.session.") + hex(nonce);
 
         boolean concurrentOwnPeer = !fixture
@@ -55,13 +61,25 @@ final class EmbeddedDuplexSessionInputs {
                 .put("trusted_key_fingerprints", new JSONArray().put(enrollment.remoteKeyId))
                 .put("trusted_adapter_ids", new JSONArray().put(enrollment.adapterId))
                 .put("trusted_media_revoker_ids", new JSONArray().put(enrollment.mediaRevokerId));
+        if (!fixture && EmbeddedDuplexSetupCredentials.developmentPolicy() != null)
+            embedded.put("$schema", "rusty.quest.embedded_duplex.development_authority_config.v1");
+        String mediaPolicySchema = EmbeddedDuplexMediaPolicy.schema(
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_MEDIA_POLICY,
+                fixture, concurrentOwnPeer);
+        if (mediaPolicySchema != null) {
+            embedded.put("ongoing_media_policy", new JSONObject().put("$schema", mediaPolicySchema));
+        }
+        EmbeddedDuplexFreshSetupPolicy.apply(
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_FRESH_SETUP_POLICY,
+                mediaPolicySchema,fixture,concurrentOwnPeer,enrollment,embedded);
         JSONObject runtime = new JSONObject()
                 .put("adapter_id", enrollment.adapterId)
                 .put("admission_authority_id", enrollment.admissionAuthorityId)
                 .put("grant_id", grantId)
-                .put("grant_expires_at_ms", wallMs + 300_000L)
-                .put("lease_expires_at_ms", wallMs + 300_000L)
-                .put("max_token_ttl_ms", Math.min(enrollment.maxTokenTtlMs, concurrentOwnPeer ? 120_000L : 60_000L))
+                .put("setup_credential_horizon_ms", credentials.horizonMs)
+                .put("grant_expires_at_ms", credentials.expiresAtMs)
+                .put("lease_expires_at_ms", credentials.expiresAtMs)
+                .put("max_token_ttl_ms", Math.min(enrollment.maxTokenTtlMs, fixture ? 60_000L : EmbeddedDuplexSetupCredentials.selectedHorizon(concurrentOwnPeer ? 120_000L : 60_000L)))
                 .put("embedded_duplex", embedded)
                 .put("validation_epoch_entropy_hex", hex(entropy))
                 .put("validation_wall_unix_ms", wallMs)
@@ -70,7 +88,7 @@ final class EmbeddedDuplexSessionInputs {
                 EmbeddedDuplexPackagedInputs.InstalledRole.parse(enrollment.installed.roleId),
                 runtime, enrollment.startupJson(concurrentOwnPeer
                         ? "grant.peer.common-lan-pair-media-route.request.quest.concurrent.route." + grantId
-                        : grantId));
+                        : grantId), credentials);
     }
 
     private static String hex(byte[] bytes) {

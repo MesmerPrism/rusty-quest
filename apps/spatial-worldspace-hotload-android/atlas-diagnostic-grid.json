@@ -1,0 +1,827 @@
+{
+  "schema": "rusty.quest.atlas_diagnostic.grid.v1",
+  "columns": 32,
+  "rows": 56,
+  "bitOrder": "least-significant-left",
+  "rowDirection": "top-to-bottom",
+  "physicalSdkPlane": {
+    "cellCenterX": "-0.465+column*0.030",
+    "cellCenterY": "2.105-row*0.022",
+    "cellCenterZ": 1.6,
+    "origin": [
+      -0.465,
+      2.105,
+      1.6
+    ],
+    "columnStep": [
+      0.03,
+      0,
+      0
+    ],
+    "rowStep": [
+      0,
+      -0.022,
+      0
+    ],
+    "halfCellWidth": 0.013,
+    "halfCellHeight": 0.009,
+    "worldTransform": "identity; SDK host coordinate convention"
+  },
+  "profiles": {
+    "0": "raw-normal",
+    "1": "restored-normal",
+    "2": "raw-flipped",
+    "3": "restored-flipped"
+  },
+  "headerPages": 6,
+  "headerWordsPerPage": 8,
+  "rowMap": [
+    {
+      "row": 0,
+      "kind": "anchors-and-effective-material-metadata",
+      "columns": {
+        "0..7": "fixed white",
+        "8..15": "fixed black",
+        "16..18": "page low3",
+        "19..20": "profile low2",
+        "21..28": "revision low8",
+        "29..31": "fixed white,black,white"
+      }
+    },
+    {
+      "row": 1,
+      "kind": "actual-texture-width-u32"
+    },
+    {
+      "row": 2,
+      "kind": "actual-texture-height-u32"
+    },
+    {
+      "row": 3,
+      "kind": "individual-predicates",
+      "columns": {
+        "0": "texture1024x1024",
+        "1": "magicRWA4",
+        "2": "version4",
+        "3": "width1024",
+        "4": "height1024",
+        "5": "coordinateMapping1",
+        "6": "sourceReady1",
+        "7": "mainCapacity2562",
+        "8": "tracerCapacity17934",
+        "9": "particlesOffset0",
+        "10": "particlesCountAccepted",
+        "11": "auxOffsetJoin",
+        "12": "auxCountJoin",
+        "13": "handsOffsetJoin",
+        "14": "handsBound",
+        "15": "graftsBound",
+        "16": "graftsJoin",
+        "17": "totalBound",
+        "18": "handsTriangles",
+        "19": "graftsTriangles",
+        "20": "mainBudget",
+        "21": "tracerBudget",
+        "22": "producerGenerationNonzero",
+        "23": "diagnosticJoin",
+        "24": "diagnosticCount2",
+        "25": "diagnosticAuxJoin",
+        "26": "diagnosticAuxCount2",
+        "27": "radius2",
+        "28": "positionBound16",
+        "29": "handRecordLayout1",
+        "30": "sourceStateGenerationJoin",
+        "31": "blue unused"
+      }
+    },
+    {
+      "row": 4,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+0"
+    },
+    {
+      "row": 5,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+1"
+    },
+    {
+      "row": 6,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+2"
+    },
+    {
+      "row": 7,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+3"
+    },
+    {
+      "row": 8,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+4"
+    },
+    {
+      "row": 9,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+5"
+    },
+    {
+      "row": 10,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+6"
+    },
+    {
+      "row": 11,
+      "kind": "profile-decoded-header-u32",
+      "word": "page*8+7"
+    },
+    {
+      "row": 12,
+      "kind": "profile-decoded-header-u32",
+      "word": 4
+    },
+    {
+      "row": 13,
+      "kind": "profile-decoded-header-u32",
+      "word": 5
+    },
+    {
+      "row": 14,
+      "kind": "profile-decoded-header-u32",
+      "word": 35
+    },
+    {
+      "row": 15,
+      "kind": "profile-decoded-header-u32",
+      "word": 17
+    },
+    {
+      "row": 16,
+      "kind": "profile-decoded-header-u32",
+      "word": 47
+    },
+    {
+      "row": 17,
+      "kind": "raw-profile-selected-page-first-texel-channel-u8",
+      "texel": "floor(page*8*4/3)",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": true
+    },
+    {
+      "row": 18,
+      "kind": "raw-profile-selected-page-first-texel-channel-u8",
+      "texel": "floor(page*8*4/3)",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": true
+    },
+    {
+      "row": 19,
+      "kind": "raw-profile-selected-page-first-texel-channel-u8",
+      "texel": "floor(page*8*4/3)",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": true
+    },
+    {
+      "row": 20,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "0,0",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 21,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "0,0",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 22,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "0,0",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 23,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "W-1,0",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 24,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "W-1,0",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 25,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "W-1,0",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 26,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "0,H-1",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 27,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "0,H-1",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 28,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "0,H-1",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 29,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "W-1,H-1",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 30,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "W-1,H-1",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 31,
+      "kind": "raw-physical-corner-channel-u8",
+      "coordinate": "W-1,H-1",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false,
+      "producerAnchor": false
+    },
+    {
+      "row": 32,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "0,0",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 33,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "0,0",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 34,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "0,0",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 35,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "1,0",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 36,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "1,0",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 37,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "1,0",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 38,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "2,0",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 39,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "2,0",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 40,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "2,0",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 41,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "3,0",
+      "channel": "R",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 42,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "3,0",
+      "channel": "G",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 43,
+      "kind": "raw-physical-header-texel-channel-u8",
+      "coordinate": "3,0",
+      "channel": "B",
+      "profileRestoreApplied": false,
+      "profileFlipApplied": false
+    },
+    {
+      "row": 44,
+      "kind": "payload-token-u32",
+      "endpoint": "particleAuxFirst",
+      "field": "frame",
+      "provenance": "atlas-publication",
+      "unavailable": "magenta; zero count or invalid address"
+    },
+    {
+      "row": 45,
+      "kind": "payload-token-u32",
+      "endpoint": "particleAuxFirst",
+      "field": "generation",
+      "provenance": "atlas-publication",
+      "unavailable": "magenta; zero count or invalid address"
+    },
+    {
+      "row": 46,
+      "kind": "payload-token-u32",
+      "endpoint": "particleAuxLast",
+      "field": "frame",
+      "provenance": "atlas-publication",
+      "unavailable": "magenta; zero count or invalid address"
+    },
+    {
+      "row": 47,
+      "kind": "payload-token-u32",
+      "endpoint": "particleAuxLast",
+      "field": "generation",
+      "provenance": "atlas-publication",
+      "unavailable": "magenta; zero count or invalid address"
+    },
+    {
+      "row": 48,
+      "kind": "payload-token-u32",
+      "endpoint": "handFirst",
+      "field": "frame",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "left first corner (two nonempty rigs, left then right)"
+    },
+    {
+      "row": 49,
+      "kind": "payload-token-u32",
+      "endpoint": "handFirst",
+      "field": "generation",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "left first corner (two nonempty rigs, left then right)"
+    },
+    {
+      "row": 50,
+      "kind": "payload-token-u32",
+      "endpoint": "handLast",
+      "field": "frame",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "right final corner (two nonempty rigs, left then right)"
+    },
+    {
+      "row": 51,
+      "kind": "payload-token-u32",
+      "endpoint": "handLast",
+      "field": "generation",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "right final corner (two nonempty rigs, left then right)"
+    },
+    {
+      "row": 52,
+      "kind": "payload-token-u32",
+      "endpoint": "graftFirst",
+      "field": "frame",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "left first corner (two nonempty rigs, left then right)"
+    },
+    {
+      "row": 53,
+      "kind": "payload-token-u32",
+      "endpoint": "graftFirst",
+      "field": "generation",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "left first corner (two nonempty rigs, left then right)"
+    },
+    {
+      "row": 54,
+      "kind": "payload-token-u32",
+      "endpoint": "graftLast",
+      "field": "frame",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "right final corner (two nonempty rigs, left then right)"
+    },
+    {
+      "row": 55,
+      "kind": "payload-token-u32",
+      "endpoint": "graftLast",
+      "field": "generation",
+      "provenance": "gpu-hand-pack",
+      "unavailable": "magenta; zero count or invalid address",
+      "rigEndpoint": "right final corner (two nonempty rigs, left then right)"
+    }
+  ],
+  "colors": {
+    "bitOne": "white1.0",
+    "bitZero": "near-black0.005",
+    "predicatePass": "green",
+    "predicateFail": "red",
+    "sampleUnavailable": "magenta",
+    "unusedPredicate": "blue"
+  },
+  "u8Rows": "columns0..7 lowbits; columns8..31 fixed near-black",
+  "captureClaim": "GPU sampled bits only after actual calibrated capture decoding; UI/API state is not pixel proof",
+  "cornerClaim": "physical samples may all be background; no uniquely encoded producer corner anchors",
+  "rawRgbClaim": "sampled logical RGB rounded(clamp(channel,0,1)*255); not guaranteed original encoded bytes",
+  "calibration": {
+    "fiducials": [
+      {
+        "id": "TL",
+        "center": [
+          -0.6,
+          2.24
+        ],
+        "z": 1.6,
+        "rgb": [
+          0,
+          1,
+          1
+        ],
+        "halfWidth": 0.05,
+        "halfHeight": 0.05,
+        "blackGuardOuterHalfWidth": 0.062,
+        "blackGuardOuterHalfHeight": 0.062,
+        "whiteGuardOuterHalfWidth": 0.074,
+        "whiteGuardOuterHalfHeight": 0.074
+      },
+      {
+        "id": "TR",
+        "center": [
+          0.6,
+          2.24
+        ],
+        "z": 1.6,
+        "rgb": [
+          1,
+          1,
+          0
+        ],
+        "halfWidth": 0.05,
+        "halfHeight": 0.05,
+        "blackGuardOuterHalfWidth": 0.062,
+        "blackGuardOuterHalfHeight": 0.062,
+        "whiteGuardOuterHalfWidth": 0.074,
+        "whiteGuardOuterHalfHeight": 0.074
+      },
+      {
+        "id": "BL",
+        "center": [
+          -0.6,
+          0.76
+        ],
+        "z": 1.6,
+        "rgb": [
+          1,
+          0.4,
+          0
+        ],
+        "halfWidth": 0.05,
+        "halfHeight": 0.05,
+        "blackGuardOuterHalfWidth": 0.062,
+        "blackGuardOuterHalfHeight": 0.062,
+        "whiteGuardOuterHalfWidth": 0.074,
+        "whiteGuardOuterHalfHeight": 0.074
+      },
+      {
+        "id": "BR",
+        "center": [
+          0.6,
+          0.76
+        ],
+        "z": 1.6,
+        "rgb": [
+          0.65,
+          0,
+          1
+        ],
+        "halfWidth": 0.05,
+        "halfHeight": 0.05,
+        "blackGuardOuterHalfWidth": 0.062,
+        "blackGuardOuterHalfHeight": 0.062,
+        "whiteGuardOuterHalfWidth": 0.074,
+        "whiteGuardOuterHalfHeight": 0.074
+      }
+    ],
+    "rgbRange": "0..1 shader output; detect with tolerance and validate black/white guard contrast",
+    "minimumContrast": 0.35,
+    "planarFit": "Fit each eye separately from observed four unique fiducial centers to SDK x/y. Never assume screenshot coordinates.",
+    "reject": [
+      "missing or clipped marker/guard",
+      "ambiguous marker correspondence",
+      "insufficient contrast",
+      "homography degenerate or inconsistent with all guard corners",
+      "cell interior clipped or uncertain",
+      "page/profile/revision anchors inconsistent"
+    ],
+    "captureModes": [
+      "publicationPaused stable packet",
+      "active producer; mark incoherent/torn observations rather than repairing"
+    ],
+    "proofBoundary": "Decoded screenshot samples only; no producer fence or SDK release/presentation completion inferred"
+  },
+  "tokenHeaderWords": {
+    "frame": 5,
+    "generation": 4
+  },
+  "pages": 8,
+  "publicPayloadAdmission": "Ready GPU RWA4; actual texture1024; all31 header predicates; active material producer generation; manifest-bound public primary offset; public counts2; total capacity; native kernel generation nonzero/tag0..2. Off/CPU/stale/malformed becomes unavailable.",
+  "pageOverrides": {
+    "6": {
+      "name": "public-aux",
+      "rowMap": [
+        {
+          "row": 4,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 0,
+          "recordWord": 0,
+          "field": "aux.x",
+          "byteAddress": "192+24*(h42+0)+0"
+        },
+        {
+          "row": 5,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 0,
+          "recordWord": 1,
+          "field": "aux.y",
+          "byteAddress": "192+24*(h42+0)+4"
+        },
+        {
+          "row": 6,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 0,
+          "recordWord": 2,
+          "field": "aux.z",
+          "byteAddress": "192+24*(h42+0)+8"
+        },
+        {
+          "row": 7,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 0,
+          "recordWord": 3,
+          "field": "aux.w",
+          "byteAddress": "192+24*(h42+0)+12"
+        },
+        {
+          "row": 8,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 1,
+          "recordWord": 0,
+          "field": "aux.x",
+          "byteAddress": "192+24*(h42+1)+0"
+        },
+        {
+          "row": 9,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 1,
+          "recordWord": 1,
+          "field": "aux.y",
+          "byteAddress": "192+24*(h42+1)+4"
+        },
+        {
+          "row": 10,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 1,
+          "recordWord": 2,
+          "field": "aux.z",
+          "byteAddress": "192+24*(h42+1)+8"
+        },
+        {
+          "row": 11,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticAux",
+          "offsetHeaderWord": 42,
+          "recordIndex": 1,
+          "recordWord": 3,
+          "field": "aux.w",
+          "byteAddress": "192+24*(h42+1)+12"
+        },
+        {
+          "row": 17,
+          "kind": "raw-page-first-public-texel-channel-u8",
+          "channel": "R",
+          "firstWordRow": 4,
+          "requiresPublicPayloadAdmission": true,
+          "restoreApplied": false,
+          "flipApplied": true
+        },
+        {
+          "row": 18,
+          "kind": "raw-page-first-public-texel-channel-u8",
+          "channel": "G",
+          "firstWordRow": 4,
+          "requiresPublicPayloadAdmission": true,
+          "restoreApplied": false,
+          "flipApplied": true
+        },
+        {
+          "row": 19,
+          "kind": "raw-page-first-public-texel-channel-u8",
+          "channel": "B",
+          "firstWordRow": 4,
+          "requiresPublicPayloadAdmission": true,
+          "restoreApplied": false,
+          "flipApplied": true
+        }
+      ]
+    },
+    "7": {
+      "name": "public-position-and-kernel",
+      "rowMap": [
+        {
+          "row": 4,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticPrimary",
+          "offsetHeaderWord": 40,
+          "recordIndex": 0,
+          "recordWord": 0,
+          "field": "position.x",
+          "byteAddress": "192+24*(h40+0)+0"
+        },
+        {
+          "row": 5,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticPrimary",
+          "offsetHeaderWord": 40,
+          "recordIndex": 0,
+          "recordWord": 1,
+          "field": "position.y",
+          "byteAddress": "192+24*(h40+0)+4"
+        },
+        {
+          "row": 6,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticPrimary",
+          "offsetHeaderWord": 40,
+          "recordIndex": 0,
+          "recordWord": 2,
+          "field": "position.z",
+          "byteAddress": "192+24*(h40+0)+8"
+        },
+        {
+          "row": 7,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticPrimary",
+          "offsetHeaderWord": 40,
+          "recordIndex": 1,
+          "recordWord": 0,
+          "field": "position.x",
+          "byteAddress": "192+24*(h40+1)+0"
+        },
+        {
+          "row": 8,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticPrimary",
+          "offsetHeaderWord": 40,
+          "recordIndex": 1,
+          "recordWord": 1,
+          "field": "position.y",
+          "byteAddress": "192+24*(h40+1)+4"
+        },
+        {
+          "row": 9,
+          "kind": "profile-decoded-public-record-u32",
+          "section": "diagnosticPrimary",
+          "offsetHeaderWord": 40,
+          "recordIndex": 1,
+          "recordWord": 2,
+          "field": "position.z",
+          "byteAddress": "192+24*(h40+1)+8"
+        },
+        {
+          "row": 10,
+          "kind": "profile-decoded-header-u32",
+          "word": 44,
+          "requiresPublicPayloadAdmission": true
+        },
+        {
+          "row": 11,
+          "kind": "profile-decoded-header-u32",
+          "word": 45,
+          "requiresPublicPayloadAdmission": true
+        },
+        {
+          "row": 17,
+          "kind": "raw-page-first-public-texel-channel-u8",
+          "channel": "R",
+          "firstWordRow": 4,
+          "requiresPublicPayloadAdmission": true,
+          "restoreApplied": false,
+          "flipApplied": true
+        },
+        {
+          "row": 18,
+          "kind": "raw-page-first-public-texel-channel-u8",
+          "channel": "G",
+          "firstWordRow": 4,
+          "requiresPublicPayloadAdmission": true,
+          "restoreApplied": false,
+          "flipApplied": true
+        },
+        {
+          "row": 19,
+          "kind": "raw-page-first-public-texel-channel-u8",
+          "channel": "B",
+          "firstWordRow": 4,
+          "requiresPublicPayloadAdmission": true,
+          "restoreApplied": false,
+          "flipApplied": true
+        }
+      ]
+    }
+  }
+}

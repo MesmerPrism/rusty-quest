@@ -57,6 +57,15 @@ Only the resulting
 `platform_effect_completed=true`. Start advances through receivers-armed to
 sources-started. Stop is terminal; implicit restart is rejected.
 
+An explicitly selected source-owned development lifetime policy also applies
+to the Broker-derived inner media Runtime Host lease. Its 30-day horizon stays
+bounded by the consumed admitted use and the live outer authority; selecting
+the policy cannot bypass expiry or revocation. The unselected compatibility
+path keeps its finite 120-second cap. Longer authority grants no SDK completion
+evidence: ordinary Stop still needs all seven owner effects and terminal route
+cleanup before the owners may accept a fresh Start. Host coupled controls model
+those resource callbacks and do not establish native preparation eligibility.
+
 ## Android boundary
 
 `GenericMediaSessionPlatformAdapter` reports the prepared Rust action as
@@ -78,6 +87,16 @@ the executor's live registry. The process provider is temporarily owned outside
 its mutex during platform callbacks; concurrent/re-entrant access must return
 a bounded busy result. Do not wait for platform callbacks on the main Looper
 or while holding a Java monitor or registry/authority lock.
+
+The source executor generation identifies its local custody and capability
+allocation. Ordinary execution tickets instead bind the exact selected owner's
+recipient registry generation. Before ticket issuance, the executor resolves
+the existing owner placement: local owners use the local generation; remote
+owners use the generation from the authenticated, held prepared decoder proof.
+Composite dispatch rechecks that binding before signing or sending the ticket.
+Different source and recipient counters are valid. Neither signed ticket bytes
+nor registry guards may be changed to make them agree. Verified readback remains
+bound to the generation of the retained issued ticket.
 
 Partial Start failure compensates the uncertain attempt and previously
 completed owners in reverse order, including late callbacks that may have
@@ -112,6 +131,13 @@ requester projection. The source completion carries a typed authenticated
 remote-effect proof with the original target readback bytes, rather than
 pretending that source and target tickets are equal. Ordinary readbacks omit
 this optional proof and retain their existing wire representation.
+
+With an installed retained cleanup requester, Stop and closed retained Start
+abort actions use the local generation for their source carrier. The independently
+signed target Stop still uses the target's current generation. This path does
+not require retired preparation metadata. Ordinary Stop and compensation without
+that requester continue through ordinary recipient-generation selection; an
+action kind or compensation mode alone cannot choose retained cleanup.
 
 Durable replay reservation precedes effects. Completed replies replay without
 executing a second effect; uncertain attempts remain Pending and retain the

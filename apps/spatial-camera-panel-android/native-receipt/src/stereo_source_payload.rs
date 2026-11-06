@@ -4,19 +4,35 @@ use std::sync::Mutex;
 #[derive(Clone)]
 pub(crate) enum StereoSourceLease<Own, Peer> {
     Own(Own),
-    Peer(Peer),
+    Peer(RetainedPeerPayload<Peer>),
 }
 pub(crate) struct OwnPeerSourceSet<Own, Peer> {
     inputs: Mutex<StereoInputSet<StereoSourceLease<Own, Peer>>>,
+    peer_payloads: std::sync::Arc<PeerPayloadCounter>,
 }
 impl<O, P> Default for OwnPeerSourceSet<O, P> {
     fn default() -> Self {
         Self {
             inputs: Mutex::new(StereoInputSet::default()),
+            peer_payloads: std::sync::Arc::new(PeerPayloadCounter::default()),
         }
     }
 }
 impl<O: Clone, P: Clone> OwnPeerSourceSet<O, P> {
+    pub(crate) fn peer_retirement_facts(&self) -> Result<PeerPayloadRetirementFacts, String> {
+        use std::sync::atomic::Ordering;
+        let inputs = self
+            .inputs
+            .lock()
+            .map_err(|_| "Peer source owner poisoned")?;
+        if self.peer_payloads.integrity_failed.load(Ordering::Acquire) {
+            return Err("Peer payload custody integrity failed".into());
+        }
+        Ok(PeerPayloadRetirementFacts {
+            inactive: inputs.retired_or_unbound(StereoOrigin::PeerStereo),
+            retained: self.peer_payloads.retained.load(Ordering::Acquire),
+        })
+    }
     pub(crate) fn bind(&self, origin: StereoOrigin, epoch: SourceEpoch) -> Result<(), String> {
         self.inputs
             .lock()
@@ -64,7 +80,10 @@ impl<O: Clone, P: Clone> OwnPeerSourceSet<O, P> {
             RetainedStereoFrame {
                 identity: frame.identity,
                 observed_at_ns: frame.observed_at_ns,
-                lease: StereoSourceLease::Peer(frame.lease),
+                lease: StereoSourceLease::Peer(RetainedPeerPayload::new(
+                    frame.lease,
+                    &self.peer_payloads,
+                )?),
             },
         )
     }
@@ -177,5 +196,123 @@ mod tests {
         assert_eq!(Arc::strong_count(&own), 2);
         drop(held);
         assert_eq!(Arc::strong_count(&own), 1);
+    }
+}
+
+// The payload root follows the real retained Peer frame through source-slot,
+// import/cache/recording/GPU clones. Forgetting physically pending resources
+// also retains this root; an observation cannot decrement it.
+#[derive(Default)]
+struct PeerPayloadCounter {
+    retained: std::sync::atomic::AtomicUsize,
+    integrity_failed: std::sync::atomic::AtomicBool,
+}
+struct PeerPayloadRoot<P> {
+    payload: std::mem::ManuallyDrop<P>,
+    counter: std::sync::Arc<PeerPayloadCounter>,
+}
+impl<P> Drop for PeerPayloadRoot<P> {
+    fn drop(&mut self) {
+        use std::sync::atomic::Ordering;
+        // Keep custody counted until the actual payload destructor has returned.
+        // A destructor panic conservatively leaves the count nonzero.
+        unsafe {
+            std::mem::ManuallyDrop::drop(&mut self.payload);
+        }
+        if self
+            .counter
+            .retained
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+            .is_err()
+        {
+            self.counter.integrity_failed.store(true, Ordering::Release);
+        }
+    }
+}
+#[derive(Clone)]
+pub(crate) struct RetainedPeerPayload<P> {
+    root: std::sync::Arc<PeerPayloadRoot<P>>,
+}
+impl<P> RetainedPeerPayload<P> {
+    fn new(payload: P, counter: &std::sync::Arc<PeerPayloadCounter>) -> Result<Self, String> {
+        use std::sync::atomic::Ordering;
+        if counter.integrity_failed.load(Ordering::Acquire) {
+            return Err("Peer payload custody integrity failed".into());
+        }
+        counter
+            .retained
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_add(1))
+            .map_err(|_| "Peer payload custody exhausted")?;
+        Ok(Self {
+            root: std::sync::Arc::new(PeerPayloadRoot {
+                payload: std::mem::ManuallyDrop::new(payload),
+                counter: counter.clone(),
+            }),
+        })
+    }
+}
+impl<P> std::ops::Deref for RetainedPeerPayload<P> {
+    type Target = P;
+    fn deref(&self) -> &P {
+        &self.root.payload
+    }
+}
+
+pub(crate) struct PeerPayloadRetirementFacts {
+    pub inactive: bool,
+    pub retained: usize,
+}
+
+#[cfg(test)]
+mod peer_payload_retirement_controls {
+    use super::*;
+    #[test]
+    fn inactive_slot_is_not_retired_while_an_actual_peer_payload_clone_is_held() {
+        let set: OwnPeerSourceSet<std::sync::Arc<u64>, std::sync::Arc<u64>> =
+            OwnPeerSourceSet::default();
+        let epoch = SourceEpoch {
+            process_generation: 1,
+            source_generation: 1,
+        };
+        let identity = StereoFrameIdentity {
+            epoch,
+            pair_sequence: 1,
+            left_timestamp_ns: 2,
+            right_timestamp_ns: 3,
+            packed_pts_ns: 3,
+            calibration_revision: None,
+        };
+        assert!(set.peer_retirement_facts().unwrap().inactive);
+        set.bind(StereoOrigin::PeerStereo, epoch).unwrap();
+        assert!(
+            !set.peer_retirement_facts().unwrap().inactive,
+            "bound but never-published is active"
+        );
+        set.publish_peer(RetainedStereoFrame {
+            identity,
+            observed_at_ns: 10,
+            lease: std::sync::Arc::new(20),
+        })
+        .unwrap();
+        let held = set.snapshot(11, 10).unwrap();
+        set.retire(StereoOrigin::PeerStereo, epoch).unwrap();
+        let state = set.peer_retirement_facts().unwrap();
+        assert!(state.inactive);
+        assert_eq!(state.retained, 1);
+        assert!(
+            set.bind(StereoOrigin::PeerStereo, epoch).is_err(),
+            "retired epoch cannot reactivate"
+        );
+        drop(held);
+        assert_eq!(set.peer_retirement_facts().unwrap().retained, 0);
+    }
+    #[test]
+    fn pending_forgotten_payload_cannot_be_claimed_retired_by_a_snapshot() {
+        let set: OwnPeerSourceSet<u64, u64> = OwnPeerSourceSet::default();
+        let payload = RetainedPeerPayload::new(5, &set.peer_payloads).unwrap();
+        let held = payload.clone();
+        drop(payload);
+        std::mem::forget(held);
+        assert_eq!(set.peer_retirement_facts().unwrap().retained, 1);
     }
 }

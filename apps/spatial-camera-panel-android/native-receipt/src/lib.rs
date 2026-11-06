@@ -66,6 +66,8 @@ mod projection_surface_features;
 #[cfg(any(target_os = "android", test))]
 mod replay_hands;
 mod rgb_channel_transform;
+#[cfg(any(target_os = "android", test))]
+mod source_graph_startup;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
 #[cfg(all(target_os = "android", rq_environment_depth_legacy_native_sidecar))]
@@ -79,6 +81,8 @@ mod spatial_native_passthrough;
 mod spatial_presentation_policy;
 mod spatial_public_multistack;
 mod spatial_public_multistack_runtime;
+#[cfg(any(target_os = "android", test))]
+mod spatial_scissor_module;
 #[cfg(any(
     all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer),
     test
@@ -842,6 +846,7 @@ mod spatial_stereo_source_import;
 mod stereo_bank_control_jni;
 mod stereo_bank_mask_v1;
 mod stereo_bank_transport_v1;
+mod stereo_bank_transport_v2;
 mod stereo_input_set;
 #[cfg(target_os = "android")]
 mod stereo_source_payload;

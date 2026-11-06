@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 
 /** Process-owned bootstrap state. This contains no peer, route, or media acceptance claim. */
 public final class EmbeddedDuplexRuntimeStatus {
+    public final EmbeddedDuplexSetupCredentials setupCredentials;
     public final String state;
     public final boolean displayAttached;
     public final String ownAppCaptureState;
@@ -19,6 +20,12 @@ public final class EmbeddedDuplexRuntimeStatus {
     EmbeddedDuplexRuntimeStatus(String state, boolean displayAttached,
             String runtimeConfigSha256, String enrollmentRecordSha256,
             EmbeddedDuplexBootstrap.Failure failure) {
+        this(state, displayAttached, runtimeConfigSha256, enrollmentRecordSha256, failure, null);
+    }
+    EmbeddedDuplexRuntimeStatus(String state, boolean displayAttached,
+            String runtimeConfigSha256, String enrollmentRecordSha256,
+            EmbeddedDuplexBootstrap.Failure failure, EmbeddedDuplexSetupCredentials setupCredentials) {
+        this.setupCredentials = runtimeConfigSha256 == null ? null : setupCredentials;
         if (!("uninitialized".equals(state) || "bootstrapping".equals(state)
                 || "bootstrapped_route_unverified".equals(state) || "local_fixture".equals(state)
                 || "cleanup_pending".equals(state))
@@ -47,6 +54,7 @@ public final class EmbeddedDuplexRuntimeStatus {
         if (!("Idle".equals(ownAppCaptureState) || "Starting".equals(ownAppCaptureState)
                 || "Live".equals(ownAppCaptureState) || "StopPending".equals(ownAppCaptureState)))
             throw new IllegalArgumentException("Own app capture state invalid");
+        this.setupCredentials = peerStatus.setupCredentials;
         this.state = peerStatus.state; this.displayAttached = peerStatus.displayAttached;
         this.runtimeConfigSha256 = peerStatus.runtimeConfigSha256;
         this.enrollmentRecordSha256 = peerStatus.enrollmentRecordSha256;

@@ -13,6 +13,52 @@ passthrough composition, a solid-color XR background, resident GPU-skinned hand
 meshes, public blur processing, SDF hooks, or detailed timing markers without a
 Makepad runtime in the app.
 
+For representative development iteration, resolve
+[`native-development-hotload.app.json`](../../fixtures/native-app-builds/native-development-hotload.app.json).
+It selects its own `development_hotload` Android package and the explicit
+developer feature, with a visible Android mesh panel, procedural checker cube
+and 64 particles. Camera, scientific/private particle payloads and bilateral
+streaming are excluded by that app's lock. The existing app defaults remain
+unchanged. The native panel keeps Android widgets, text and focus behavior.
+Its compute button uses the same typed handler as the app-private operator.
+
+The separate
+[`native-development-hotload-operator.app.json`](../../fixtures/native-app-builds/native-development-hotload-operator.app.json)
+selects seven features and the coinstalled `development_hotload_operator` package.
+Only that debug selection admits the external Meta XR Operator layer, INTERNET
+and optional experimental feature. Pass `-EnableMetaXrOperator` plus
+`-MetaXrOperatorLibrary`, `-MetaXrOperatorLibrarySha256`,
+`-MetaXrOperatorManifest` and `-MetaXrOperatorManifestSha256` to the existing
+canonical builder. Its selected output and capsule include the external input
+fingerprint; vendor binaries remain local build inputs.
+
+That dedicated hand-test host prefers a valid tracked hand over an active
+controller pose and falls back to controllers when the hand is unavailable.
+It keeps the existing capture cancellation, open-pinch arming and original
+Android widget handler. Ordinary builds retain controller-first ownership;
+the Operator selection does not simulate or disable any controller itself.
+
+The Operator-only Cargo feature and locked build input jointly enable read-only
+`native_status.scene.input_geometry`. It joins the original Compute widget's
+current clipped layout/revision with the frozen panel pose after successful
+`xrEndFrame`, including the actual LOCAL/STAGE fallback and owner generation.
+It does not report pixels or tracking availability beyond that submitted frame.
+Ordinary/unselected apps omit the observer and UI correlation telemetry; the
+canonical helper also requires a debuggable APK before packaging the layer.
+Input simulation and original-session retirement remain separate finite owner
+operations described in [Meta XR input automation](../../docs/META_XR_INPUT_AUTOMATION.md).
+
+See [the common two-host scenarios](../../docs/REPRESENTATIVE_HOTLOAD_HOSTS.md)
+and [the native integration guide](../../docs/NATIVE_WORLDSPACE_INTEGRATION.md)
+for build/launch, fresh session discovery, CPU generation staging and shader
+replacement. CPU modules retain counter/buffer state in the current render
+owner; all opened images stay loaded until process exit, bounded to 64 attempts,
+4 MiB per image and 64 MiB staged. Shader replacement admits only the exact
+descriptor-free scene interface, bounds retirement waits to one second, and
+preserves the prior pipeline on refusal (32 attempts, 256 KiB per stage,
+16 MiB staged). A new Activity/render owner gets a fresh session. Source/host
+checks do not establish headset pixels, tracking, IME behavior or GPU reload.
+
 Its embedded broker routes accepted sockets through the same
 `crates/rusty-quest-broker-transport` RFC6455 core as the standalone Connection
 Hub. `EmbeddedManifoldBrokerServer` remains the placement adapter; bounded

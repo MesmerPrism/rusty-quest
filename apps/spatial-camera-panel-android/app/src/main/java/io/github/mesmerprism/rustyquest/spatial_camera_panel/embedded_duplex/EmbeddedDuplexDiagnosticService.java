@@ -17,11 +17,15 @@ public final class EmbeddedDuplexDiagnosticService {
 
     private EmbeddedDuplexDiagnosticService() {}
 
+    private static void requireLegacyTransport(Context context){
+        if(!EmbeddedDuplexProcessHost.operationalContext(context).legacy())throw new IllegalStateException("local fixture diagnostic transport is legacy-only; use run-aware operational diagnostics");
+    }
     public static void arm(Context context, String challenge) {
         if (!BuildConfig.DEBUG || context == null || challenge == null
                 || !challenge.matches("[0-9a-f]{32}")) {
             throw new IllegalArgumentException("diagnostic challenge");
         }
+        requireLegacyTransport(context);
         EmbeddedDuplexProcessHost.forApplication(context).armDiagnosticChallenge(challenge);
     }
 
@@ -30,6 +34,7 @@ public final class EmbeddedDuplexDiagnosticService {
                 || !challenge.matches("[0-9a-f]{32}")) {
             throw new IllegalArgumentException("diagnostic fixture challenge");
         }
+        requireLegacyTransport(context);
         EmbeddedDuplexEnrollment installed = EmbeddedDuplexProcessHost.forApplication(context)
                 .provisionLocalDiagnosticFixture(challenge).get(30, TimeUnit.SECONDS);
         if (!installed.localFixture || !"peer_a".equals(installed.installed.roleId)) {
@@ -43,6 +48,7 @@ public final class EmbeddedDuplexDiagnosticService {
                 || !challenge.matches("[0-9a-f]{32}")) {
             throw new IllegalArgumentException("diagnostic run challenge");
         }
+        requireLegacyTransport(context);
         if (!EmbeddedDuplexProcessHost.forApplication(context).hasDiagnosticChallenge(challenge)) {
             throw new IllegalStateException("diagnostic run was not armed");
         }
@@ -58,6 +64,7 @@ public final class EmbeddedDuplexDiagnosticService {
                 || !challenge.matches("[0-9a-f]{32}")) {
             throw new IllegalArgumentException("diagnostic read challenge");
         }
+        requireLegacyTransport(context);
         byte[] bytes = new AtomicFile(receiptFile(context)).readFully();
         if (bytes.length == 0 || bytes.length > 4096) {
             throw new IllegalStateException("diagnostic receipt bounds");
@@ -155,6 +162,6 @@ public final class EmbeddedDuplexDiagnosticService {
     private static File receiptFile(Context context) {
         Context app = context.getApplicationContext();
         if (app == null) throw new IllegalStateException("application context unavailable");
-        return new File(app.getNoBackupFilesDir(), RELATIVE);
+        return new File(EmbeddedDuplexProcessHost.operationalRoot(app), RELATIVE);
     }
 }

@@ -202,6 +202,9 @@ struct QualifiedProducerInactiveWitness {
 struct SourceOwnerState {
     receipt: Option<SourceReceipt>,
     inactive_witness: Option<QualifiedProducerInactiveWitness>,
+    dormant_renderer: Option<(String, Option<[i64; 3]>)>,
+    local_start_registrations: u64,
+    local_start_integrity_failed: bool,
 }
 
 static SOURCE_OWNER: LazyLock<Mutex<SourceOwnerState>> =
@@ -213,7 +216,8 @@ pub(crate) fn current_local_camera_start_permit(
 ) -> Option<LocalCameraStartPermit> {
     let owner = SOURCE_OWNER.lock().ok()?;
     let receipt = owner.receipt?;
-    (receipt.words[2] == SOURCE_LOCAL
+    (owner.dormant_renderer.is_none()
+        && receipt.words[2] == SOURCE_LOCAL
         && receipt.words[11] == RESULT_PENDING
         && receipt.words[13] == 1
         && receipt.words[5] == launch_challenge
@@ -235,7 +239,7 @@ pub(crate) fn local_camera_start_permit_is_current(permit: LocalCameraStartPermi
 pub(crate) fn unfenced_local_camera_start_allowed() -> bool {
     SOURCE_OWNER
         .lock()
-        .map(|owner| owner.receipt.is_none())
+        .map(|owner| owner.receipt.is_none() && owner.dormant_renderer.is_none())
         .unwrap_or(false)
 }
 
@@ -280,6 +284,9 @@ fn request_source_checked(
     let mut owner = SOURCE_OWNER
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !renderer_request_allowed(&owner.dormant_renderer, &request) {
+        return SourceReceipt::new(request, RESULT_REJECTED, REASON_CLEANUP_REQUIRED, 0);
+    }
     if current_carrier.is_some_and(|expected| {
         !owner.receipt.is_some_and(|receipt| {
             [receipt.words[1], receipt.words[5], receipt.words[6]] == expected
@@ -745,7 +752,70 @@ pub(crate) fn monotonic_now_ns() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "android"))]
+    fn reserve_renderer_source(id: &str) -> Result<(), String> {
+        super::reserve_renderer_source_with_capture(id, || false)
+    }
+    #[test]
+    fn actual_local_registration_and_renderer_hold_are_mutually_exclusive() {
+        let _guard = reset();
+        let local = register_local_camera_start(None).unwrap();
+        assert!(reserve_renderer_source("fixture.actual.preparation").is_err());
+        drop(local);
+        reserve_renderer_source("fixture.actual.preparation").unwrap();
+        assert!(register_local_camera_start(None).is_err());
+        assert_eq!(
+            request_source(request(700, SOURCE_LOCAL), true).words[11],
+            RESULT_REJECTED
+        );
+        bind_renderer_source("fixture.actual.preparation", [701, 71, 9]).unwrap();
+        assert!(bind_renderer_source("fixture.actual.preparation", [702, 71, 9]).is_err());
+        assert_eq!(
+            request_source(request(701, SOURCE_PEER), true).words[11],
+            RESULT_PENDING
+        );
+        assert_eq!(
+            request_source(request(702, SOURCE_DISABLED), true).words[11],
+            RESULT_PENDING
+        );
+        release_renderer_source("fixture.actual.preparation").unwrap();
+    }
 
+    #[test]
+    fn failed_exact_renderer_hold_release_retains_custody_until_actual_retry() {
+        let _guard = reset();
+        reserve_renderer_source("held.actual").unwrap();
+        assert!(release_renderer_source("wrong.actual").is_err());
+        assert!(reserve_renderer_source("replacement.actual").is_err());
+        assert!(register_local_camera_start(None).is_err());
+        release_renderer_source("held.actual").unwrap();
+        assert!(release_renderer_source("held.actual").is_err());
+        reserve_renderer_source("replacement.actual").unwrap();
+        release_renderer_source("replacement.actual").unwrap();
+    }
+    #[test]
+    fn refused_reservation_cannot_release_another_actual_hold() {
+        let _guard = reset();
+        reserve_renderer_source("first.actual").unwrap();
+        assert!(reserve_renderer_source("refused.actual").is_err());
+        assert!(release_renderer_source("refused.actual").is_err());
+        assert!(register_local_camera_start(None).is_err());
+        release_renderer_source("first.actual").unwrap();
+        drop(register_local_camera_start(None).unwrap());
+    }
+    #[test]
+    fn renderer_hold_requires_actual_own_capture_exception_for_unretired_local_source() {
+        let _guard = reset();
+        assert_eq!(
+            request_source(request(703, SOURCE_LOCAL), true).words[11],
+            RESULT_PENDING
+        );
+        assert!(
+            super::reserve_renderer_source_with_capture("actual.model.hold", || false).is_err()
+        );
+        super::reserve_renderer_source_with_capture("actual.model.hold", || true).unwrap();
+        release_renderer_source("actual.model.hold").unwrap();
+    }
     static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn reset() -> std::sync::MutexGuard<'static, ()> {
@@ -1030,4 +1100,180 @@ mod tests {
         assert_eq!(retained.words[4], current.words[4]);
         assert_eq!(retained.words[8], current.words[8]);
     }
+}
+
+/// Observe actual source state; never install a future dormant SourceRequest.
+pub(crate) fn renderer_source_preimage() -> Result<Option<SourceReceipt>, String> {
+    let owner = SOURCE_OWNER
+        .lock()
+        .map_err(|_| "actual renderer source owner poisoned")?;
+    Ok(owner.receipt)
+}
+fn renderer_request_allowed(
+    hold: &Option<(String, Option<[i64; 3]>)>,
+    request: &SourceRequest,
+) -> bool {
+    hold.as_ref().is_none_or(|(_, target)| {
+        request.source == SOURCE_DISABLED
+            || (request.source == SOURCE_PEER
+                && *target
+                    == Some([
+                        request.route_generation,
+                        request.launch_challenge,
+                        request.surface_generation,
+                    ]))
+    })
+}
+#[cfg(test)]
+mod dormant_renderer_request_controls {
+    use super::*;
+    fn request(source: i64) -> SourceRequest {
+        SourceRequest {
+            route_generation: 9,
+            source,
+            decoder_token: 0,
+            reader_generation: 0,
+            launch_challenge: 10,
+            surface_generation: 11,
+            pair_generation: 0,
+            import_generation: 0,
+            acquisition_time_ns: 0,
+            required_stages: 0,
+            camera_start_allowed: false,
+            producer_session: 0,
+            producer_epoch: 0,
+        }
+    }
+    #[test]
+    fn actual_preparation_hold_blocks_unselected_local_and_peer_but_allows_stop() {
+        let registered = Some(("native actual fixture ID".into(), None));
+        assert!(!renderer_request_allowed(
+            &registered,
+            &request(SOURCE_LOCAL)
+        ));
+        assert!(!renderer_request_allowed(
+            &registered,
+            &request(SOURCE_PEER)
+        ));
+        assert!(renderer_request_allowed(
+            &registered,
+            &request(SOURCE_DISABLED)
+        ));
+    }
+    #[test]
+    fn only_exact_bound_peer_carrier_can_cross_the_preparation_hold() {
+        let hold = Some(("native actual fixture ID".into(), Some([9, 10, 11])));
+        assert!(renderer_request_allowed(&hold, &request(SOURCE_PEER)));
+        for field in 0..3 {
+            let mut r = request(SOURCE_PEER);
+            match field {
+                0 => r.route_generation += 1,
+                1 => r.launch_challenge += 1,
+                _ => r.surface_generation += 1,
+            };
+            assert!(!renderer_request_allowed(&hold, &r));
+        }
+        assert!(renderer_request_allowed(&None, &request(SOURCE_LOCAL)));
+    }
+}
+/// A non-cloneable allocation registration closes the unfenced-start race.
+pub(crate) struct LocalStartRegistration(());
+impl Drop for LocalStartRegistration {
+    fn drop(&mut self) {
+        let mut o = SOURCE_OWNER.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = o.local_start_registrations.checked_sub(1) {
+            o.local_start_registrations = n;
+        } else {
+            o.local_start_integrity_failed = true;
+        }
+    }
+}
+pub(crate) fn register_local_camera_start(
+    permit: Option<LocalCameraStartPermit>,
+) -> Result<LocalStartRegistration, String> {
+    let mut o = SOURCE_OWNER
+        .lock()
+        .map_err(|_| "actual local construction source gate poisoned")?;
+    if o.local_start_integrity_failed || o.dormant_renderer.is_some() {
+        return Err("actual source preparation forbids Local construction".into());
+    }
+    let matches = match permit {
+        None => o.receipt.is_none(),
+        Some(p) => o.receipt.is_some_and(|r| {
+            r.words[1] == p.route_generation
+                && r.words[2] == SOURCE_LOCAL
+                && r.words[5] == p.launch_challenge
+                && r.words[6] == p.surface_generation
+                && r.words[11] == RESULT_PENDING
+                && r.words[13] == 1
+        }),
+    };
+    if !matches {
+        return Err("actual Local construction permit changed".into());
+    }
+    o.local_start_registrations = o
+        .local_start_registrations
+        .checked_add(1)
+        .ok_or("actual Local construction count overflow")?;
+    Ok(LocalStartRegistration(()))
+}
+/// Independent preparation hold; deliberately no future SourceRequest.
+#[cfg(target_os = "android")]
+pub(crate) fn reserve_renderer_source(id: &str) -> Result<(), String> {
+    reserve_renderer_source_with_capture(id, crate::own_stereo_capture_runtime::capture_claimed)
+}
+// The host controls model the input; only the Android wrapper reads the actual
+// Own capture owner. This helper neither creates nor certifies that owner.
+fn reserve_renderer_source_with_capture(
+    id: &str,
+    own_capture_claimed: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    let mut o = SOURCE_OWNER
+        .lock()
+        .map_err(|_| "renderer source hold poisoned")?;
+    if o.local_start_integrity_failed || o.local_start_registrations != 0 {
+        return Err("actual Local construction remains owned".into());
+    }
+    if o.dormant_renderer.as_ref().is_some_and(|v| v.0 != id) {
+        return Err("another actual renderer source preparation remains held".into());
+    }
+    if !own_capture_claimed()
+        && o.receipt.is_some_and(|r| {
+            r.words[2] == SOURCE_LOCAL && matches!(r.words[11], RESULT_PENDING | RESULT_EFFECTIVE)
+        })
+    {
+        return Err("actual local acquisition has not retired".into());
+    }
+    if o.dormant_renderer.is_none() {
+        o.dormant_renderer = Some((id.into(), None));
+    }
+    Ok(())
+}
+pub(crate) fn bind_renderer_source(id: &str, target: [i64; 3]) -> Result<(), String> {
+    let mut o = SOURCE_OWNER
+        .lock()
+        .map_err(|_| "renderer source hold poisoned")?;
+    if target.iter().any(|n| *n <= 0) || o.receipt.is_some_and(|r| r.words[1] >= target[0]) {
+        return Err("actual renderer carrier/source generation differs".into());
+    }
+    let hold = o
+        .dormant_renderer
+        .as_mut()
+        .filter(|v| v.0 == id)
+        .ok_or("actual renderer source registration absent")?;
+    if hold.1.is_some_and(|old| old != target) {
+        return Err("renderer source ticket is immutable".into());
+    }
+    hold.1 = Some(target);
+    Ok(())
+}
+pub(crate) fn release_renderer_source(id: &str) -> Result<(), String> {
+    let mut o = SOURCE_OWNER
+        .lock()
+        .map_err(|_| "renderer source hold poisoned")?;
+    if o.dormant_renderer.as_ref().is_none_or(|v| v.0 != id) {
+        return Err("exact renderer source hold absent".into());
+    }
+    o.dormant_renderer = None;
+    Ok(())
 }

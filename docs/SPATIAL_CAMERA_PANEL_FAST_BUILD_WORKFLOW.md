@@ -1,5 +1,12 @@
 # Spatial Camera Panel fast Android build workflow
 
+`-NativeRepoRoot` may select a stable physical source layout with the same
+selected Quest bytes. The builder also resolves its actual Cargo path suppliers
+and requires the shell composition's exact identities and raw supplier bytes.
+An identical Quest checkout beside stale dependency checkouts is rejected.
+Cargo still runs and owns file-level invalidation; prior cache fingerprints
+alone never authorize skipping compilation.
+
 `tools/Build-SpatialCameraPanelAndroid.ps1` has two independent identity
 contracts:
 
@@ -17,6 +24,27 @@ The local cache has separate persistent lanes for Cargo Android/host targets,
 the Gradle user home, Gradle project cache, and product/host build directories.
 It is local build state, not source or release evidence, and must not be
 committed.
+
+Kotlin sessions, errors and persistent metadata use
+`<BuildCacheRoot>/k/<product-build-type>` beside the other stable lanes.
+Both DevFast and Candidate pass
+`-Pkotlin.project.persistent.dir=<selected-k-lane>` and
+`-Pkotlin.project.persistent.dir.gradle.disableWrite=true` to the actual Gradle
+invocation. The first redirects Kotlin's default source-root `.kotlin` output;
+the second suppresses its additional legacy `.gradle/kotlin/errors` fallback.
+Kotlin still writes metadata in the selected cache lane. Keep the same product,
+build type and cache root for compatible reuse; source pre/postguards remain
+strict, with no source ignore exception or JVM override required.
+
+Selected Android-component builds also use
+`<BuildCacheRoot>/l/<product-build-type>/android-components/<phase>` for Gradle's
+working inventory and observations. The existing build-cache mutex serializes
+these paths. Inventory bytes change only with the selected inputs; attempt
+output paths do not become configuration-cache keys. JVM preflight and assembly
+have separate working directories. Every attempt still receives create-new,
+durably copied observations and runs the normal source/class/DEX checks before
+handoff. Missing current outputs or failed children cannot reuse a prior working
+receipt. See [selected component closure](ANDROID_COMPONENT_CLOSURE.md).
 
 ## Cache identities
 
@@ -38,9 +66,9 @@ why a lane was expected to invalidate.
 
 ## Modes
 
-`-BuildMode DevFast` uses the Gradle daemon, configuration cache, build cache,
-and stable local intermediates. It still performs signer preflight and inspects
-every APK.
+`-BuildMode DevFast` passes `--no-daemon` and uses configuration cache, build
+cache and stable local intermediates. It still performs signer preflight and
+inspects every APK. Daemon changes require a separate measured decision.
 
 `-BuildMode Candidate` requires a frozen clean source composition, uses an
 explicit signer and expected certificate fingerprint, disables the Gradle
@@ -57,12 +85,28 @@ required PR checks follow testing; a build or inspection pass does not prove
 device behavior or authorize installation.
 
 Keep the task's stable compiler cache root across candidate revisions and choose
-a fresh final output namespace separately. A new checkout still needs its
-repository-local pinned Gradle cache. Prepare it through
+a fresh final output namespace separately. A new checkout needs a verified
+pinned Gradle distribution. Prepare its default repository-local cache through
 `pwsh -NoProfile -File tools/Resolve-GradleTool.ps1 -RepoRoot . -Mode Resolve`,
 then use `-Mode VerifyCache` for read-only verification. The resolver retains
 archive/tree hashes and executable checks; do not replace them with an ambient
 Gradle installation or repeatedly download an unchanged verified tool.
+For staged attempts, pass the same explicit `-SharedGradleToolRoot
+<absolute-tool-root>` to preparation and the builder. Its dedicated external
+ordinary distribution root is verified against exact resolver/config bytes,
+archive/tree pins and immutable marker; it is separate from `gu`, `gp`, task
+outputs and `BuildCacheRoot`. See [the tool contract](GRADLE_TOOL_RESOLUTION.md).
+
+DevFast and Candidate callers that keep source paths stable may select
+`-ArtifactOutputParent <existing-absolute-attempt-directory>` with an explicit
+`-OutDir <fresh-child-directory>`. Both paths use explicit local-drive paths;
+the parent and all output ancestors must be
+ordinary directories outside every source-composition repository, build cache
+and shared tool root. The output is create-new; `-ReplaceExistingOutput` is
+forbidden in this mode. Final APK, build lock, manifest and capsule are written
+there, with an added path-free `artifact_output` policy record. Source,
+signer and final artifact inspection guards still apply. The default remains
+the existing content-addressed output under repository `target/`.
 
 The focused regression `tools/checks/Test-SourceCompositionPremerge.ps1` creates
 real local Git repositories with no remotes and verifies unpublished source,
@@ -104,3 +148,12 @@ inspection when its required dynamic Rust standard-library payload is absent.
 shell/resources/dex/APK, and inspection durations. Candidate mode additionally
 records classified Gradle task counts, aggregate task durations, and cache
 outcomes.
+
+The generic AGPL source/forest primitives live in
+`tools/lib/ContentStableCargoStage.psm1`. Consumers import this file from their
+explicitly authenticated Quest source root; they keep graph membership and
+product activation in their own owners. `Write-StageBytesIfDifferent` preserves
+unchanged file mtimes. The source-forest lock must cover preparation through
+compiler completion and source reconciliation. The focused real host Cargo
+fixture is `tools/checks/Test-ContentStableCargoStage.ps1 -OutputRoot <new-path>`.
+This supplies no native binary import trust root or device acceptance.

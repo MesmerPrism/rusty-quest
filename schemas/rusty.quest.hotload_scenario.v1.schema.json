@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.hotload_scenario.v1",
+  "title": "Dedicated development host commands, observations and scenario classification",
+  "oneOf": [{"$ref":"#/$defs/command"},{"$ref":"#/$defs/observation"},{"$ref":"#/$defs/scenario"}],
+  "$defs": {
+    "id":{"type":"string","pattern":"^[a-z0-9][a-z0-9-]{0,63}$"},
+    "decimal":{"type":"string","pattern":"^(0|-?[1-9][0-9]{0,18})$"},
+    "positive":{"type":"string","pattern":"^[1-9][0-9]{0,18}$"},
+    "sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+    "generation":{"type":"string","pattern":"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"},
+    "buffer":{"type":"string","pattern":"^[0-9a-f]{32}$"},
+    "host":{"enum":["native-openxr","spatial-sdk"]},
+    "command":{
+      "type":"object","additionalProperties":false,
+      "required":["schema","request_id","method","arguments"],
+      "properties":{
+        "schema":{"const":"rusty.quest.hotload_command.v1"},"request_id":{"$ref":"#/$defs/id"},
+        "method":{"enum":["status","native_status","native_init","native_activate","native_compute","native_shader_activate","activate","compute","select"]},
+        "arguments":{"type":"object"}
+      },
+      "allOf":[
+        {"if":{"properties":{"method":{"enum":["status","native_status"]}}},"then":{"properties":{"arguments":{"maxProperties":0}}}},
+        {"if":{"properties":{"method":{"const":"native_init"}}},"then":{"properties":{"arguments":{"type":"object","additionalProperties":false,"required":["sha256"],"properties":{"sha256":{"$ref":"#/$defs/sha256"}}}}}},
+        {"if":{"properties":{"method":{"enum":["compute","native_compute"]}}},"then":{"properties":{"arguments":{"type":"object","additionalProperties":false,"required":["input"],"properties":{"input":{"$ref":"#/$defs/decimal"}}}}}},
+        {"if":{"properties":{"method":{"const":"native_activate"}}},"then":{"properties":{"arguments":{"type":"object","additionalProperties":false,"required":["generation","sha256","probe_result"],"properties":{"generation":{"$ref":"#/$defs/positive"},"sha256":{"$ref":"#/$defs/sha256"},"probe_result":{"$ref":"#/$defs/decimal"}}}}}},
+        {"if":{"properties":{"method":{"const":"native_shader_activate"}}},"then":{"properties":{"arguments":{"type":"object","additionalProperties":false,"required":["generation","vertex_sha256","fragment_sha256"],"properties":{"generation":{"$ref":"#/$defs/positive"},"vertex_sha256":{"$ref":"#/$defs/sha256"},"fragment_sha256":{"$ref":"#/$defs/sha256"}}}}}},
+        {"if":{"properties":{"method":{"const":"select"}}},"then":{"properties":{"arguments":{"type":"object","additionalProperties":false,"required":["generation"],"properties":{"generation":{"$ref":"#/$defs/generation"}}}}}},
+        {"if":{"properties":{"method":{"const":"activate"}}},"then":{"properties":{"arguments":{"type":"object","additionalProperties":false,"required":["generation","sha256","probe_input","probe_counter","probe_initial","probe_result","probe_expected"],"properties":{"generation":{"$ref":"#/$defs/generation"},"sha256":{"$ref":"#/$defs/sha256"},"probe_input":{"$ref":"#/$defs/decimal"},"probe_counter":{"$ref":"#/$defs/decimal"},"probe_initial":{"$ref":"#/$defs/buffer"},"probe_result":{"$ref":"#/$defs/decimal"},"probe_expected":{"$ref":"#/$defs/buffer"}}}}}}
+      ]
+    },
+    "observation":{
+      "type":"object","additionalProperties":false,
+      "required":["schema","request_id","host_kind","status","error","state","scene"],
+      "properties":{
+        "schema":{"const":"rusty.quest.hotload_observation.v1"},"request_id":{"$ref":"#/$defs/id"},"host_kind":{"$ref":"#/$defs/host"},
+        "status":{"enum":["pass","refused"]},"error":{"type":["string","null"],"maxLength":512},
+        "state":{"type":"object","additionalProperties":{"type":"string","maxLength":256}},
+        "scene":{"type":"object"}
+      },
+      "allOf":[{"if":{"properties":{"status":{"const":"pass"}}},"then":{"properties":{"error":{"type":"null"}}}},{"if":{"properties":{"status":{"const":"refused"}}},"then":{"properties":{"error":{"type":"string","minLength":1}}}}]
+    },
+    "scenario":{
+      "type":"object","additionalProperties":false,
+      "required":["schema","scenario_id","host_kind","category","boundary","assertions"],
+      "properties":{
+        "schema":{"const":"rusty.quest.hotload_scenario.v1"},"scenario_id":{"$ref":"#/$defs/id"},"host_kind":{"$ref":"#/$defs/host"},
+        "category":{"enum":["ui-panels","meshes-assets","particles","shaders-materials","textures-fonts","tracking","settings-permissions","resource-lifecycle"]},
+        "boundary":{"enum":["live-parameter-update","code-replacement","asset-replacement","shader-replacement","resource-recreation","process-restart","apk-rebuild","os-permission-change"]},
+        "assertions":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":512}}
+      }
+    }
+  }
+}

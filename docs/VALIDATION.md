@@ -1,5 +1,95 @@
 # Rusty Quest Validation
 
+The default-off JVM/native compilation overlap has two focused process gates:
+`pwsh -NoProfile -File tools/checks/Test-SpatialCompilationOverlapHost.ps1 -OutputRoot <fresh-output>`
+and `pwsh -NoProfile -File tools/checks/Test-SpatialCompilationOverlapSeam.ps1 -OutputRoot <fresh-output>`.
+They exercise real owned child processes and the actual builder compile/join
+and terminal-cleanup seams, including environment snapshots, both output
+streams, sibling failures, original error retention, inherited-pipe EOF refusal
+and the unchanged serialized path. Modeled compiler children perform no APK,
+Gradle cache or device work and establish no build speedup.
+
+The stereo qualification mask-strip unit controls cover v1 compatibility and
+the explicitly versioned primary-texel-center strip. Marker `[77,66,2,255]`
+requires an actual retired final ABI2 frame with primary prefix6, current source
+and configuration joins, and all existing pixel validity checks. Readback keeps
+its five-pixel layout and reports paired v2 sample/UV contracts only for an
+accepted v2 strip. Availability and marker recognition do not prove the RGB
+equation: the version-selected consumer must still test actual derived output
+against its unchanged numeric criteria. Default/v1/ABI1 behavior is preserved;
+these host controls establish neither GPU pixels nor product acceptance.
+
+The optional development scissor consumer has focused core and real JVM/JNI
+checks, using existing immutable image/dependency suppliers and fresh outputs:
+`python tools/checks/Test-SpatialScissorModuleHost.py --output target/scissor-core-proof --host-deps <deps> --module-manifest <manifest.tsv>` and
+`python tools/checks/Test-SpatialScissorFacadeHost.py --output target/scissor-facade-proof --host-deps <deps> --java-home <jdk17> --module-manifest <manifest.tsv>`.
+See [the adapter contract](DEVELOPMENT_SCISSOR_MODULE.md) for cancellation,
+renderer-used generation/readback and host/device proof boundaries.
+
+External Spatial artifact preflight has a focused host gate:
+`pwsh -NoProfile -File tools/checks/Test-SpatialArtifactPreflightHost.ps1`.
+It executes the actual caller and directory guard with default or explicit
+optional roots, checks excluded-root overlaps and unsafe outputs, and performs
+no APK build, shared-cache operation or device operation.
+
+Spatial inspection-copy retention has a focused host gate:
+`pwsh -NoProfile -File tools/checks/Test-SpatialApkInspectionRetentionHost.ps1`.
+It runs the actual builder inspection section and real downstream capsule
+reader against a synthetic ZIP and modeled SDK tool leaves. See
+[inspection lifetime](APK_RUN_ISOLATION.md#spatial-inspection-copy-lifetime).
+It does not build an APK, alter an active cache or provide device evidence.
+
+For the opt-in owned display producers, run these focused host checks:
+
+```powershell
+pwsh -NoProfile -File tools/checks/Test-DisplayStreamRetirementHost.ps1 -JavaHome $env:JAVA_HOME
+pwsh -NoProfile -File tools/checks/Test-DisplayStreamAndroidStatic.ps1
+python tools/Build-NativeBrowserCapture.py --java-home $env:JAVA_HOME --android-home $env:ANDROID_HOME
+```
+
+The native builder runs seven protocol/options/ownership/transport host groups,
+API 34 compilation and D8 minimum API 31 without APK or device operations.
+The generic harness uses modeled Android codec classes and a real blocking NIO
+Pipe; the static check is source/manifest coverage. Generic full API 34 javac
+is separate from those models and from APK packaging. See the
+[wire contract](DISPLAY_CAPTURE_WIRE.md) and producer READMEs for output paths,
+exact argument/lifecycle contracts and firmware/evidence limits. Hosted
+package-updater checks do not claim capture test coverage; run these focused
+checks for affected capture source. No host pass attests physical capture,
+service cleanup acknowledgment or browser playback.
+
+The optional privileged shell recenter adapter uses the focused host gate
+`pwsh -NoProfile -File tools/Test-ShellRecenter.ps1 -AndroidJar <sdk/android.jar>`.
+It compiles and exercises the real controller and Android binding against
+independent framework doubles, checks original-lifetime and durable-final
+semantics, and excludes fixture payloads from the library. It builds no APK and
+contacts no device. See [shell recenter](SHELL_RECENTER.md).
+
+For `tools/sdk_graphics`, run its three `Test-*.py` scripts. The
+[SDK graphics provider](SDK_GRAPHICS_PREPARATION.md) tests compiler/reflection,
+immutable publication, exact revert, and actual ZIP primary/alias byte joins.
+These focused host checks and the boundary scan do not build or contact an APK.
+
+The optional Navigator visibility library has a host-only focused gate:
+`pwsh -NoProfile -File tools/Test-NavigatorVisibility.ps1 -AndroidJar <installed-sdk/android.jar>`.
+It compiles the Android binding, exercises the neutral simulated journal and
+registration/cleanup races, verifies missing-vendor linkage, and excludes
+compile-only declarations from its AAR. It builds no APK and provides no device
+or distribution evidence. See [Navigator visibility](NAVIGATOR_VISIBILITY.md).
+
+## Meta XR input automation adapter
+
+Run `pwsh -NoProfile -File tools/Test-MetaXrInputAutomation.ps1` for the
+source-only two-consumer packaging/readiness/action/release conformance seam.
+It uses synthetic external files, exact-runtime callbacks and no APK build,
+network, proxy or headset. See [the adapter contract](META_XR_INPUT_AUTOMATION.md).
+The finite real transport adds `pwsh -NoProfile -File
+tools/Test-MetaXrInputBackend.ps1`: source preparation plus an independent
+stdio peer tests closed inputs, durable request journals, uncertain dispatch,
+original-effect separation and effective original-target release. No vendor
+proxy, device, forward or APK build is started by this host gate.
+
+
 For development graphs whose current Manifold source differs from the exact
 legacy camera/P2P compatibility supplier, keep those suppliers separate. The
 product preparation fixture accepts
@@ -43,6 +133,20 @@ Validate the host contract before a focused or aggregate run:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PowerShellHost.ps1 -SelfTest
 ```
+
+Development feedback module preparation has independent CPU-only host checks:
+
+```powershell
+pwsh -NoProfile -File tools/Test-DevelopmentFeedback.ps1
+pwsh -NoProfile -File examples/development-feedback-native/Run-Conformance.ps1 -Rustc <rustc>
+python examples/development-feedback-native/Run-ScissorConformance.py --rustc <rustc>
+```
+
+See [Development Feedback Modules](DEVELOPMENT_FEEDBACK_MODULES.md) for the
+resident contract, immutable generation staging, rejection/state controls and
+later Android integration. Host classloader/dynamic-library execution and real
+SDK/D8 compilation are separate from Quest runtime and edit-to-feedback proof.
+These checks do not add a prerequisite to unrelated APK or runtime work.
 
 The pure breath lifecycle has a dependency-free focused gate:
 
@@ -1601,3 +1705,20 @@ The source-only premerge build contract has a focused actual Git/Cargo check:
 `pwsh -NoProfile -File tools/checks/Test-SourceCompositionPremerge.ps1`.
 It uses local repositories without remotes and no Android compilation or device
 access; the same check is included in `tools/check_all.ps1`.
+
+The same family exercises `Get-QuestBuildSourceComposition -ApplicationId`
+through `Test-SourceCompositionOwnedRepository.ps1`: actual Git-only Java
+selection, zero Cargo calls, source drift and explicit overlays. Neutral capsule
+construction/reading and capsule-bound zero-property cleanup/recovery are covered
+by `Test-ApkRunIsolationStatic.ps1` and `Test-QuestRecordingHostReliability.ps1`.
+The [feedback app source check](../apps/development-feedback-android/README.md)
+also tests immutable packaged selection identity in its real controller. These
+remain host/source evidence; run an actual selected APK for device proof.
+
+For the generic stable Cargo source forest and byte-preserving materialization,
+run `pwsh -NoProfile -File tools/checks/Test-ContentStableCargoStage.ps1 -OutputRoot <new-proof-directory>`.
+The existing `Test-SourceCompositionPremerge.ps1` family also invokes this gate,
+so its registered `check_all.ps1` invocation includes these regressions.
+This focused gate invokes real host Cargo in isolated fixture sources, covers
+Java-only freshness, native/dependency/feature/compiler-flag invalidation and
+exclusive-lock cleanup, and retains its outputs. It proves no Android/device effect.

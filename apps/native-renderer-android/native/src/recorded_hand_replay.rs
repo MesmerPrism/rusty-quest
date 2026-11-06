@@ -100,9 +100,13 @@ pub(crate) struct MeshComponentSummary {
 impl RecordedHandReplaySummary {
     pub(crate) fn load() -> Result<Self, String> {
         #[cfg(native_hand_geometry_disabled)]
-        { Err("recorded hand geometry is not selected".into()) }
+        {
+            Err("recorded hand geometry is not selected".into())
+        }
         #[cfg(not(native_hand_geometry_disabled))]
-        { Self::from_json_str_for_hand(RECORDED_HAND_REPLAY_JSON, "left") }
+        {
+            Self::from_json_str_for_hand(RECORDED_HAND_REPLAY_JSON, "left")
+        }
     }
 
     fn from_json_str(json: &str) -> Result<Self, String> {
@@ -295,9 +299,13 @@ impl RecordedHandReplaySummary {
 impl RecordedHandReplaySet {
     pub(crate) fn load() -> Result<Self, String> {
         #[cfg(native_hand_geometry_disabled)]
-        { Err("recorded hand geometry is not selected".into()) }
+        {
+            Err("recorded hand geometry is not selected".into())
+        }
         #[cfg(not(native_hand_geometry_disabled))]
-        { Self::from_json_str(RECORDED_HAND_REPLAY_JSON) }
+        {
+            Self::from_json_str(RECORDED_HAND_REPLAY_JSON)
+        }
     }
 
     fn from_json_str(json: &str) -> Result<Self, String> {

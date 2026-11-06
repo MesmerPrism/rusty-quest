@@ -655,6 +655,14 @@ unsafe fn run_projection_loop_inner(
 
     let mesh_ui_enabled =
         crate::native_mesh_ui::enabled_for_mode(runtime_options.render_mode.marker_value());
+    if crate::native_development_feedback::selected()
+        && (!mesh_ui_enabled || !runtime_options.render_mode.uses_scene_depth())
+    {
+        return Err(
+            "native development feedback requires its locked worldspace scene and mesh panel"
+                .into(),
+        );
+    }
     let mesh_ui_foreign_queue_ready = physical_device_supports_extension(
         &vk_instance,
         vk_physical_device,
@@ -1556,21 +1564,42 @@ unsafe fn run_projection_loop_inner(
 
     #[cfg(feature = "showcase")]
     let mut hand_joint_capture_recorder: Option<LiveHandJointCaptureRecorder> = None;
-    // Start the Android writer only after all fallible frame-resource allocations.
-    // From here every frame-loop exit joins the explicit panel/device teardown below.
-    let mut mesh_ui_panel = if mesh_ui_enabled {
+    let ui_generation = if mesh_ui_enabled {
         if !external_hwb_extension_ready {
             return Err("native mesh UI requires AHardwareBuffer Vulkan import".into());
         }
         static NEXT_UI_GENERATION: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(1);
-        let generation = NEXT_UI_GENERATION
+        NEXT_UI_GENERATION
             .fetch_update(
                 std::sync::atomic::Ordering::Relaxed,
                 std::sync::atomic::Ordering::Relaxed,
                 |value| value.checked_add(1),
             )
-            .map_err(|_| "native mesh UI generation exhausted".to_string())?;
+            .map_err(|_| "native mesh UI generation exhausted".to_string())?
+    } else {
+        0
+    };
+    let mut development_feedback = if crate::native_development_feedback::selected() {
+        Some(
+            crate::native_development_feedback::NativeDevelopmentFeedback::new(
+                &app.internal_data_path()
+                    .ok_or("native feedback needs app-private data")?,
+                ui_generation,
+            )?,
+        )
+    } else {
+        None
+    };
+    #[cfg(native_development_feedback)]
+    let mut development_feedback_scene =
+        crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene::new(
+            &vk_device,
+            render_pass,
+        )?;
+    // Start the Android writer after fallible developer-session/pipeline preparation.
+    // Every frame-loop exit joins the explicit panel/device teardown below.
+    let mut mesh_ui_panel = if mesh_ui_enabled {
         Some(GpuMeshUiPanel::new(
             app,
             &vk_instance,
@@ -1578,7 +1607,7 @@ unsafe fn run_projection_loop_inner(
             memory_properties,
             render_pass,
             scene_depth.is_some(),
-            generation,
+            ui_generation,
             queue_family_index,
             render_mode.marker_value(),
         )?)
@@ -1613,6 +1642,9 @@ unsafe fn run_projection_loop_inner(
         &mut guide_blur_graph_renderer,
         camera_runtime,
         mesh_ui_panel.as_mut(),
+        development_feedback.as_mut(),
+        #[cfg(native_development_feedback)]
+        &mut development_feedback_scene,
         render_mode,
         environment_blend_mode,
         native_passthrough_requested,
@@ -1709,10 +1741,14 @@ unsafe fn run_projection_loop_inner(
     }
 
     let retirement = match vk_device.device_wait_idle() {
-        Ok(()) => match mesh_ui_panel.take() {
-            Some(panel) => panel.destroy(app, &vk_device),
-            None => Ok(()),
-        },
+        Ok(()) => {
+            #[cfg(native_development_feedback)]
+            development_feedback_scene.destroy(&vk_device);
+            match mesh_ui_panel.take() {
+                Some(panel) => panel.destroy(app, &vk_device),
+                None => Ok(()),
+            }
+        }
         Err(error) => {
             if let Some(panel) = mesh_ui_panel.take() {
                 panel.retain_unretired(app);
@@ -2334,6 +2370,10 @@ unsafe fn run_projection_frames(
     guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
     camera_runtime: Option<&NativeCameraRuntime>,
     mut mesh_ui_panel: Option<&mut GpuMeshUiPanel>,
+    mut development_feedback: Option<
+        &mut crate::native_development_feedback::NativeDevelopmentFeedback,
+    >,
+    #[cfg(native_development_feedback)] development_feedback_scene: &mut crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene,
     render_mode: NativeRendererRenderMode,
     environment_blend_mode: xr::EnvironmentBlendMode,
     native_passthrough_requested: bool,
@@ -2574,6 +2614,8 @@ unsafe fn run_projection_frames(
                         crate::experiment_session_runtime::note_preparation_presentation(
                             crate::experiment_session::PresentationState::Unfocused,
                         );
+                        #[cfg(native_meta_xr_operator)]
+                        crate::native_input_geometry::invalidate();
                         alternate_pointer.reset();
                         if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                             panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
@@ -2793,6 +2835,8 @@ unsafe fn run_projection_frames(
         trace_startup_frame(frame_count, "after-xr-begin-frame");
 
         if !frame_state.should_render {
+            #[cfg(native_meta_xr_operator)]
+            crate::native_input_geometry::invalidate();
             alternate_pointer.reset();
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                 panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
@@ -2837,6 +2881,8 @@ unsafe fn run_projection_frames(
             || !view_flags.contains(xr::ViewStateFlags::ORIENTATION_VALID)
             || !view_flags.contains(xr::ViewStateFlags::POSITION_VALID)
         {
+            #[cfg(native_meta_xr_operator)]
+            crate::native_input_geometry::invalidate();
             // An empty frame with invalid head views also loses pointer admission.
             // Cancel before recovery can turn a stale captured press into ACTION_UP.
             alternate_pointer.reset();
@@ -3088,7 +3134,15 @@ unsafe fn run_projection_frames(
                             ui_hand_sample,
                         )
                     } else {
-                        alternate_pointer.update(controller_selected, ui_hand_sample)
+                        {
+                            #[cfg(native_meta_xr_operator)]
+                            let selection = alternate_pointer
+                                .update_preferring_hands(controller_selected, ui_hand_sample);
+                            #[cfg(not(native_meta_xr_operator))]
+                            let selection =
+                                alternate_pointer.update(controller_selected, ui_hand_sample);
+                            selection
+                        }
                     }
                 } else {
                     (
@@ -3578,6 +3632,38 @@ unsafe fn run_projection_frames(
         let mesh_ui_frame_controls = mesh_ui_panel.as_ref().map(|panel| panel.frame_controls());
         let mesh_ui_controls =
             crate::native_mesh_ui::neutral_frame_controls(mesh_ui_frame_controls);
+        #[cfg(native_meta_xr_operator)]
+        let input_geometry_frame = mesh_ui_controls.map(|controls| {
+            crate::native_input_geometry::freeze(crate::native_input_geometry::Frame {
+                generation: controls.generation,
+                revision: controls.revision,
+                center: controls.pose.center,
+                right: controls.pose.right,
+                up: controls.pose.up,
+                width: controls.pose.width,
+                height: controls.pose.height,
+                visible: controls.panel_visible && controls.pose_initialized,
+                tracking_valid: view_flags.contains(
+                    xr::ViewStateFlags::ORIENTATION_VALID | xr::ViewStateFlags::POSITION_VALID,
+                ),
+                reference_space: format!("{:?}", reference_space_type),
+                instance: format!("{:?}", xr_instance.as_raw()),
+                session: format!("{:?}", session.as_raw()),
+            })
+        });
+        if let Some(feedback) = development_feedback.as_deref_mut() {
+            #[cfg(native_development_feedback)]
+            feedback.tick_with_shader(frame_count, &mut |candidate| {
+                let other_fences: Vec<_> = fences
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(slot, fence)| (slot != frame_slot).then_some(*fence))
+                    .collect();
+                development_feedback_scene.replace(vk_device, render_pass, candidate, &other_fences)
+            });
+            #[cfg(not(native_development_feedback))]
+            feedback.tick(frame_count);
+        }
         let camera_output_enabled = mesh_ui_controls.is_none_or(|controls| controls.camera);
         let mut effective_diagnostic_settings = hand_mesh_visual_diagnostic_settings;
         effective_diagnostic_settings.enabled &=
@@ -4566,6 +4652,13 @@ unsafe fn run_projection_frames(
             projection_metadata,
             &projection_target_state,
             mesh_ui_panel.as_deref(),
+            #[cfg(native_development_feedback)]
+            Some((
+                development_feedback_scene,
+                development_feedback
+                    .as_ref()
+                    .map_or(0, |state| state.visual_value),
+            )),
         );
         if render_mode.uses_stimulus_volume() {
             gpu_timestamp_tracker.write_stage_end(
@@ -4700,6 +4793,13 @@ unsafe fn run_projection_frames(
         );
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
         frame_timings.submitted_frame_host_ms = elapsed_ms(submitted_frame_host_started);
+        #[cfg(native_meta_xr_operator)]
+        if let Some(prepared) = input_geometry_frame {
+            crate::native_input_geometry::submitted(prepared, frame_count);
+        }
+        if let Some(feedback) = development_feedback.as_deref_mut() {
+            feedback.submitted(frame_count);
+        }
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
             renderer.confirm_submitted_frame(frame_count, private_particle_stats);
         }
@@ -6322,6 +6422,10 @@ unsafe fn record_projection_diagnostic(
     projection_metadata: &CameraProjectionMetadata,
     projection_target_state: &ProjectionTargetState,
     mesh_ui_panel: Option<&GpuMeshUiPanel>,
+    #[cfg(native_development_feedback)] development_feedback_scene: Option<(
+        &crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene,
+        i64,
+    )>,
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
@@ -6711,6 +6815,27 @@ unsafe fn record_projection_diagnostic(
                     );
                 }
             }
+        }
+        #[cfg(native_development_feedback)]
+        if let Some((scene, value)) = development_feedback_scene {
+            scene.record_eye(
+                device,
+                cmd,
+                eye_projection,
+                mesh_ui_panel
+                    .map(|panel| panel.frame_controls())
+                    .unwrap_or_default(),
+                frame_count,
+                value,
+                vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: swapchain.extent.width as f32,
+                    height: swapchain.extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                },
+            );
         }
         // Existing depth-based worldspace panels retain their original scene position.
         if swapchain.scene_depth_enabled {

@@ -18,7 +18,26 @@ internal object ConcurrentStereoQualification {
     private var installedApk: String? = null
     private var armEntryElapsedNs: Long = 0
     private var armExitElapsedNs: Long = 0
+    private data class ArmedActor(val epoch:String,val challenge:String,val config:String,val generation:Long)
+    @Volatile private var armedActor: ArmedActor? = null
+    @JvmStatic fun bindCurrentArmActor(epoch:String,challenge:String,config:String,generation:Long){
+        require(generation>0L && this.processEpoch==epoch && this.challenge==challenge && runtimeConfig==config && arm!=0L)
+        armedActor=ArmedActor(epoch,challenge,config,generation)
+    }
+    @JvmStatic fun currentArmActor(epoch:String,challenge:String,config:String?,generation:Long):Boolean =
+        armedActor?.let { it.epoch==epoch && it.challenge==challenge && it.config==config && it.generation==generation } == true
 
+
+    /** Java ARM is independent of native configuration existence. No synthetic arm zero. */
+    @JvmStatic fun retirementArmObservation(epoch: String, config: String?, generation: Long): JSONObject {
+        val actual=armedActor
+        if(arm==0L || actual==null || actual.generation!=generation || actual.epoch!=epoch || actual.config!=config)
+            return JSONObject().put("binding","not_established")
+        require(processEpoch==epoch && runtimeConfig==config && nativeProcess>0L && challenge!=null) { "retirement ARM context differs" }
+        return JSONObject().put("binding","established").put("challenge",challenge)
+            .put("arm_generation",arm).put("native_process",nativeProcess).put("process_epoch",processEpoch)
+            .put("runtime_config_sha256",runtimeConfig)
+    }
     @JvmStatic fun currentHubChallenge(processEpoch: String, runtimeSha: String, featureSha: String): String {
         require(arm != 0L && this.processEpoch == processEpoch && runtimeConfig == runtimeSha && featureLock == featureSha)
         return requireNotNull(challenge)
@@ -30,7 +49,8 @@ internal object ConcurrentStereoQualification {
         val configured = StereoBankControls.snapshot()
         val maskEnabled = StereoBankControls.maskSnapshot()[3] != 0L
         val life = JSONObject(lifecycle)
-        require(life.getString("\$schema") == "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1" && life.getString("action") == "peer_status")
+        if (life.getString("\$schema") == EmbeddedDuplexFreshLifecycle.SCHEMA) EmbeddedDuplexFreshLifecycle.require(life)
+        require(life.getString("\$schema") in setOf("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1", "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3", EmbeddedDuplexFreshLifecycle.SCHEMA) && life.getString("action") == "peer_status")
         require(life.getString("config_sha256") == runtimeSha && life.getString("status") == "active" && !life.getBoolean("renewal_pending"))
         val projection = life.getJSONObject("authority_projection")
         val observed = life.getLong("observed_at_ms")

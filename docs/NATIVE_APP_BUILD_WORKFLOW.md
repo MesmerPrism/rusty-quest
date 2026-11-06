@@ -261,9 +261,15 @@ Use the smallest route that matches the change:
 - Same APK, same manifest: skip rebuild/reinstall and run launch/smoke with
   the existing run capsule. Use `-SkipInstall` only when the installed package,
   APK hash, and capsule identities are known to match.
-- Manifest, permission, service, activity, query, asset, shader, native code,
-  package identity, or non-hotload render-target changes: rebuild/reinstall and
-  rerun the pregrant plan before first launch.
+- Compatible shader or asset edits may use the selected app's explicitly
+  enabled and qualified reload adapter, with its ABI, mapping/lifecycle,
+  effective-output and exact restoration contract. Follow the canonical Meta
+  [development feedback playbook](https://github.com/MesmerPrism/meta-quest-agent-workflow/blob/main/docs/quest-development-feedback-loops.md).
+  A generic asset provider or another app's reload result does not enable it.
+- Without that qualified adapter, shader/asset edits retain rebuild/reinstall.
+  Manifest, permission, service, activity, query, native/JNI/lifecycle, new
+  resource/interface, package identity or non-hotload render-target changes
+  require the affected artifact and pregrant plan before first launch.
 - Full Android APK builds are the compile gate for native renderer integration
   paths that are not exercised by narrower Rust unit-test targets. If a change
   touches OpenXR/Vulkan frame-loop wiring, run the package build before headset
@@ -271,3 +277,11 @@ Use the smallest route that matches the change:
 - Acceptance evidence: keep using the full smoke route. It is intentionally
   slower because it proves install, profile transport, app-side adoption, and
   runtime markers together.
+
+The canonical `debug.meta_xr_operator` descriptor lives under
+`fixtures/native-app-features/development/meta-xr-operator/` and requires
+`native.development_feedback`. Use `native-development-hotload-operator.app.json`
+for the complete source-selected host. The former `debug/meta-xr-operator` module
+and original-mesh-only packaging route are superseded. The builder retains
+`-EnableMetaXrOperatorDebugLayer` as an alias of `-EnableMetaXrOperator`; both
+require the same canonical development-host selection and external byte pins.

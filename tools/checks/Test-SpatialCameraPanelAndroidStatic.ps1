@@ -1590,7 +1590,7 @@ Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProj
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "private var startMask = 0L"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "fun videoPanelBindings(): CameraHwbProjectionVideoPanelBindings"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "fun run(readerMaxImages: Int, videoSettings: SpatialVideoProjectionSettings)"
-Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "if (!bindings.routeEnabled())"
+Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "if (sceneRetired || !bindings.routeEnabled())"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "CameraHwbProjectionPanelCarrierModule.createVideoSurfacePanelEntity("
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "CameraHwbProjectionPanelCarrierModule.createManualCustomMeshPanel("
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "private fun startIfReady(reason: String)"
@@ -4825,8 +4825,9 @@ Assert-Contains "Build script" $buildScript 'spatial_environment_depth_permissio
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_real_provider_bound = $false'
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_data_source = $(if ($EnvironmentDepthOwner -eq "legacy-native-sidecar")'
 Assert-Contains "Build script" $buildScript '$apkInspectionRoot = Join-Path $BuildCacheRoot "apk-v"'
-Assert-Contains "Build script" $buildScript '$apkInspectionPath = Join-Path $apkInspectionRoot "$sha256.apk"'
-Assert-Contains "Build script" $buildScript 'Copy-FileIfChanged -Source $apkOut -Destination $apkInspectionPath'
+Assert-Contains "Build script" $buildScript 'New-QuestApkInspectionCopy -ApkPath $apkOut -InspectionRoot $apkInspectionRoot -ExpectedApkSha256 $sha256'
+Assert-Contains "Build script" $buildScript '$apkInspectionPath = $apkInspectionCopy.path'
+Assert-Contains "Build script" $buildScript 'Complete-QuestApkInspectionCopy -Copy $apkInspectionCopy -InspectionReceiptPath $apkInspectionPath'
 Assert-Contains "Build script" $buildScript 'zipalign "-c" "-P" "16" "-v" "4" $apkInspectionPath'
 Assert-Contains "Build script" $buildScript '$shortAapt2 "dump" "badging" $apkInspectionPath'
 Assert-Contains "Build script" $buildScript '"legacy-native-sidecar-last-valid-or-neutral"'

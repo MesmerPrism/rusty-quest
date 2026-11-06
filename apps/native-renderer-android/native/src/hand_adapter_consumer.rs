@@ -126,18 +126,34 @@ mod tests {
             enabled: false,
             ..accepted_input()
         });
-        for source in [CompactHandInputSourceMode::Auto, CompactHandInputSourceMode::LiveMeta] {
+        for source in [
+            CompactHandInputSourceMode::Auto,
+            CompactHandInputSourceMode::LiveMeta,
+        ] {
             let excluded = HandAdapterEffectRequest::from_selection(
-                false, source.selects_live_frame(), false, false, false, false,
+                false,
+                source.selects_live_frame(),
+                false,
+                false,
+                false,
+                false,
             );
             assert!(!excluded.any());
             assert!(effects_authorized(&disabled, excluded));
             let selected = HandAdapterEffectRequest::from_selection(
-                true, source.selects_live_frame(), false, false, false, false,
+                true,
+                source.selects_live_frame(),
+                false,
+                false,
+                false,
+                false,
             );
             assert!(selected.live_hand_input);
             assert!(!effects_authorized(&disabled, selected));
-            assert!(effects_authorized(&resolve_activation(&accepted_input()), selected));
+            assert!(effects_authorized(
+                &resolve_activation(&accepted_input()),
+                selected
+            ));
         }
     }
 
@@ -147,8 +163,12 @@ mod tests {
             enabled: false,
             ..accepted_input()
         });
-        for flags in [[true,false,false,false], [false,true,false,false],
-            [false,false,true,false], [false,false,false,true]] {
+        for flags in [
+            [true, false, false, false],
+            [false, true, false, false],
+            [false, false, true, false],
+            [false, false, false, true],
+        ] {
             let request = HandAdapterEffectRequest::from_selection(
                 false, true, flags[0], flags[1], flags[2], flags[3],
             );

@@ -553,8 +553,10 @@ name = "rusty-manifold-admission"
 version = "0.1.0"
 dependencies = [
  "rusty-manifold-model",
+ "rusty-manifold-runtime-host",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -605,6 +607,7 @@ name = "rusty-manifold-peer"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
+ "rusty-manifold-admission",
  "rusty-manifold-media-session",
  "rusty-manifold-model",
  "rusty-manifold-runtime-host",
@@ -617,6 +620,7 @@ dependencies = [
 name = "rusty-manifold-peer-runtime-host"
 version = "0.1.0"
 dependencies = [
+ "rusty-manifold-admission",
  "rusty-manifold-broker-adapter",
  "rusty-manifold-media-session",
  "rusty-manifold-model",
@@ -624,6 +628,7 @@ dependencies = [
  "rusty-manifold-runtime-host",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -633,6 +638,7 @@ dependencies = [
  "rusty-manifold-model",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1126,7 +1132,10 @@ dependencies = [
  "libc",
  "ndk-sys",
  "openxr-sys",
+ "rusty-manifold-admission",
+ "rusty-manifold-model",
  "rusty-manifold-peer",
+ "rusty-manifold-peer-runtime-host",
  "rusty-quest-broker-authority",
  "rusty-quest-feature-activation",
  "rusty-quest-hand-adapter",
@@ -1135,6 +1144,7 @@ dependencies = [
  "rusty-quest-particle-adapter",
  "serde",
  "serde_json",
+ "sha2",
  "zeroize",
 ]
 

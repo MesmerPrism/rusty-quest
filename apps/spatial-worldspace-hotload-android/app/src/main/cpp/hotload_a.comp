@@ -1,0 +1,9 @@
+#version 450
+layout(local_size_x=2) in;
+layout(set=0,binding=0,std430) writeonly buffer Output {vec4 rows[];} outputData;
+layout(push_constant) uniform Params {uvec4 identity;vec4 timing;} params;
+void main(){uint i=gl_GlobalInvocationID.x;if(i>=2)return;uint r=i*4;
+outputData.rows[r]=vec4(i==0?-.45:.45,1.65,-1.2,.04);
+outputData.rows[r+1]=i==0?vec4(0,1,1,1):vec4(1,.1,.1,1);
+outputData.rows[r+2]=vec4(0,0,1,1);
+outputData.rows[r+3]=vec4(0,0,1,1);}

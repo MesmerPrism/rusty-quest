@@ -38,7 +38,7 @@ final class EmbeddedDuplexRecoveryEvidenceJournal {
     private final AtomicFile file;
 
     EmbeddedDuplexRecoveryEvidenceJournal(Context context) throws Exception {
-        directory = new File(context.getNoBackupFilesDir(), "embedded-duplex-replay");
+        directory = new File(EmbeddedDuplexProcessHost.operationalRoot(context), "embedded-duplex-replay");
         rejectLink(directory);
         if (!directory.isDirectory() && !directory.mkdir()) {
             throw new IllegalStateException("recovery evidence directory unavailable");

@@ -562,6 +562,7 @@ impl GpuMeshUiPanel {
             }
             let (props, format) =
                 ahb::query_ahb_vulkan_import_properties(&self.ahb, &lease.buffer)?;
+            // An RGBA reader must expose a concrete format. Never silently reinterpret YCbCr.
             if format.format == vk::Format::UNDEFINED {
                 return Err("mesh UI RGBA AHB has no concrete Vulkan format".into());
             }
@@ -1135,7 +1136,10 @@ impl GpuMeshUiPanel {
         if !self.recall_world_at_head(generation) {
             return false;
         }
-        crate::marker("native-mesh-ui", format!("event=showcase-recenter trigger={trigger} generation={generation}"));
+        crate::marker(
+            "native-mesh-ui",
+            format!("event=showcase-recenter trigger={trigger} generation={generation}"),
+        );
         true
     }
 

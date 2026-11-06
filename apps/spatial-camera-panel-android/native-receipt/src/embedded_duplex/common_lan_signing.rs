@@ -118,6 +118,8 @@ pub(crate) fn signing_authority_from_live_snapshot(
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CommonLanSigningPolicy<'a> {
+    pub(crate) development_lifetime_policy:
+        Option<&'a rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
     pub(crate) local_peer_id: &'a str,
     pub(crate) trust_policy_id: &'a str,
     pub(crate) trust_policy_revision: u64,
@@ -153,7 +155,11 @@ pub(crate) fn validate_common_lan_context_for_signing(
         || policy.max_context_age_ms == 0
         || policy.max_future_skew_ms > policy.max_context_age_ms
         || policy.max_context_ttl_ms == 0
-        || policy.max_context_ttl_ms > 240_000
+        || policy.max_context_ttl_ms
+            > rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                policy.development_lifetime_policy,
+                240_000,
+            )
         || context.schema_id.as_str() != COMMON_LAN_RECIPROCAL_ED25519_CONTEXT_SCHEMA
         || context.trust_policy_id.as_str() != policy.trust_policy_id
         || context.trust_policy_revision.get() != policy.trust_policy_revision
@@ -435,6 +441,7 @@ mod tests {
             &live.enrolled,
             &context("peer.a", "peer.b"),
             CommonLanSigningPolicy {
+                development_lifetime_policy: None,
                 trust_policy_id: &live.trust_policy_id,
                 trust_policy_revision: live.trust_policy_revision,
                 network_scope_id: &route.network_scope_id,
@@ -549,8 +556,34 @@ mod tests {
         ]
     }
 
+    #[test]
+    fn development_signer_requires_selected_source_and_real_parent_lifetime() {
+        let selected =
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::source_owned_v1();
+        let mut context = context("peer.a", "peer.b");
+        context.expires_at_ms = context.issued_at_ms + selected.delegated_authority_horizon_ms;
+        let mut policy = policy("peer.a");
+        policy.max_context_age_ms = selected.delegated_authority_horizon_ms;
+        policy.max_context_ttl_ms = selected.delegated_authority_horizon_ms;
+        assert!(
+            validate_common_lan_context_for_signing(&route(), &enrolled(), &context, policy)
+                .is_err()
+        );
+        policy.development_lifetime_policy = Some(selected);
+        assert!(
+            validate_common_lan_context_for_signing(&route(), &enrolled(), &context, policy)
+                .is_ok()
+        );
+        context.expires_at_ms += 1;
+        assert!(
+            validate_common_lan_context_for_signing(&route(), &enrolled(), &context, policy)
+                .is_err()
+        );
+    }
+
     fn policy(local: &str) -> CommonLanSigningPolicy<'_> {
         CommonLanSigningPolicy {
+            development_lifetime_policy: None,
             local_peer_id: local,
             trust_policy_id: "trust.duplex",
             trust_policy_revision: 3,

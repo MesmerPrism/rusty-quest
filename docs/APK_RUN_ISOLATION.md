@@ -1,5 +1,9 @@
 # APK Build And Run Isolation
 
+The isolated [development source-version metadata experiment](SOURCE_VERSION_RUNTIME_METADATA.md)
+describes the optional non-constant version field and its compatibility and
+Android evidence limits. It does not change installed source-version admission.
+
 Use this contract whenever multiple Rusty Quest projects build or launch APKs
 during the same session, especially when they share one headset.
 
@@ -71,12 +75,98 @@ to replace an existing content address unless `-ReplaceExistingOutput` is
 passed. Normal iteration should reuse the existing output or create a new
 address; replacement is a repair/debug action.
 
+The Camera builder also supports DevFast and Candidate external artifacts through an
+explicit `-ArtifactOutputParent` and absolute `-OutDir` strict child. The parent
+must already exist with ordinary ancestors and must not overlap any source
+composition repository, build cache or explicitly shared Gradle tool root.
+OutDir is create-new and replacement is forbidden. This keeps fresh attempt
+artifacts outside a reusable source tree while retaining the full build lock,
+source/signer inspection and run capsule. The emitted lock/manifest record the
+external-output policy without the parent machine path. See the
+[Camera workflow](SPATIAL_CAMERA_PANEL_FAST_BUILD_WORKFLOW.md) for tool reuse.
+
 ## Run Capsule
 
+### Spatial inspection-copy lifetime
+
+The Spatial builder inspects a short-path, create-new
+`<BuildCacheRoot>/apk-v/attempt-<random-id>.apk` copy. It owns that single file
+under the existing serialized build-cache lane. Signer, alignment, package,
+source-version, ELF and ZIP checks must succeed and `OutDir/apk-inspection.json`
+must be written before the copy can be retired. Finalization rechecks canonical
+APK, copy and inspection-receipt identities, and rejects linked paths. A tool,
+identity, receipt-write or finalization failure preserves the copy and canonical
+APK; the builder reports the failed attempt path. Interrupted attempts also
+remain for diagnosis. This policy does not sweep earlier files.
+
+The canonical `OutDir` APK, inspection JSON, build lock, manifest and run capsule
+remain the supported downstream artifacts. They never refer to the temporary
+inspection APK. Current, rollback, milestone and failure artifacts stay with
+their owning output/evidence policy; existing hash-named inspection copies are
+not automatically removed. Native, Gradle and other warm state are untouched.
+The identity rechecks have a hashing cost; this change claims bounded successful
+inspection-copy retention, not a measured build speedup.
+
+Run `pwsh -NoProfile -File tools/checks/Test-SpatialApkInspectionRetentionHost.ps1`
+for the complete production inspection section with modeled SDK tool leaves,
+real ZIP/JSON publication and the real capsule reader. The host gate includes
+failure retention, mutation, receipt, ownership and linked-root controls; it
+does not compile an APK, exercise real Android SDK inspection or contact a device.
+
+An Android source owner outside the Cargo closure joins that same composition
+through `Add-QuestBuildOwnedRepository -Composition <document> -Root <git-root>
+-RepositoryId <id>`. It samples the exact commit/tree and, only with
+`-AllowWorkingTreeChanges`, the existing tracked/untracked overlay hash. The
+added role is `app-owned-input`; the document remains
+`rusty.quest.apk_source_composition.v1` (clean) or `.v2` (overlay). If the root
+already belongs to the Cargo composition, retain its existing record and role;
+an explicit duplicate or overlapping root is rejected. No caller-supplied
+commit or overlay can replace the observed source.
+
+For an explicitly selected Java-only app, use
+`Get-QuestBuildSourceComposition -RepoRoot <quest-root> -ApplicationId <package>`.
+This parameter set observes the exact Git root and logical application identity
+without invoking Cargo. It shares the existing canonical fingerprint, clean v1
+and explicit-overlay v2 records, and current-source assertion. It does not
+discover undeclared external inputs or claim a native dependency closure.
+
+Generic consumers can load a provider's exact raw document and call
+`Assert-QuestBuildSourceCompositionCurrent -Composition <document>` before and
+after a child build. The same optional working-tree switch is required for
+dirty development inputs. The assertion verifies document identity and
+reobserves every explicit Git root, rejecting drift even if a caller recomputes
+a self-consistent forged fingerprint. It does not discover additional Cargo
+dependencies. Keep the full app source proof separate from each component's
+cache inputs: an Android-only edit must not invalidate native compilation,
+while a native input change must. The Cargo/native dependency assertion keeps
+its existing closure and behavior.
+Spatial depth-layer CMake staging uses the selected serialized product/type
+cache lane, in a persistent `x` sibling of Gradle's temporary `a` and `r`
+directories. It no longer inherits `.cxx` beneath the source checkout.
+Before output writes or compilation the builder checks the known depth-layer
+object path against CMake's Windows 250-character limit. Select a shorter
+absolute `-BuildCacheRoot` if that check fails; do not toggle global long-path
+policy or delete an existing output. The builder passes the staging selection
+explicitly to Gradle, and records its geometry and selected-path SHA-256 in
+path-free build-cache evidence.
+Direct Gradle builds with the depth layer require an explicit absolute
+`rqCmakeStagingDirectory`; missing staging fails instead of falling back to
+the source tree. Host controls: `tools/checks/Test-SpatialCmakeStagingHost.ps1`.
+
 Every locked build writes `run-capsule.json`. The capsule hashes the APK, build
-manifest, selected lock or build-input lock, runtime profile, and complete
-property manifest, and binds the package/activity plus exact source
-commit/tree. Validate it before device mutation:
+manifest, selected lock or build-input lock and runtime profile, and binds the
+package/activity plus exact source commit/tree. Apps with Android property
+consumers also bind their complete property manifest. The opt-in
+`development-feedback-android` lane instead permits a null property manifest
+only with its hash-bound runtime profile explicitly declaring `property_policy`
+`none` and an empty `properties` array for the exact owner package. A null field
+alone never permits an unexplained empty isolation snapshot.
+
+`New-QuestRunCapsule` and `Read-QuestRunCapsule` in the existing
+`QuestRunIsolation.psm1` provide the neutral lane's create-new construction and
+reader. Construction observes actual Git source and actual file hashes; it
+does not assemble an APK or turn a build record into runtime acceptance.
+The existing `Test-ApkRunCapsule.ps1` facade remains the validation entry point:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
@@ -159,6 +249,16 @@ The transaction mutex protects callers using these wrappers. Cross-tool or
 cross-agent scheduling should additionally claim the headset serial, Android
 package, property namespace, and output through the project work-environment
 resource-claim protocol.
+
+For the explicit-none neutral lane, call `Enter-QuestRunIsolation` with
+`-RunCapsulePath` instead of `-PropertyNames`. Entry authenticates the capsule,
+package and profile declaration and retains their exact binding in the entered
+receipt. Clear, exit and recovery perform no property reads or writes for that
+case. Recovery reauthenticates the retained declaration before the fixed
+package stop. Existing nonempty property snapshots and legacy dirty-development
+capsules retain their behavior; unexplained or contradictory empty receipts
+still refuse. Keep the normal `try`/`finally` cleanup transaction around the
+chosen exact-APK deployment and app-owned probes.
 
 For Windows path compatibility, a launcher verifies and stages the capsule APK
 at `target/apk-r/<full-apk-sha256>.apk` before calling `adb install`. The short

@@ -546,6 +546,8 @@ pub(crate) fn renderer_observed(generation: u64, revision: u64) -> bool {
     true
 }
 pub(crate) fn activate(generation: u64) {
+    #[cfg(native_meta_xr_operator)]
+    crate::native_input_geometry::reset();
     *controls().lock().unwrap_or_else(|p| p.into_inner()) = ControlSnapshot {
         generation,
         ..ControlSnapshot::default()
@@ -818,6 +820,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
     code: i32,
     value: f32,
 ) -> jni::sys::jboolean {
+    if code == 14 {
+        return crate::native_development_feedback::enqueue_ui_compute(generation as u64).into();
+    }
     let accepted = apply(
         &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
         generation as u64,
