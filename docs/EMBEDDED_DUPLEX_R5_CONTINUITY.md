@@ -715,3 +715,19 @@ Run the actual selector's host checks with
 They cover release read inertness, the four exact debug values and default
 fallback. The Android build and effective construction marker are separate
 checks.
+
+## Native WSI presentation synchronization
+
+`CameraHwbWsiParts` owns one render-finished binary semaphore for each actual
+swapchain image. Local camera, Peer and source-set renderers select it using the
+acquired image index, including when the SDK queue broker performs submission
+and presentation. A command-buffer fence or return from `vkQueuePresentKHR`
+does not prove that presentation has consumed its wait semaphore. Reacquiring
+the same image orders its semaphore reuse, following the
+[Khronos presentation guidance](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html).
+
+`tools/checks/Test-CameraWsiPresentSemaphoresHost.py --output <fresh-directory>`
+checks the actual allocation, selection and rollback/destruction statements
+with modeled Vulkan calls. Actual Android compilation and Vulkan validation
+remain separate gates. This ownership rule does not add presentation fences or
+strengthen the existing shutdown-after-idle contract.

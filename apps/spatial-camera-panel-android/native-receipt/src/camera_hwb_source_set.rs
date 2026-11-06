@@ -213,7 +213,7 @@ unsafe fn render_source_set_common_graph(
         let command_buffers = &wsi.command_buffers;
         let frame_fence = wsi.frame_fence;
         let image_available = wsi.image_available;
-        let render_finished = wsi.render_finished;
+        let render_finished_semaphores = &wsi.render_finished;
         let swapchain = wsi.swapchain;
         let swapchain_loader = &wsi.swapchain_loader;
         let gpu_timestamps = &mut wsi.gpu_timestamps;
@@ -337,6 +337,7 @@ unsafe fn render_source_set_common_graph(
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
                 Err(error) => return Err(format!("peer-acquire-next-image-{error:?}")),
             };
+            let render_finished = render_finished_semaphores[image_index as usize];
             let command_buffer = command_buffers[image_index as usize];
             let latency_settings = current_camera_latency_settings();
             let camera_reprojection = current_camera_latency_stereo_reprojection(None, None);
