@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 
 namespace rqvp {
@@ -35,7 +36,7 @@ class Recorder {
 
  private:
   static constexpr size_t kLineBytes = 2048;
-  static constexpr size_t kQueueRows = 16;
+  static constexpr size_t kQueueRows = 1024;
   struct Row {
     char data[kLineBytes]{};
     size_t size = 0;
@@ -60,7 +61,9 @@ class Recorder {
   Sink sink_;
   void* context_;
   Limits limits_;
-  Row queue_[kQueueRows]{};
+  // Allocated once at the first selected start, never on the recording path.
+  // A disabled or failed first start remains inert without queue storage.
+  std::unique_ptr<Row[]> queue_;
   size_t head_ = 0;
   size_t queued_ = 0;
   uint64_t pid_ = 0;

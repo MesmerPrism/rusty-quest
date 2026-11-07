@@ -105,14 +105,29 @@ offline. `pDescriptorWrites[3]` is write-array index 3, not binding 3: the
 recorded `dstBinding`, destination set/array element/type and actual image view
 are required. Debug-name hashes are supporting labels, never owner authority.
 
-The initial recorder is limited to 262144 events, 32 MiB and 120 seconds, with
-rows bounded to 2048 bytes, up to 32 numeric fields and a 16-row queue. It records explicit terminal
+The recorder is limited to 262144 events, 32 MiB and 120 seconds, with
+rows bounded to 2048 bytes, up to 32 numeric fields and a 1024-row metadata queue. It records explicit terminal
 loss/limit states rather than silently truncating rows. Unknown descriptor
 encodings, incomplete `pNext` interpretation, external images or missing create
 history must remain coverage gaps. A finite window is not complete process
 history; overlapping cross-thread operations are not ordered merely by their
 log sequence. The recorder does not capture pixels, memory contents, shader
 source or private media.
+
+The metadata queue is unrelated to Vulkan queue objects. One caller drains it
+to the file sink outside the recorder mutex; concurrent callers can enqueue
+without waiting for that sink. The first selected start allocates the bounded
+queue on the heap, with no allocation on event calls. An allocation failure
+leaves recording inactive. Unselected recorders allocate no queue. No writer
+thread or GPU wait is added.
+
+The header advertises `max_queue_rows`. One slot is reserved for terminal
+evidence. A queue overflow ends the capture with `queue-limit`, observed
+`queue_capacity`, `queued_rows` and `drainer_active`, plus a count including the
+known rejected record. `dropped_events` is a lower bound on known lost records
+at termination; later unobserved calls are not counted. A drainer being active
+does not distinguish file I/O from descheduling. More queue capacity can absorb
+bursts; it supplies no guarantee of a loss-free device capture.
 
 VVL may wrap handles, so layer order matters. The intended trace position is
 above validation, but Meta's built-in injection may change effective ordering.
@@ -133,12 +148,20 @@ destruction ordering. Android NDK header syntax checks are separate from those
 host leaves. Run the source selection/artifact-observer controls with:
 
 ```text
-python tools/checks/Test-VulkanProvenanceRecorderHost.py --root <quest> --output <quest>/target/provenance-recorder --cxx <host-cxx> [--vcvars <existing-vcvars64.bat> --windows-sdk <existing-Windows-Kits-root>]
+python tools/checks/Test-VulkanProvenanceRecorderHost.py --root <quest> --output <quest>/target/provenance-recorder --cxx <host-cxx> --mutation-controls [--vcvars <existing-vcvars64.bat> --windows-sdk <existing-Windows-Kits-root>]
 python tools/checks/Test-VulkanProvenanceLayerHost.py --output <quest>/target/provenance-layer --vulkan-include <ndk-sysroot>/usr/include --cxx <host-g++> --android-clang <ndk-clang++> --mutation-controls
 pwsh -NoProfile -File tools/checks/Test-VulkanProvenanceSelectionHost.ps1
 python tools/check_quest_boundaries.py
 git diff --check
 ```
+
+Recorder controls pause the real sink while four producers enqueue 256
+paired-call records, then verify complete FIFO output. A separate full-ring
+case checks the reserved terminal slot and pre-terminal depth. Allocation
+failure, disabled selection, reentry, sink failures with pending rows and
+worst-width terminal fields are exercised against the actual implementation.
+Mutation controls reject the former 16-row capacity and incorrect loss or
+allocation behavior. These host tests establish no device capture guarantee.
 
 The residence regression control requires an existing Linux ELF toolchain
 (an installed WSL environment also works):

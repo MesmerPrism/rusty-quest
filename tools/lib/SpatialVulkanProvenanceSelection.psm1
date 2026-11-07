@@ -21,6 +21,7 @@ function Resolve-SpatialVulkanProvenanceSelection {
         capture_max_events=262144
         capture_max_bytes=33554432
         capture_max_ns=120000000000
+        capture_queue_rows=1024
         runtime_activation_proven=$false
         sdk_dispatch_coverage_proven=$false
     }

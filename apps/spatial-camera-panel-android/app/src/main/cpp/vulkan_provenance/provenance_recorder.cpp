@@ -2,11 +2,12 @@
 
 #include <cstring>
 #include <limits>
+#include <new>
 
 namespace rqvp {
 namespace {
 constexpr size_t kMaxFields = 32;
-constexpr size_t kTerminalReserve = 384;
+constexpr size_t kTerminalReserve = 640;
 
 bool token(const char* value, size_t maximum) noexcept {
   if (value == nullptr || value[0] == '\0') return false;
@@ -39,7 +40,13 @@ bool metadata(const char* operation, const Field* fields,
                                       "reason",
                                       "coverage_complete",
                                       "window_ended",
-                                      "dropped_events"};
+                                      "dropped_events",
+                                      "max_queue_rows",
+                                      "queue_capacity",
+                                      "queued_rows",
+                                      "drainer_active",
+                                      "dropped_events_are_lower_bound",
+                                      "post_terminal_events_counted"};
   for (size_t i = 0; i != count; ++i) {
     if (!token(fields[i].name, 48)) return false;
     for (const char* name : reserved)
@@ -85,7 +92,8 @@ Line format(uint64_t sequence, uint64_t ns, uint64_t tid, uint64_t pid,
             const char* operation, const char* phase, uint64_t call,
             int32_t result, const Field* fields, size_t count,
             const Limits& limits, bool header, const char* reason = nullptr,
-            uint64_t dropped = 0) noexcept {
+            uint64_t dropped = 0, size_t queue_capacity = 0,
+            size_t queued_rows = 0, bool drainer_active = false) noexcept {
   Line row;
   row.text("{\"version\":1,\"sequence\":");
   row.number(sequence);
@@ -110,6 +118,7 @@ Line format(uint64_t sequence, uint64_t ns, uint64_t tid, uint64_t pid,
     row.field("max_events", limits.events);
     row.field("max_bytes", limits.bytes);
     row.field("duration_ns", limits.duration_ns);
+    row.field("max_queue_rows", queue_capacity);
     row.field("coverage_complete", 0);
     row.field("window_ended", 0);
   }
@@ -120,6 +129,11 @@ Line format(uint64_t sequence, uint64_t ns, uint64_t tid, uint64_t pid,
     row.field("coverage_complete", 0);
     row.field("window_ended", 1);
     row.field("dropped_events", dropped);
+    row.field("queue_capacity", queue_capacity);
+    row.field("queued_rows", queued_rows);
+    row.field("drainer_active", drainer_active ? 1 : 0);
+    row.field("dropped_events_are_lower_bound", 1);
+    row.field("post_terminal_events_counted", 0);
   }
   row.text("}\n");
   return row;
@@ -131,7 +145,7 @@ Recorder::Recorder(Sink sink, void* context, Limits limits)
 
 bool Recorder::push_locked(const char* data, size_t size, uint64_t ns,
                            uint64_t tid, bool terminal) noexcept {
-  if (queued_ == kQueueRows || events_used_ >= limits_.events ||
+  if (!queue_ || queued_ == kQueueRows || events_used_ >= limits_.events ||
       bytes_used_ > limits_.bytes || size > limits_.bytes - bytes_used_ ||
       sequence_ == std::numeric_limits<uint64_t>::max())
     return false;
@@ -157,7 +171,8 @@ void Recorder::stop_locked(uint64_t ns, uint64_t tid, const char* reason,
     return;
   const auto row =
       format(sequence_ + 1, ns, tid, pid_, "recorder", "incomplete", 0, 0,
-             nullptr, 0, limits_, false, reason, dropped);
+             nullptr, 0, limits_, false, reason, dropped, kQueueRows,
+             queued_, draining_);
   if (row.valid) push_locked(row.data, row.size, ns, tid, true);
 }
 
@@ -183,7 +198,8 @@ bool Recorder::emit_locked(uint64_t ns, uint64_t tid, const char* operation,
     return false;
   }
   const auto row = format(sequence_ + 1, ns, tid, pid_, operation, phase, call,
-                          result, fields, count, limits_, header);
+                          result, fields, count, limits_, header, nullptr, 0,
+                          kQueueRows);
   if (!row.valid) {
     stop_locked(ns, tid, "row-limit");
     return false;
@@ -198,7 +214,9 @@ bool Recorder::emit_locked(uint64_t ns, uint64_t tid, const char* operation,
     return false;
   }
   if (queued_ >= kQueueRows - 1) {
-    stop_locked(ns, tid, "queue-limit");
+    // The incoming formatted row is known rejected. Later inactive calls are
+    // not counted, so this is explicitly a lower bound, not total future loss.
+    stop_locked(ns, tid, "queue-limit", 1);
     return false;
   }
   return push_locked(row.data, row.size, ns, tid, false);
@@ -238,7 +256,7 @@ void Recorder::drain() noexcept {
       if (!accepted) {
         std::lock_guard<std::mutex> guard(mutex_);
         active_ = false;
-        const auto dropped = static_cast<uint64_t>(queued_);
+        const auto dropped = static_cast<uint64_t>(queued_) + 1;
         while (queued_ != 0) {
           bytes_used_ -= static_cast<uint64_t>(queue_[head_].size);
           --events_used_;
@@ -266,10 +284,11 @@ void Recorder::start(bool selected, uint64_t ns, uint64_t pid) noexcept {
       std::lock_guard<std::mutex> guard(mutex_);
       if (started_) return;
       started_ = true;
-      active_ = selected;
       start_ns_ = ns;
       pid_ = pid;
-      if (selected && ready_locked(ns, 0))
+      if (selected) queue_.reset(new (std::nothrow) Row[kQueueRows]);
+      active_ = selected && queue_ != nullptr;
+      if (active_ && ready_locked(ns, 0))
         emit_locked(ns, 0, "recorder", "header", 0, 0, nullptr, 0, true);
       drive = claim_drain_locked();
     }
