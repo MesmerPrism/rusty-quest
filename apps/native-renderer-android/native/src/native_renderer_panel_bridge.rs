@@ -1151,7 +1151,7 @@ fn consume_remote_preparation_launch(
         let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
         let loader = env.call_method(&activity, jni_str!("getClassLoader"), jni_sig!("()Ljava/lang/ClassLoader;"), &[])?.l()?;
         let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
-        let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLaunchAuthority")?;
+        let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererSelfKioskRemotePreparation")?;
         let authority = JClass::for_name_with_loader(env, name, true, loader)?;
         env.call_static_method(authority, jni_str!("consumeRemotePreparation"), jni_sig!("(Landroid/app/Activity;JJ)Z"),
             &[JValue::Object(&activity), JValue::Long(epoch as i64), JValue::Long(openxr_session_generation as i64)])?.z()

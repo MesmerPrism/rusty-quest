@@ -198,8 +198,20 @@ try {
     Import-Module (Join-Path $repo 'tools/lib/NativeRendererAppStatusBridge.psm1') -Force
     $bridge = Join-Path $resolvedTempRoot 'NativeRendererAppStatusBridge.java'
     [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource),[Text.UTF8Encoding]::new($false))
+    # The policy traces do not execute the Android panel. Keep that external
+    # dependency compile-only and fail explicitly if a trace ever dispatches it.
+    $panel = Join-Path $resolvedTempRoot 'ControlPanelActivity.java'
+    [IO.File]::WriteAllText($panel,@'
+package io.github.mesmerprism.rustyquest.native_renderer;
+final class ControlPanelActivity {
+    static boolean routeToNativePanel(android.content.Intent intent, boolean show) {
+        throw new AssertionError("Policy fixture has no Android panel");
+    }
+}
+'@,[Text.UTF8Encoding]::new($false))
     $sources = @(
         $bridge,
+        $panel,
         $policyPath,
         $homePolicyPath,
         $coordinatorPath,
@@ -208,6 +220,7 @@ try {
         $applicationPath,
         $departurePath,
         $launchAuthorityPath,
+        (Join-Path $javaRoot 'NativeRendererSelfKioskRemotePreparation.java'),
         $launcherPolicyPath,
         (Join-Path $javaRoot 'NativeRendererActivityComponents.java'),
         (Join-Path $javaRoot 'NativeRendererBootObservation.java'),
