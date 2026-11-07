@@ -13,6 +13,10 @@ build = "build.rs"
 name = "spatial_camera_panel_native_receipt"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+development-usb-adb-relay = ["rusty-manifold-peer/development-loopback-relay"]
+
 [dependencies]
 rusty-manifold-admission = { path = "../../../../rusty-manifold/crates/rusty-manifold-admission" }
 rusty-manifold-model = { path = "../../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }

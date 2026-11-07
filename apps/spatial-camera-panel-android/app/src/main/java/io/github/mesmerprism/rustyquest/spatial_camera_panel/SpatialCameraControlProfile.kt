@@ -5,7 +5,7 @@ import java.math.BigInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal data class SpatialCameraControlProfile(
+internal data class SpatialCameraControlProfile @JvmOverloads constructor(
     val profileId: String,
     val revision: Long,
     val layerOverride: Float,
@@ -19,6 +19,7 @@ internal data class SpatialCameraControlProfile(
     val peerNetworkEndpoints: List<SpatialPeerNetworkSelection>? = null,
     val developmentObservationModule: SpatialDevelopmentModuleDirective? = null,
     val developmentScissorModule: SpatialDevelopmentModuleDirective? = null,
+    val peerNetworkTransport: String? = null,
 )
 
 internal object SpatialCameraControlProfileContract {
@@ -43,6 +44,7 @@ internal object SpatialCameraControlProfileContract {
         "quest_controls",
         "desktop_preview",
         "peer_network_endpoints",
+        "peer_network_transport",
         "development_observation_module",
         "development_scissor_module",
     )
@@ -57,6 +59,11 @@ internal object SpatialCameraControlProfileContract {
     }
 
     val controls = root.requireObject("quest_controls")
+    val transport = if (root.has("peer_network_transport")) {
+      root.requireToken("peer_network_transport", SpatialPeerNetworkProfilePilot.USB_ADB_RELAY).also {
+        require(root.has("peer_network_endpoints")) { "peer_network_transport_requires_endpoints" }
+      }
+    } else null
     controls.requireOnlyKeys(
         "layer_override",
         "projection_scale",
@@ -104,8 +111,9 @@ internal object SpatialCameraControlProfileContract {
         peerNetworkEndpoints = if (root.has("peer_network_endpoints")) {
           val endpoints = root.opt("peer_network_endpoints")
           require(endpoints is JSONArray) { "peer_network_endpoints_must_be_array" }
-          SpatialPeerNetworkProfilePilot.parseEndpoints(endpoints)
+          SpatialPeerNetworkProfilePilot.parseEndpoints(endpoints, transport)
         } else null,
+        peerNetworkTransport = transport,
         developmentObservationModule = if (root.has("development_observation_module")) {
           SpatialDevelopmentModuleDirectiveContract.parse(root.requireObject("development_observation_module"), false)
         } else null,

@@ -67,7 +67,8 @@ final class EmbeddedDuplexProcessHost {
         EmbeddedDuplexPackagedInputs base = EmbeddedDuplexPackagedInputs.load(applicationContext,
                 io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256, role);
         FrozenEffectiveInputs accepted = effectiveInputOwner.capture(base, generation,
-                FrozenEffectiveInputs.readActiveProfile(applicationContext), EmbeddedDuplexNative::deriveEffectiveInputs);
+                FrozenEffectiveInputs.readActiveProfile(applicationContext), EmbeddedDuplexNative::deriveEffectiveInputs,
+                FrozenEffectiveInputs.developmentUsbRelayCapability(applicationContext));
         effectiveInputRunContext = runContext;
         publishEffectiveInputObservation();
         return accepted;
@@ -438,7 +439,7 @@ final class EmbeddedDuplexProcessHost {
                 EmbeddedDuplexPlatform callbacks = new EmbeddedDuplexPlatform(applicationContext,
                         display, identity, prepared.localPeerId, prepared.remotePeerId,
                         prepared.routeConfigurationSha256, prepared.remoteControlHost,
-                        prepared.remoteControlPort, fixture);
+                        prepared.remoteControlPort, fixture, frozen);
                 callbacks.bindProcessFence(processFence);
                 JSONObject bootstrap = EmbeddedDuplexBootstrap.runtimeBootstrap(prepared,
                         identity.keyId(), enrollment,
@@ -467,7 +468,7 @@ final class EmbeddedDuplexProcessHost {
                 }
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_CONSTRUCT);
                 EmbeddedDuplexResources installed = new EmbeddedDuplexResources(applicationContext,
-                        display, new JSONObject(initialized), prepared.maxPairDeltaNs);
+                        display, new JSONObject(initialized), prepared.maxPairDeltaNs, frozen);
                 resources = installed;
                 installed.install(trace);
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_REGISTRY);

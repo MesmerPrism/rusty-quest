@@ -1,11 +1,13 @@
 //! Constrained validation before an app-private key signs a Common-LAN context.
 
 use super::packaged_route::PackagedDuplexRoute;
+#[cfg(test)]
+use rusty_manifold_peer::COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID;
 use rusty_manifold_peer::{
     common_lan_reciprocal_ed25519_context_sha256,
     common_lan_reciprocal_ed25519_context_signing_bytes, ManifoldCommonLanPairRole,
     ManifoldCommonLanReciprocalEd25519Context, COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID,
-    COMMON_LAN_RECIPROCAL_ED25519_CONTEXT_SCHEMA, COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID,
+    COMMON_LAN_RECIPROCAL_ED25519_CONTEXT_SCHEMA,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -151,6 +153,7 @@ pub(crate) fn validate_common_lan_context_for_signing(
     context: &ManifoldCommonLanReciprocalEd25519Context,
     policy: CommonLanSigningPolicy<'_>,
 ) -> Result<ValidatedCommonLanSigning, String> {
+    let transport_contract_id = route.validated_transport_contract_id()?;
     if policy.now_ms == 0
         || policy.max_context_age_ms == 0
         || policy.max_future_skew_ms > policy.max_context_age_ms
@@ -164,8 +167,9 @@ pub(crate) fn validate_common_lan_context_for_signing(
         || context.trust_policy_id.as_str() != policy.trust_policy_id
         || context.trust_policy_revision.get() != policy.trust_policy_revision
         || context.transport.topology_contract_id.as_str() != COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID
-        || context.transport.transport_contract_id.as_str() != COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID
+        || context.transport.transport_contract_id.as_str() != transport_contract_id
         || context.transport.network_scope_id.as_str() != policy.network_scope_id
+        || policy.network_scope_id != route.network_scope_id
         || context.transport.route_configuration_sha256 != route.route_configuration_sha256
         || context.coordinator_epoch == 0
         || context.expires_at_ms <= context.issued_at_ms
@@ -341,6 +345,90 @@ mod tests {
     }
 
     #[test]
+    fn development_usb_context_requires_feature_exact_frozen_route_and_signed_mode() {
+        let mut route = route();
+        route.transport_contract_id =
+            "rusty.manifold.peer.development_loopback_relay_tcp_transport.v1".into();
+        for (index, peer) in route.peers.iter_mut().enumerate() {
+            peer.media.host = "127.0.0.1".into();
+            peer.control.host = "127.0.0.1".into();
+            peer.media.port = 46061 + index as u16;
+            peer.control.port = 46071 + index as u16;
+            peer.local_source_port = Some(47061 + index as u16);
+        }
+        let mut value = context_value("peer.a", "peer.b");
+        value["transport"]["transport_contract_id"] = json!(route.transport_contract_id);
+        for (index, endpoint) in value["transport"]["endpoints"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            endpoint["listen_ip_address"] = json!("127.0.0.1");
+            endpoint["listen_port"] = json!(46061 + index);
+        }
+        let context = serde_json::from_value(value.clone()).unwrap();
+        let accepted = validate_common_lan_context_for_signing(
+            &route,
+            &enrolled(),
+            &context,
+            policy("peer.a"),
+        );
+        if !cfg!(feature = "development-usb-adb-relay") {
+            assert!(accepted.is_err(), "feature-off signer accepted USB mode");
+            return;
+        }
+        accepted.expect("source-selected USB mode signs its exact frozen route");
+        for damage in ["mode", "unknown-mode", "address", "producer-port"] {
+            let mut changed = value.clone();
+            match damage {
+                "mode" => {
+                    changed["transport"]["transport_contract_id"] =
+                        json!(COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID)
+                }
+                "unknown-mode" => {
+                    changed["transport"]["transport_contract_id"] =
+                        json!("rusty.manifold.peer.unknown_transport.v1")
+                }
+                "address" => {
+                    changed["transport"]["endpoints"][0]["listen_ip_address"] = json!("127.0.0.2")
+                }
+                "producer-port" => {
+                    changed["transport"]["endpoints"][0]["listen_port"] = json!(47061)
+                }
+                _ => unreachable!(),
+            }
+            let changed = serde_json::from_value(changed).unwrap();
+            assert!(
+                validate_common_lan_context_for_signing(
+                    &route,
+                    &enrolled(),
+                    &changed,
+                    policy("peer.a")
+                )
+                .is_err(),
+                "signed mode damage accepted: {damage}"
+            );
+        }
+        let mut collision = route.clone();
+        collision.peers[1].local_source_port = Some(route.peers[0].media.port);
+        assert!(validate_common_lan_context_for_signing(
+            &collision,
+            &enrolled(),
+            &context,
+            policy("peer.a")
+        )
+        .is_err());
+        let mut lan = route.clone();
+        lan.transport_contract_id = COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID.into();
+        assert!(
+            validate_common_lan_context_for_signing(&lan, &enrolled(), &context, policy("peer.a"))
+                .is_err(),
+            "mode removed from frozen route"
+        );
+    }
+
+    #[test]
     fn adopted_common_lan_context_ceiling_accepts_exact_boundary_only() {
         let mut route = route();
         route.installed_peer_index = 1;
@@ -488,6 +576,7 @@ mod tests {
             package_name: "io.example.duplex".into(),
             route_configuration_sha256: format!("sha256:{}", hex('8')),
             network_scope_id: "network.scope.fixed".into(),
+            transport_contract_id: COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID.into(),
             profile: PackedStereoProfile {
                 schema: "rusty.quest.test.packed_profile.v1".into(),
                 profile_id: "qcl100-packed-sbs".into(),
@@ -534,6 +623,7 @@ mod tests {
                 host: host.into(),
                 port: control_port,
             },
+            local_source_port: None,
         }
     }
 

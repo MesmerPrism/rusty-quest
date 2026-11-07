@@ -9,6 +9,53 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SpatialCameraControlProfileTest {
+  private fun usbProfile(): JSONObject {
+    val profile = endpointProfile("127.0.0.1", 46061)
+        .put("peer_network_transport", "development-usb-adb-relay-v1")
+    val peers = profile.getJSONArray("peer_network_endpoints")
+    peers.getJSONObject(0).getJSONObject("control_endpoint").put("port", 46071)
+    peers.getJSONObject(0).put("local_source_port", 47061)
+    peers.getJSONObject(1).getJSONObject("media_endpoint").put("host", "127.0.0.1").put("port", 46062)
+    peers.getJSONObject(1).getJSONObject("control_endpoint").put("host", "127.0.0.1").put("port", 46072)
+    peers.getJSONObject(1).put("local_source_port", 47062)
+    return profile
+  }
+
+  @Test
+  fun developmentUsbRelayRequiresCapabilityAndExactDisjointLoopbackTuples() {
+    val profile = usbProfile().toString().toByteArray()
+    assertThrows(Exception::class.java) {
+      SpatialPeerNetworkProfilePilot(setOf("peer.a", "peer.b")).select(profile)
+    }
+    val pilot = SpatialPeerNetworkProfilePilot(setOf("peer.a", "peer.b"), true)
+    val accepted = pilot.select(profile)
+    assertEquals("development-usb-adb-relay-v1", accepted.profile.peerNetworkTransport)
+    assertEquals(47061, accepted.peers[0].localSourcePort)
+    for (host in listOf("127.0.0.2", "127.1", "localhost", "0177.0.0.1", "10.0.0.1", "0.0.0.0")) {
+      val bad = usbProfile()
+      bad.getJSONArray("peer_network_endpoints").getJSONObject(0).getJSONObject("media_endpoint").put("host", host)
+      assertThrows(Exception::class.java) { pilot.select(bad.toString().toByteArray()) }
+      assertTrue(pilot.current === accepted)
+    }
+    for (port in listOf(46061, 46062, 46071, 46072, 47062)) {
+      val bad = usbProfile()
+      bad.getJSONArray("peer_network_endpoints").getJSONObject(0).put("local_source_port", port)
+      assertThrows(Exception::class.java) { pilot.select(bad.toString().toByteArray()) }
+      assertTrue(pilot.current === accepted)
+    }
+    val absent = usbProfile().apply { remove("peer_network_transport") }
+    val noProducer = usbProfile().apply { getJSONArray("peer_network_endpoints").getJSONObject(0).remove("local_source_port") }
+    val noEndpoints = usbProfile().apply { remove("peer_network_endpoints") }
+    val unknown = usbProfile().put("peer_network_transport", "future-relay")
+    for (bad in listOf(absent, noProducer, noEndpoints, unknown)) {
+      assertThrows(Exception::class.java) { pilot.select(bad.toString().toByteArray()) }
+      assertTrue(pilot.current === accepted)
+    }
+    val lan = endpointProfile("10.20.0.11", 41000)
+    lan.getJSONArray("peer_network_endpoints").getJSONObject(0).put("local_source_port", 47061)
+    assertThrows(Exception::class.java) { pilot.select(lan.toString().toByteArray()) }
+  }
+
   @Test
   fun endpointPilotSelectsTwoProfilesOnOneResidentConfiguration() {
     val pilot = SpatialPeerNetworkProfilePilot(setOf("peer.a", "peer.b"))

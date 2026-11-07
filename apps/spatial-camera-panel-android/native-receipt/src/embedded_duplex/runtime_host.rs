@@ -2561,12 +2561,14 @@ mod no_media_close_tests {
             right_camera_id: "right".into(),
             media: endpoint.clone(),
             control: endpoint,
+            local_source_port: None,
         };
         PackagedDuplexRoute {
             product_id: "test.product".into(),
             package_name: "test.package".into(),
             route_configuration_sha256: format!("sha256:{SHA}"),
             network_scope_id: "test.network".into(),
+            transport_contract_id: rusty_manifold_peer::COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID.into(),
             profile: PackedStereoProfile {
                 schema: "test.profile".into(),
                 profile_id: "test".into(),

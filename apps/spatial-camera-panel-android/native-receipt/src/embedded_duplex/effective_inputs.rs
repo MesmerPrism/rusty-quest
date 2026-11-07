@@ -1,8 +1,11 @@
 //! Endpoint-only derivation beneath an already verified packaged input closure.
 // The build-fixed Context loader owns installed signer/manifest attestation.
 // This pure operation opens no resource and accepts no trust or policy override.
+#[cfg(feature = "development-usb-adb-relay")]
+use super::packaged_route::selected_route_transport;
 use super::packaged_route::{
-    decode_and_validate_packaged_route, ExactRouteDocument, PackagedRouteExpectations,
+    decode_and_validate_packaged_route, deserialize_present, ExactRouteDocument,
+    PackagedRouteExpectations,
 };
 use rusty_quest_broker_authority::{packaged_json_sha256, QuestBrokerMediaSessionProductBinding};
 use serde::Deserialize;
@@ -44,6 +47,8 @@ struct PeerSelection {
     peer_id: String,
     media_endpoint: Endpoint,
     control_endpoint: Endpoint,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    local_source_port: Option<u16>,
 }
 
 fn raw<'a>(docs: &'a BTreeMap<String, String>, name: &str) -> Result<&'a str, String> {
@@ -147,7 +152,21 @@ fn validate_route(
     Ok(())
 }
 
-fn validate_endpoint(endpoint: &Endpoint, protocol: &Value) -> Result<(), String> {
+fn validate_endpoint(
+    endpoint: &Endpoint,
+    protocol: &Value,
+    development: bool,
+) -> Result<(), String> {
+    if development {
+        return if endpoint.protocol == protocol.as_str().ok_or("effective protocol absent")?
+            && endpoint.host == "127.0.0.1"
+            && endpoint.port != 0
+        {
+            Ok(())
+        } else {
+            Err("effective development relay endpoint outside bounds".into())
+        };
+    }
     let host: Ipv4Addr = endpoint
         .host
         .parse()
@@ -185,6 +204,18 @@ pub(crate) fn derive_effective_inputs_request_json(request: &str) -> Result<Stri
         // Native independently owns endpoint coverage, protocol, address and port containment.
         let profile: Value =
             serde_json::from_str(profile).map_err(|_| "effective profile JSON invalid")?;
+        let development = match profile.get("peer_network_transport") {
+            None => false,
+            Some(Value::String(value)) if value == "development-usb-adb-relay-v1" => {
+                // Compile-time capability is independent of profile ingress.
+                // Debug assertions or an arbitrary loopback address grant none.
+                if !cfg!(feature = "development-usb-adb-relay") {
+                    return Err("development USB relay capability absent".into());
+                }
+                true
+            }
+            Some(_) => return Err("effective transport profile unsupported".into()),
+        };
         let selections: Vec<PeerSelection> =
             serde_json::from_value(profile["peer_network_endpoints"].clone())
                 .map_err(|_| "effective endpoint selection invalid")?;
@@ -192,6 +223,19 @@ pub(crate) fn derive_effective_inputs_request_json(request: &str) -> Result<Stri
             return Err("effective peer coverage differs".into());
         }
         let mut route = document(&docs, ROUTE)?;
+        if development {
+            #[cfg(feature = "development-usb-adb-relay")]
+            {
+                route["transport_contract_id"] = json!(selected_route_transport(Some(
+                    rusty_manifold_peer::DEVELOPMENT_LOOPBACK_RELAY_TCP_TRANSPORT_CONTRACT_ID,
+                ))?);
+            }
+        } else {
+            route
+                .as_object_mut()
+                .ok_or("effective route object absent")?
+                .remove("transport_contract_id");
+        }
         let peers = route["peers"]
             .as_array_mut()
             .ok_or("effective route peers absent")?;
@@ -209,12 +253,29 @@ pub(crate) fn derive_effective_inputs_request_json(request: &str) -> Result<Stri
                 ("media_endpoint", &selected.media_endpoint),
                 ("control_endpoint", &selected.control_endpoint),
             ] {
-                validate_endpoint(endpoint, &peer[field]["protocol"])?;
+                validate_endpoint(endpoint, &peer[field]["protocol"], development)?;
                 if !occupied.insert((endpoint.host.clone(), endpoint.port)) {
                     return Err("effective endpoint collision".into());
                 }
                 peer[field]["host"] = json!(endpoint.host);
                 peer[field]["port"] = json!(endpoint.port);
+            }
+            if development {
+                let source = selected
+                    .local_source_port
+                    .filter(|port| *port != 0)
+                    .ok_or("effective development local source absent")?;
+                if !occupied.insert(("127.0.0.1".to_owned(), source)) {
+                    return Err("effective development source endpoint collision".into());
+                }
+                peer["local_source_port"] = json!(source);
+            } else {
+                if selected.local_source_port.is_some() {
+                    return Err("effective ordinary LAN has development source port".into());
+                }
+                peer.as_object_mut()
+                    .ok_or("effective peer object absent")?
+                    .remove("local_source_port");
             }
             by_device.insert(
                 peer["device_id"]
@@ -268,7 +329,13 @@ pub(crate) fn derive_effective_inputs_request_json(request: &str) -> Result<Stri
                             "source_port"
                         } else {
                             "port"
-                        }] = json!(selected.media_endpoint.port);
+                        }] = json!(if field == "source_bindings" && development {
+                            selected
+                                .local_source_port
+                                .ok_or("effective local source absent")?
+                        } else {
+                            selected.media_endpoint.port
+                        });
                     }
                 }
             }

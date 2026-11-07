@@ -105,6 +105,7 @@ Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -For
 Import-Module (Join-Path $PSScriptRoot "lib/SpatialApkInspection.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialUsbAdbRelayBuild.psm1') -Force
 if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
 $selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
 if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
@@ -1288,6 +1289,9 @@ $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
     -Path $EmbeddedDuplexProductInputRoot `
     -ApplicationId $resolvedAppId `
     -SigningCertificateSha256 $normalizedExpectedSignerSha256
+$developmentUsbAdbRelayEnabled = Resolve-SpatialUsbAdbRelayBuildSelection `
+    -ResourceDirectory $resolvedPrivateFeatureResourceDir -BuildType $BuildType `
+    -PublicationBuild:$PublicationBuild -EmbeddedProductSelected:($null -ne $embeddedDuplexProductInputs)
 $androidComponentSelection = $null
 if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
     if ($null -eq $embeddedDuplexProductInputs) { throw 'Selected Android components require authenticated product inputs.' }
@@ -1480,6 +1484,7 @@ $nativeIdentityDescriptor = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $nativeIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $nativeIdentityDescriptor -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $nativeIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
@@ -1532,6 +1537,7 @@ $shellIdentityDescriptor = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $shellIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $shellIdentityDescriptor -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $shellIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
@@ -1555,6 +1561,7 @@ if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
     $buildInputDescriptor['artifact_output'] = [ordered]@{schema='rusty.quest.artifact_output.v1';policy='explicit-external-parent-create-new';parent_path_recorded=$false;source_and_cache_disjoint=$true}
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $buildInputDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $buildInputDescriptor -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $buildInputDescriptor -ResolvedSelection $freshBuildSelection
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $buildInputDescriptor["fingerprint"] = $buildInputFingerprint
@@ -2233,6 +2240,7 @@ try {
         "--release",
         "--target-dir", $nativeReceiptTargetDir
     )
+    $cargoArguments += @(Get-SpatialUsbAdbRelayCargoArguments -Enabled:$developmentUsbAdbRelayEnabled)
     & $cargoCommand.Source @cargoArguments 2>&1 | ForEach-Object {
         $line = [string]$_
         $cargoOutput.Add($line)
@@ -2638,6 +2646,7 @@ $apkInspection = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$apkInspection['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $apkInspection -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $apkInspection -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $apkInspection -ResolvedSelection $freshBuildSelection
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
@@ -3369,6 +3378,7 @@ $manifest = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $manifest -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $manifest -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $manifest -ResolvedSelection $freshBuildSelection
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 if ($null -ne $gradleToolDistribution) { $manifest['gradle_tool_distribution'] = $gradleToolDistribution }
@@ -3425,6 +3435,7 @@ $runCapsule = [ordered]@{
     }
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $runCapsule -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $runCapsule -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $runCapsule -ResolvedSelection $freshBuildSelection
 $runCapsulePath = Join-Path $OutDir "run-capsule.json"
 [void](Set-TextFileIfChanged -Path $runCapsulePath -Value ($runCapsule | ConvertTo-Json -Depth 16))
