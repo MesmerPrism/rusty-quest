@@ -14,7 +14,7 @@ base = root / 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mes
 extracts = []
 
 def method(filename, signature, optional=False):
-    text = (base / filename).read_text()
+    text = (base / filename).read_text(encoding='utf-8')
     start = text.find(signature)
     if start < 0:
         if optional: return ''
@@ -41,7 +41,7 @@ coordinator = '\n'.join(method('SpatialImmersiveVideoPanelCoordinator.kt', s, op
     ('  private fun dispatchPendingVideoLoadRecenter(', False),
 ])
 # Include the actual registration callback bodies, not a second callback policy.
-text = (base / 'SpatialImmersiveVideoPanelCoordinator.kt').read_text()
+text = (base / 'SpatialImmersiveVideoPanelCoordinator.kt').read_text(encoding='utf-8')
 registration_end = text.index('  private fun blackBackdropPanelRegistration(')
 if '  private fun acceptVideoSurface(' in text:
     registration_end = text.rfind('  @Synchronized', 0, text.index('  private fun acceptVideoSurface('))
@@ -51,7 +51,7 @@ activity = '\n'.join(method('SpatialCameraPanelActivity.kt', s, optional=o) for 
     ('  override fun onDestroy()', False), ('  override fun onSpatialShutdown()', True),
     ('  private fun scheduleOrderedActivityDestroyCleanup()', False),
 ])
-shutdown = (base / 'SpatialVideoLifecycleShutdownCoordinator.kt').read_text()
+shutdown = (base / 'SpatialVideoLifecycleShutdownCoordinator.kt').read_text(encoding='utf-8')
 room = '\n'.join(method('SpatialVirtualRoomModule.kt', s, optional=o) for s, o in [
     ('  fun destroy(', False), ('  fun retireScene(', True), ('  private fun handleLoaded(', False),
 ])
@@ -63,13 +63,13 @@ carrier = '\n'.join(method('SpatialCameraHwbProjectionPanelCarrierCoordinator.kt
     ('  fun cleanup(', False), ('  fun retireScene(', True),
     ('  private fun releaseSceneHandles(', True), ('  private fun adoptSurface(', True), ('  private fun adoptPanel(', True),
 ])
-carrier_text=(base/'SpatialCameraHwbProjectionPanelCarrierCoordinator.kt').read_text()
+carrier_text=(base/'SpatialCameraHwbProjectionPanelCarrierCoordinator.kt').read_text(encoding='utf-8')
 carrier_end=carrier_text.index('  fun run(')
 if '  private fun adoptSurface(' in carrier_text:
     carrier_end=carrier_text.rfind('  @Synchronized',0,carrier_text.index('  private fun adoptSurface('))
 carrier_callbacks=carrier_text[carrier_text.index('  fun videoPanelBindings()'):carrier_end]
 (out / 'Shutdown.kt').write_text(shutdown)
-(out / 'Latency.kt').write_text((base / 'SpatialCameraLatencyDiagnosticModule.kt').read_text())
+(out / 'Latency.kt').write_text((base / 'SpatialCameraLatencyDiagnosticModule.kt').read_text(encoding='utf-8'))
 (out / 'Clock.kt').write_text('''package android.os
 object SystemClock {fun elapsedRealtime()=System.nanoTime()/1000000;fun elapsedRealtimeNanos()=System.nanoTime()}
 ''')
@@ -126,7 +126,7 @@ class RecenterGate {fun consume(path:String,route:String)=RecenterRequest()}
 class Presentation(val value:Int=0) { val token="head-fixed";companion object {val HeadFixedBorder=Presentation();val entries=listOf(HeadFixedBorder)} }
 typealias SpatialImmersiveVideoPresentationMode=Presentation
 object SpatialImmersiveVideoSessionPolicy {fun directPanelPresentation(c:Config,p:Presentation)=Config()}
-class VideoSurfacePanelRegistration(val id:Int,val surfaceConsumer:(Any?,Surface)->Unit,val settingsCreator:()->Unit,val panelSetup:(PanelSceneObject,Any?)->Unit)
+class VideoSurfacePanelRegistration(val id:Int,val surfaceConsumer:(Entity,Surface)->Unit,val settingsCreator:()->Unit,val panelSetup:(PanelSceneObject,Entity)->Unit)
 typealias PanelRegistration=VideoSurfacePanelRegistration
 class Handler { var removed=false;fun removeCallbacksAndMessages(x:Any?){removed=true} }
 fun activityMarkerToken(x:String)=x
@@ -135,6 +135,7 @@ class SpatialImmersiveVideoPanelCoordinator(val model:Model) {
  var panelSceneObject:PanelSceneObject?=PanelSceneObject();var surface:Surface?=Surface()
  var spawnPose:Pose?=null;var latestViewerPose:Pose?=null
  var sceneRetired=false;var destroyed=false;var releaseCount=0;var starts=0;var spawns=0
+ var onControlObservationChanged:Any?=null
  var directVideoConsumerRequired=true;var playbackEnabled=true
  val autoRecenterGate=RecenterGate();var recenterCalls=0
  val recenterAfterNewVideoLoad:(String,String)->Boolean={_,_->recenterCalls++;true}
@@ -190,6 +191,8 @@ open class ModelSdkActivity(val model:Model) {
  fun finishingStop(){onSpatialShutdown();model.live=false}
 }
 class SpatialCameraPanelActivity(model:Model,room:Boolean=false,skybox:Boolean=false,staged:Boolean=false,carrier:Boolean=false):ModelSdkActivity(model) {
+ fun invalidateBackgroundControl(retired:Boolean=false){}
+
  private val cameraLatencyDiagnosticModule=SpatialCameraLatencyDiagnosticModule(SpatialCameraLatencyDiagnosticBindings(
    readSystemProperty={when(it){CAMERA_LATENCY_ENABLED_PROPERTY->"true";CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY->"openxr-locate-views";else->""}},
    applyNative={0L},recordViewerPose={_,_->0L},marker={},
@@ -231,7 +234,7 @@ fun main(){
  val c=a.immersiveVideoPanelCoordinator;val beforeSpawns=c.spawns;c.spawnAtViewer(Pose());c.updateFromViewer(Pose())
  check(c.spawns==beforeSpawns){"retired coordinator respawned"}
  val starts=c.starts
- for(reg in c.panelRegistrations()){reg.surfaceConsumer(null,Surface());reg.panelSetup(PanelSceneObject(),null)}
+ for(reg in c.panelRegistrations()){reg.surfaceConsumer(Entity(c.model),Surface());reg.panelSetup(PanelSceneObject(),Entity(c.model))}
  check(c.starts==starts&&c.surface==null&&c.panelSceneObject==null){"late SDK callback rebound retired handles"}
  check(!c.lateRecenter()&&c.recenterCalls==0){"retired video callback reentered Activity scene recenter"}
  val finishing=SpatialCameraPanelActivity(Model());finishing.block();finishing.finishingStop();finishing.onDestroy();finishing.release.countDown()
@@ -240,8 +243,16 @@ fun main(){
  coordinator.entity!!.onDelete={coordinator.destroy("reentrant")};coordinator.destroy("first");check(live.deletes==2){"reentrant destroy did not take both handles first"}
  val replacement=SpatialImmersiveVideoPanelCoordinator(Model());replacement.spawnAtViewer(Pose());check(replacement.spawns==0){"existing live carrier should be retained"}
  replacement.entity=null;replacement.blackBackdropEntity=null;replacement.spawnAtViewer(Pose());check(replacement.spawns==1){"fresh coordinator could not spawn"}
- for(reg in replacement.panelRegistrations()){reg.surfaceConsumer(null,Surface());reg.panelSetup(PanelSceneObject(),null)}
+ for(reg in replacement.panelRegistrations()){reg.surfaceConsumer(Entity(replacement.model),Surface());reg.panelSetup(PanelSceneObject(),Entity(replacement.model))}
  check(replacement.starts==1&&replacement.panelSceneObject!=null){"live callbacks were suppressed"}
+ replacement.onControlObservationChanged=Any()
+ val registrations=replacement.panelRegistrations();val callbackStarts=replacement.starts;val retainedPanel=replacement.panelSceneObject
+ val stale=Entity(replacement.model)
+ for(reg in registrations){reg.surfaceConsumer(stale,Surface());reg.panelSetup(PanelSceneObject(),stale)}
+ check(replacement.starts==callbackStarts&&replacement.panelSceneObject===retainedPanel){"selected background accepted a stale Entity callback"}
+ val current=requireNotNull(replacement.entity)
+ for(reg in registrations){reg.surfaceConsumer(current,Surface());reg.panelSetup(PanelSceneObject(),current)}
+ check(replacement.starts==callbackStarts+1&&replacement.panelSceneObject!==retainedPanel){"selected background suppressed its current Entity callback"}
  replacement.destroy("replacement")
  val concurrent=SpatialCameraPanelActivity(Model());val mutationEntered=CountDownLatch(1);val mutationRelease=CountDownLatch(1)
  concurrent.immersiveVideoPanelCoordinator.entity!!.beforeMutation={mutationEntered.countDown();mutationRelease.await()}
