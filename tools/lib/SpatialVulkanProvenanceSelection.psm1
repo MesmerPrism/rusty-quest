@@ -54,12 +54,17 @@ function Assert-SpatialVulkanProvenanceArtifact {
                 $relocations=(& $ReadelfPath '--relocs' '--wide' $elf 2>&1|Out-String)
                 if($LASTEXITCODE-ne0){throw 'Provenance native relocation inspection failed.'}
                 if($relocations-match'(?m)\bvk[A-Za-z_][A-Za-z0-9_]*\b'){throw 'Provenance native references contain preemptible Vulkan entry relocations.'}
+                $dynamic=(& $ReadelfPath '--dynamic' '--wide' $elf 2>&1|Out-String)
+                if($LASTEXITCODE-ne0){throw 'Provenance native dynamic-tag inspection failed.'}
+                $flags1Rows=[regex]::Matches($dynamic,'(?m)^[ \t]*0x0*6[fF]{6}[bB][ \t]+\(FLAGS_1\)[ \t]+([^\r\n]*)\r?$')
+                $nodelete=$flags1Rows.Count-eq1-and@($flags1Rows[0].Groups[1].Value-split'[ \t]+')-ccontains'NODELETE'
+                if(-not$nodelete){throw 'Provenance native FLAGS_1 NODELETE is required for diagnostic-module process residence.'}
                 $segments=(& $ReadelfPath '-lW' $elf 2>&1|Out-String)
                 if($LASTEXITCODE-ne0){throw 'Provenance native ELF inspection failed.'}
                 $alignments=@([regex]::Matches($segments,'(?m)^\s*LOAD\s+.*?(0x[0-9a-fA-F]+)\s*$')|ForEach-Object{[Convert]::ToInt64($_.Groups[1].Value.Substring(2),16)})
                 if(-not$alignments.Count-or@($alignments|Where-Object{$_-lt16384}).Count){throw 'Provenance native LOAD segments do not satisfy 16 KiB alignment.'}
                 if($ExpectedApplicationId-and-not[Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($elf)).Contains($ExpectedApplicationId)){throw 'Provenance native library does not bind the selected application ID.'}
-                $elfObservation=[ordered]@{defined_loader_exports=$required;vulkan_symbol_relocations_absent=$true;load_alignment_minimum=($alignments|Measure-Object -Minimum).Minimum;compiled_application_id_present=[bool]$ExpectedApplicationId;runtime_order_proven=$false}
+                $elfObservation=[ordered]@{defined_loader_exports=$required;vulkan_symbol_relocations_absent=$true;flags_1_nodelete=$true;diagnostic_module_residence='process-lifetime';residency_retains_gpu_objects=$false;sdk_dispatch_coverage_proven=$false;load_alignment_minimum=($alignments|Measure-Object -Minimum).Minimum;compiled_application_id_present=[bool]$ExpectedApplicationId;runtime_order_proven=$false}
             }finally{
                 if(Test-Path -LiteralPath $elf){Remove-Item -LiteralPath $elf}
                 if(Test-Path -LiteralPath $scratch){Remove-Item -LiteralPath $scratch}

@@ -20,5 +20,8 @@ target_compile_options(VkLayer_rusty_quest_provenance PRIVATE -Wall -Wextra -Wer
 target_link_libraries(VkLayer_rusty_quest_provenance PRIVATE android log dl)
 target_link_options(VkLayer_rusty_quest_provenance PRIVATE
   "-Wl,-Bsymbolic-functions"
+  # Keep this debug diagnostic module/admission state until process exit.
+  # Vulkan instances/devices and their ordinary destruction remain downstream-owned.
+  "-Wl,-z,nodelete"
   "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384"
 )
