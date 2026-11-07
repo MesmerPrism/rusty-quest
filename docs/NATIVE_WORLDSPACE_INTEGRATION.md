@@ -287,6 +287,16 @@ selected adapter retains its exact binding and generation checks.
 
 ## Build and validation
 
+The shared launch authority owns physical actor admission and one-shot epochs.
+`NativeRendererSelfKioskRemotePreparation` owns the selected remote preparation
+and foreground/service effects. The native remote callback targets that adapter;
+the standalone Java inventory keeps its existing exclusion of kiosk sources.
+Run `Test-ExperimentSessionStandaloneOwner.ps1` with `-AndroidJar` to compile the
+actual standalone closure, and `Test-PolarTrustedColdStart.ps1` for the selected
+remote owner, JNI class binding, unselected applications and replay controls.
+The soft-kiosk policy harness uses a fail-fast compile-only panel dependency;
+its policy traces do not qualify Android panel dispatch.
+
 Resolve an app spec with `tools/Resolve-NativeAppBuild.ps1 -DryRun`. Build the
 resulting content-addressed feature lock with
 `tools/Build-NativeRendererAndroid.ps1 -AppBuildLock <lock> -OutDir <new-output>`.

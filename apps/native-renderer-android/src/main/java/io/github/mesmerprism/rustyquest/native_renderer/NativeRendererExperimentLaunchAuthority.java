@@ -79,22 +79,12 @@ final class NativeRendererExperimentLaunchAuthority {
         return true;
     }
 
-    /** Exact live owner, called only after the current immersive session submitted a frame. */
-    static boolean consumeRemotePreparation(Activity activity, long epoch, long xrGeneration) {
-        synchronized (NativeRendererExperimentLaunchAuthority.class) {
-            if (activity == null || activity != launchActivity.get() || activity.isFinishing()
-                    || !NativeRendererActivityComponents.isNative(activity)
-                    || xrGeneration <= 0L || epoch <= 0L || epoch != pendingEpoch
-                    || !(activity.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return false;
-            if (!consume(PROVENANCE_EXPLICIT_USER_LAUNCH, epoch)) return false;
-            if (!NativeRendererSoftKioskCoordinator.process().armFromExplicitColdLaunch(epoch,
-                    NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
-                    NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER)) return false;
-        }
-        // Context service startup is thread-safe. Keep the current native submitted-frame
-        // callback synchronous, with no launch/coordinator lock across platform callbacks.
-        NativeRendererSelfKioskApplication.armed(activity);
-        return true;
+    /** Consumes the exact live launch after a submitted immersive frame. */
+    static synchronized boolean consumeRemoteLaunch(Activity activity, long epoch, long xrGeneration) {
+        if (activity == null || activity != launchActivity.get() || activity.isFinishing()
+                || !NativeRendererActivityComponents.isNative(activity)
+                || xrGeneration <= 0L || epoch <= 0L || epoch != pendingEpoch) return false;
+        return consume(PROVENANCE_EXPLICIT_USER_LAUNCH, epoch);
     }
 
     /** Read-only bridge from the live immersive process to the exact pending panel handoff. */
