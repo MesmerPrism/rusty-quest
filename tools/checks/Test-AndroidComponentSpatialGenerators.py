@@ -10,8 +10,8 @@ args = parser.parse_args()
 root, output = args.repo_root.resolve(), args.output_root.resolve()
 if output.exists() or not output.is_relative_to(root / 'target'):
     raise ValueError('Fresh fixture-owned target output required')
-if args.spatial_plugin_jar.name != 'spatial-gradle-plugin-impl-0.13.2.jar':
-    raise ValueError('Selected Meta Spatial plugin 0.13.2 required')
+if args.spatial_plugin_jar.name != 'spatial-gradle-plugin-impl-0.14.0.jar':
+    raise ValueError('Selected Meta Spatial plugin 0.14.0 required')
 output.mkdir(parents=True)
 harness = output / 'classifier.groovy'
 harness.write_text(r'''

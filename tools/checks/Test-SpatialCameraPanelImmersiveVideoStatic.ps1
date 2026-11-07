@@ -76,7 +76,7 @@ $installPackTool = Read-RequiredText "tools\Install-SpatialCameraPanelOfflineMed
 $buildTool = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
 $styles = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\res\values\styles.xml"
 
-Assert-Contains "Spatial SDK version catalog" $catalog 'spatialsdk = "0.13.2"'
+Assert-Contains "Spatial SDK version catalog" $catalog 'spatialsdk = "0.14.0"'
 Assert-Contains "Media3 version catalog" $catalog 'media3 = "1.4.1"'
 Assert-Contains "App dependencies" $appGradle "libs.androidx.media3.exoplayer"
 Assert-Contains "App dependencies" $appGradle "libs.androidx.media3.datasource"
@@ -447,7 +447,7 @@ Assert-NotContains "Offline pack installer" $installPackTool "start-server"
 Assert-Contains "Spatial Camera Panel build tool" $buildTool '[ValidateSet("Debug", "Release")]'
 # Assembly task composition and dispatch belong to Test-AndroidComponentBuildSeam.ps1
 # and Test-SpatialCameraPanelBuildWorkflowStatic.ps1, which exercise the actual owner.
-Assert-Contains "Spatial Camera Panel build tool" $buildTool 'spatial_sdk_version = "0.13.2"'
+Assert-Contains "Spatial Camera Panel build tool" $buildTool 'spatial_sdk_version = "0.14.0"'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'media3_version = "1.4.1"'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'immersive_video_media_packaged = $offlineMediaPackagedAssets'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'offline_immersive_media_pack_supported = $true'

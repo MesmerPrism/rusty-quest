@@ -108,7 +108,7 @@ producer is refused before task execution. This is a closed compiler/resource/
 managed-library preparation route, not permission to select arbitrary tasks.
 It does not sandbox configuration-time build code. Configuration-cache reuse
 retains the checked graph; the observer still resamples selected source bytes.
-Meta Spatial SDK 0.13.2's exact XML resolver and schematized-component generator
+The exact Meta Spatial SDK XML resolver and schematized-component generator
 types are permitted: they prepare the selected compiler's generated Java and
 resources. This does not permit other Meta tasks, arbitrary execution, native
 compilation or APK packaging during the early phase.
@@ -214,7 +214,7 @@ source rejection. The `graph` scenario isolates the latter affected controls.
 No native task, APK packaging or device operation is part of this fixture.
 
 `Test-AndroidComponentSpatialGenerators.py` accepts explicit Gradle-home,
-Java-home and Meta 0.13.2 plugin-JAR paths. A fixture-owned `ProjectBuilder`
+Java-home and Meta 0.14.0 plugin-JAR paths. A fixture-owned `ProjectBuilder`
 loads the actual classifier and plugin task types, resolves their producer-backed
 source/XML edges, and rejects native, Exec, APK and ZIP dependencies/finalizers.
 It executes no task actions and does not qualify the complete product AGP graph.
