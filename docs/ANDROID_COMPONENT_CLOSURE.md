@@ -121,6 +121,14 @@ inventory. A failed child retains its exit/output metadata even if a subsequent
 source check also fails. Assembly remains after native publication and retains
 all final source, signer, native, APK and all-DEX closure checks.
 
+The canonical Vulkan diagnostic selection passes the explicit common property
+`rqVulkanProvenanceDiagnostic` through this same gate in both phases, including
+the unselected `false` value. Only exact lowercase `true` or `false` values are
+admitted. This adds no task or graph permission: duplicate properties, unknown
+names, malformed values, task arguments and fixed-phase overrides remain denied.
+The actual build-seam fixture exercises the producer and validator together;
+debug-only native selection and artifact checks remain separate.
+
 Ignored output `android-components/` contains `inventory.json`,
 `gradle-inputs.json` and `closure.json`. The input lock records the selected
 contract/feature-lock/source fingerprints; APK inspection and build manifest

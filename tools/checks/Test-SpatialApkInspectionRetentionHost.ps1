@@ -2,6 +2,13 @@ param([string]$RepoRoot = (Join-Path $PSScriptRoot '../..'))
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
 Import-Module (Join-Path $repo 'tools/lib/SpatialSourceVersion.psm1') -Force
+Import-Module (Join-Path $repo 'tools/lib/SpatialVulkanProvenanceSelection.psm1') -Force
+Import-Module (Join-Path $repo 'tools/EmbeddedDuplexMediaPolicy.psm1') -Force
+Import-Module (Join-Path $repo 'tools/EmbeddedDuplexFreshSetupPolicy.psm1') -Force
+$vulkanProvenanceSelection=Resolve-SpatialVulkanProvenanceSelection -BuildType Debug -EnvironmentDepthOwner disabled
+$EmbeddedDuplexMediaPolicy='finite'
+$developmentLifetime=Resolve-EmbeddedDuplexDevelopmentLifetime -Selection finite -FiniteHorizonMs 300000
+$freshBuildSelection=$null
 $copyModule = Join-Path $repo 'tools/lib/SpatialApkInspection.psm1'
 if (Test-Path -LiteralPath $copyModule) { Import-Module $copyModule -Force }
 $builderPath = Join-Path $repo 'tools/Build-SpatialCameraPanelAndroid.ps1'
@@ -91,6 +98,7 @@ exit 0
             Check ((Get-FileSha256 $apkOut) -ceq $sha256) 'Canonical APK changed.'
             $inspection = Get-Content -Raw -LiteralPath (Join-Path $OutDir 'apk-inspection.json') | ConvertFrom-Json
             Check ($inspection.apksigner_verified -and $inspection.zipalign_4_and_16k_verified -and $inspection.native_elf_16k_compatible) 'Actual inspection JSON lost its results.'
+            Check ($inspection.vulkan_provenance.selected-eq$false-and$inspection.vulkan_provenance.present-eq$false) 'Ordinary inspection did not execute the disabled diagnostic closure.'
             # A real downstream capsule reader must work without any inspection APK.
             function FileRecord([string]$p) { @{path=$p;sha256=(Get-FileSha256 $p)} }
             $manifest = Join-Path $OutDir 'build-manifest.json'
