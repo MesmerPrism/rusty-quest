@@ -107,6 +107,11 @@ fixed call boundaries during an explicitly enabled external app-trace session.
 Their focused host gate checks production method placement and failure behavior;
 trace spans and packet-progress counters remain observations, not acceptance.
 
+Optional [sender Android Trace sections](SENDER_TRACE_SECTIONS.md) cover existing
+packet-capacity waits and actual source/sink I/O calls. They require a sampled
+debuggable host and external tracing; existing standalone constructors remain
+off. They change no media policy, packet framing or cleanup authority.
+
 ```powershell
 cargo test --locked -p rusty-quest-media-stream -p rusty-quest-broker-authority -p rusty-quest-manifold-broker-authority-native -p rusty-quest-media-stream-android
 pwsh -NoProfile -File ./tools/checks/Test-RustyQuestMediaStreamAndroid.ps1 -RepoRoot .
