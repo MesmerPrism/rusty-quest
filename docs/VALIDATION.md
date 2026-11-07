@@ -1,5 +1,9 @@
 # Rusty Quest Validation
 
+The optional debug Vulkan metadata layer has explicit source/build selection,
+bounded recording and separately qualified loader/handle coverage. See
+[provenance diagnostic](VULKAN_PROVENANCE_DIAGNOSTIC.md#validation-and-later-qualification).
+
 The construction-time four-mode no-render interop diagnostic has focused
 actual Kotlin/JVM and standalone native query/mask/JNI controls. See
 [allocation diagnostic validation](NATIVE_INTEROP_ALLOCATION_DIAGNOSTIC.md#focused-source-checks)
