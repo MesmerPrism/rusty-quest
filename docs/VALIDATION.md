@@ -1,5 +1,10 @@
 # Rusty Quest Validation
 
+The construction-time four-mode no-render interop diagnostic has focused
+actual Kotlin/JVM and standalone native query/mask/JNI controls. See
+[allocation diagnostic validation](NATIVE_INTEROP_ALLOCATION_DIAGNOSTIC.md#focused-source-checks)
+for commands, modeled leaves and the required later APK/device checks.
+
 The optional closed Background diagnostic has focused contract/custody,
 Android provider typecheck and cached Activity/scene controls. See
 [the diagnostic contract](SPATIAL_BACKGROUND_DIAGNOSTIC.md#validation-and-next-artifact)

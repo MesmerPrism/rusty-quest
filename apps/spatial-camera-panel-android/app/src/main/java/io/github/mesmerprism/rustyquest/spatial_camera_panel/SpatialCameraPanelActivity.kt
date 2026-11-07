@@ -737,7 +737,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     SpatialNativeInteropCoordinator(
         SpatialNativeInteropBindings(
             scene = scene,
-            recordNoRenderReceipt = ::nativeRecordNoRenderInteropReceipt,
+            recordSelectedNoRenderReceipt = ::nativeRecordSelectedNoRenderInteropReceipt,
             requestMultimodalInput = { probe, phase ->
               nativeInputBootstrapCoordinator.requestMultimodalInputIfReady(probe, phase)
             },
@@ -745,7 +745,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               nativeInputBootstrapCoordinator.startControllerActionsIfReady(probe, phase)
             },
             marker = ::marker,
-        )
+        ),
+        diagnosticMode = SpatialNativeInteropDiagnosticPolicy.select(BuildConfig.DEBUG) {
+          // This discriminator admits exact raw tokens; the generic helper trims them.
+          Class.forName("android.os.SystemProperties")
+              .getMethod("get", String::class.java, String::class.java)
+              .invoke(null, SpatialNativeInteropDiagnosticPolicy.PROPERTY, "") as String
+        },
     )
   }
   private val surfaceParticleParameterCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -5414,6 +5420,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       openXrSessionHandle: Long,
       openXrGetInstanceProcAddrHandle: Long,
       surfaceValid: Boolean,
+  ): Long
+
+  private external fun nativeRecordSelectedNoRenderInteropReceipt(
+      openXrInstanceHandle: Long,
+      openXrSessionHandle: Long,
+      openXrGetInstanceProcAddrHandle: Long,
+      surfaceValid: Boolean,
+      allowVulkanObjectConstruction: Boolean,
   ): Long
 
   private external fun nativeSetMarkerFilePersistenceEnabled(enabled: Boolean)
