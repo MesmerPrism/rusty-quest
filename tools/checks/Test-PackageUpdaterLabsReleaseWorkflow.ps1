@@ -154,7 +154,7 @@ $workspaceDependencies = @(
     [pscustomobject]@{
         Name = 'Manifold'
         Path = 'rusty-manifold'
-        Ref = '847c320faba217708d38a9755a55efa5b3e43874'
+        Ref = '58e32fa1f098b58819a25e7d1fb51e22671a79db'
         Repository = 'MesmerPrism/rusty-manifold'
     }
     [pscustomobject]@{
