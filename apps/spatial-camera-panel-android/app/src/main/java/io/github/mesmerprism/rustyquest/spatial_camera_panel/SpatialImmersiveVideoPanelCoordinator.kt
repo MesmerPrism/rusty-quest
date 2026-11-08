@@ -236,7 +236,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                       if (item.isEncryptedOfflinePack) "Encrypted pack" else "Shared plain video",
                   projectionLabel = item.shape.token,
                   stereoLabel = item.stereoLayout.token,
-                  dimensionsLabel = "${item.widthPx} Ã— ${item.heightPx}",
+                  dimensionsLabel = "${item.widthPx} × ${item.heightPx}",
               )
             },
     )
@@ -1826,7 +1826,6 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   companion object {
     private val nextSceneEpoch = AtomicLong(0L)
     private const val DIRECT_PLAYER_THREAD_NAME = "RqImmersiveVideoPlayer"
-    private val nextSceneEpoch = AtomicLong(0L)
     private const val DIRECT_VIDEO_BACKGROUND_Z_INDEX = -40
     private const val DIRECT_VIDEO_BLACK_BACKING_Z_INDEX = -41
     private const val BLACK_BACKING_DISPLAY_SIZE_PX = 16
