@@ -75,6 +75,10 @@ must appear in effective state rather than leaving a stale active label.
 
 ### Shared packed capture
 
+The default RECORD template has a separately packaged debug-only
+[PREVIEW experiment and request/result readback](PACKED_CAMERA2_REQUEST_EXPERIMENT.md).
+It changes no FPS override, media closure or enrollment selection.
+
 An embedded host may own one `PackedStereoCaptureOwner` independently of a
 Peer media subscription. `createSharedCapturePipeline` attaches a bounded
 encoder consumer to an already started, configuration-matching owner; closing
@@ -89,7 +93,24 @@ sensor timestamps survive encoding and decoding; an allocation handle alone
 is not a frame identity. Whole-capture shutdown keeps the capture context
 alive until actual camera closure and all retained consumers retire.
 
+The existing explicit diagnostic ARM can also start a finite observation window
+for outer Camera2 callbacks, trace calls, pool polling, encoder offers and
+handler heartbeat delays. See [capture stall diagnostics](CAPTURE_STALL_DIAGNOSTICS.md)
+for its effective readback, 600-second lifetime, inherited trace-read blocking,
+focused host controls and limits. These observations do not change media state
+or supply performance or qualification authority.
+
 Run the bounded host and source checks before Android compilation:
+
+Optional [receiver Android Trace sections](RECEIVER_TRACE_SECTIONS.md) expose
+fixed call boundaries during an explicitly enabled external app-trace session.
+Their focused host gate checks production method placement and failure behavior;
+trace spans and packet-progress counters remain observations, not acceptance.
+
+Optional [sender Android Trace sections](SENDER_TRACE_SECTIONS.md) cover existing
+packet-capacity waits and actual source/sink I/O calls. They require a sampled
+debuggable host and external tracing; existing standalone constructors remain
+off. They change no media policy, packet framing or cleanup authority.
 
 ```powershell
 cargo test --locked -p rusty-quest-media-stream -p rusty-quest-broker-authority -p rusty-quest-manifold-broker-authority-native -p rusty-quest-media-stream-android

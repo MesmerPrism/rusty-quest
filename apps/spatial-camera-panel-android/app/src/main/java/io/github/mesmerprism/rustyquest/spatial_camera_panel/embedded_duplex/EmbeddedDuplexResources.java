@@ -30,6 +30,11 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     // packaged locks have validated; it is never read from an Intent/Bundle.
     EmbeddedDuplexResources(Context context, EmbeddedDuplexDisplay display,
             JSONObject nativeInitialization, long maxPairDeltaNs) throws Exception {
+        this(context, display, nativeInitialization, maxPairDeltaNs, null);
+    }
+
+    EmbeddedDuplexResources(Context context, EmbeddedDuplexDisplay display,
+            JSONObject nativeInitialization, long maxPairDeltaNs, FrozenEffectiveInputs inputs) throws Exception {
         if (!"rusty.quest.embedded_duplex.runtime_initialized.v1".equals(
                 nativeInitialization.getString("$schema")) || maxPairDeltaNs <= 0L || maxPairDeltaNs > 100_000_000L) {
             throw new IllegalArgumentException("embedded resource initialization");
@@ -45,8 +50,9 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         outgoingSpec = nativeInitialization.getJSONObject("outgoing_runtime_spec");
         JSONObject incomingSpec = nativeInitialization.getJSONObject("incoming_runtime_spec");
         incomingRuntimeSpecId = incomingSpec.getString("runtime_spec_id");
-        source = new Lane(outgoingSpec);
-        Lane sink = new Lane(incomingSpec);
+        boolean usbRelay = inputs != null && inputs.developmentUsbRelayForRoute(inputs.digest("route-configuration.json"));
+        source = new Lane(outgoingSpec, usbRelay);
+        Lane sink = new Lane(incomingSpec, usbRelay);
         leftCamera = camera(source.source, "left");
         rightCamera = camera(source.source, "right");
         if (!"camera2_mediacodec_surface".equals(source.source.getString("source_kind"))) {
@@ -396,6 +402,9 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         final int sinkTransportPort;
         final int width, height, fps, bitrate, maxPacketBytes;
         Lane(JSONObject spec) throws Exception {
+            this(spec, false);
+        }
+        Lane(JSONObject spec, boolean usbRelay) throws Exception {
             plan = spec.getJSONObject("plan");
             JSONArray lanes = plan.getJSONArray("lanes");
             if (lanes.length() != 1) throw new IllegalArgumentException("one directional packed lane required");
@@ -420,8 +429,8 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             JSONObject sinkDevice = unique(plan.getJSONArray("runtime_endpoints"), "device_id", lane.getString("sink_device_id"));
             JSONObject sinkPort = unique(sinkDevice.getJSONArray("transport_receive_ports"), "track_role", role);
             JSONObject route = unique(plan.getJSONArray("transport_routes"), "lane_id", lane.getString("lane_id"));
-            sourceTransportHost = numericIpv4(device.getString("transport_bind_host"));
-            sinkTransportHost = numericIpv4(sinkDevice.getString("transport_bind_host"));
+            sourceTransportHost = numericIpv4(device.getString("transport_bind_host"), usbRelay);
+            sinkTransportHost = numericIpv4(sinkDevice.getString("transport_bind_host"), usbRelay);
             sinkTransportPort = sinkPort.getInt("port");
             if (!"stereo".equals(role) || !role.equals(endpoint.getString("track_role"))
                     || !source.getString("device_id").equals(lane.getString("source_device_id"))
@@ -513,12 +522,20 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     }
 
     private static String numericIpv4(String host) {
+        return numericIpv4(host, false);
+    }
+
+    private static String numericIpv4(String host, boolean usbRelay) {
         String[] parts = host.split("\\.", -1);
         if (parts.length != 4) throw new IllegalArgumentException("numeric LAN host required");
         for (String part : parts) {
             if (!part.matches("0|[1-9][0-9]{0,2}") || Integer.parseInt(part) > 255) {
                 throw new IllegalArgumentException("numeric LAN host required");
             }
+        }
+        if (usbRelay) {
+            if (!"127.0.0.1".equals(host)) throw new IllegalArgumentException("literal USB relay loopback required");
+            return host;
         }
         if ("0".equals(parts[0]) || "127".equals(parts[0]) || Integer.parseInt(parts[0]) >= 224) {
             throw new IllegalArgumentException("unicast LAN host required");

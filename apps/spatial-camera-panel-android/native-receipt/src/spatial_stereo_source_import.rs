@@ -51,7 +51,7 @@ impl SourceCarrierSeed {
 pub(crate) unsafe fn source_carrier_seed() -> Result<Option<SourceCarrierSeed>, String> {
     synchronize_peer_source()?;
     let frames = crate::own_stereo_capture_runtime::shared_sources()
-        .snapshot(monotonic_ns()?, 1_000_000_000)?;
+        .snapshot(monotonic_ns, 1_000_000_000)?;
     let Some(frame) = frames.into_iter().flatten().next() else {
         return Ok(None);
     };
@@ -84,7 +84,7 @@ pub(crate) fn synchronize_peer_source() -> Result<(), String> {
         }
     }
     let frames =
-        crate::own_stereo_capture_runtime::shared_sources().snapshot(monotonic_ns()?, u64::MAX)?;
+        crate::own_stereo_capture_runtime::shared_sources().snapshot(monotonic_ns, u64::MAX)?;
     if let Some(frame) = frames[1].as_ref() {
         if let StereoSourceLease::Peer(peer) = &frame.lease {
             if !projection_peer_binding_matches(
@@ -129,7 +129,7 @@ pub(crate) fn publish_peer_source(frame: SpatialVideoProjectionFrame) -> Result<
     };
     let now = monotonic_ns()?;
     let sources = crate::own_stereo_capture_runtime::shared_sources();
-    if let Some(previous) = sources.snapshot(now, u64::MAX)?[1].as_ref() {
+    if let Some(previous) = sources.snapshot(monotonic_ns, u64::MAX)?[1].as_ref() {
         if previous.identity.epoch == epoch && previous.identity.pair_sequence == pair.pair_id {
             return Ok(());
         }
@@ -359,7 +359,7 @@ impl StereoSourceImports {
             return Err("stereo-normalized-layout-invalid".into());
         }
         let frames = crate::own_stereo_capture_runtime::shared_sources()
-            .snapshot(monotonic_ns()?, maximum_age_ns)?;
+            .snapshot(monotonic_ns, maximum_age_ns)?;
         for (origin, frame) in frames.into_iter().enumerate() {
             let Some(frame) = frame else {
                 if let Some(previous) = self.sources[origin].take() {

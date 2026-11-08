@@ -169,6 +169,7 @@ internal class SpatialCameraControlProfileHotloader(
     if (profile.peerNetworkEndpoints != null) {
       receipt.put("requested_peer_network_endpoints", JSONObject(String(bytes, Charsets.UTF_8)).getJSONArray("peer_network_endpoints"))
           .put("endpoint_reload_boundary", "next_eligible_runtime_generation")
+          .put("requested_peer_network_transport", profile.peerNetworkTransport ?: "lan")
     }
     writeReceipt(receipt)
     observedSignature = current

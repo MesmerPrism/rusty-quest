@@ -165,6 +165,10 @@ unsafe fn render_source_set_common_graph(
             wsi.memory_properties,
         ));
         let surface_generation = NEXT_SDK_SURFACE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        let optional_color_route =
+            crate::spatial_public_multistack_runtime::optional_color_pass::ActiveRoute::begin(
+                surface_generation,
+            );
         crate::spatial_stereo_qualification::carrier_live();
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         crate::spatial_stereo_qualification::carrier_device(
@@ -493,6 +497,7 @@ unsafe fn render_source_set_common_graph(
                 },
                 processing_graph.public_guide_targets.as_mut(),
                 stereo_inputs,
+                Some((wsi.surface_format.format, &memory_properties)),
                 render_started.elapsed().as_secs_f32(),
                 Some(video_renderer),
                 latest_video_frame.as_ref(),
@@ -759,6 +764,7 @@ unsafe fn render_source_set_common_graph(
                     }
                 }
             }
+            optional_color_route.observe_retired(record_result.optional_color_request);
             frames_presented = frames_presented.saturating_add(1);
             record_presented_frame(
                 record_result.video_stats.ready,

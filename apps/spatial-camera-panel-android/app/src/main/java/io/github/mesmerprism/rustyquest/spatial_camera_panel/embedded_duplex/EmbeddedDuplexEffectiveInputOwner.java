@@ -37,9 +37,15 @@ final class EmbeddedDuplexEffectiveInputOwner {
 
     FrozenEffectiveInputs capture(EmbeddedDuplexPackagedInputs base, long generation,
             byte[] profile, FrozenEffectiveInputs.Deriver deriver) throws Exception {
+        return capture(base, generation, profile, deriver, false);
+    }
+
+    FrozenEffectiveInputs capture(EmbeddedDuplexPackagedInputs base, long generation,
+            byte[] profile, FrozenEffectiveInputs.Deriver deriver, boolean developmentUsbRelayEnabled) throws Exception {
         FrozenEffectiveInputs prior = retained(base.role(), generation);
         if (prior != null) return prior;
-        FrozenEffectiveInputs.Selector candidate = new FrozenEffectiveInputs.Selector(base, generation, deriver);
+        FrozenEffectiveInputs.Selector candidate = new FrozenEffectiveInputs.Selector(base, generation, deriver,
+                developmentUsbRelayEnabled);
         if (profile != null) {
             // Validate the complete shared envelope before deciding whether an endpoint override exists.
             SpatialCameraControlProfileContract.INSTANCE.parse(profile);

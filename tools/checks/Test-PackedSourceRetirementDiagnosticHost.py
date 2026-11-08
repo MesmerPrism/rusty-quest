@@ -137,7 +137,15 @@ final class PackedStereoLanTransport {final Runnable join;PackedStereoLanTranspo
     log = out / 'models/android/util/Log.java'
     log.parent.mkdir(parents=True)
     log.write_text('package android.util; public final class Log {public static final java.util.List<String> events=java.util.Collections.synchronizedList(new java.util.ArrayList<>()),messages=java.util.Collections.synchronizedList(new java.util.ArrayList<>());public static boolean throwOnLog;public static int i(String tag,String message){events.add("diagnostic");if(throwOnLog)throw new IllegalStateException("modeled log sink failure");messages.add(message);return 0;}}')
-    paths = [source, extractor, existing, Path(__file__), main_root / package / 'BoundedPacketPump.java', main_root / package / 'PackedSourceFailureCode.java', main_root / package / 'ReconnectKeyframeGate.java']
+    trace = out / 'models/android/os/Trace.java'
+    trace.parent.mkdir(parents=True)
+    # Compatibility constructors are off even if the host has Android Trace.
+    # Any Trace API call is a regression in these original pump controls.
+    trace.write_text('package android.os;public final class Trace {'
+                     'public static boolean isEnabled(){throw new AssertionError("default-off pump touched Trace");}'
+                     'public static void beginSection(String name){throw new AssertionError("default-off pump began Trace");}'
+                     'public static void endSection(){throw new AssertionError("default-off pump ended Trace");}}')
+    paths = [source, extractor, existing, Path(__file__), main_root / package / 'BoundedPacketPump.java', main_root / package / 'SenderTraceSections.java', main_root / package / 'PackedSourceFailureCode.java', main_root / package / 'ReconnectKeyframeGate.java']
     def ref(path):
         path = Path(path)
         return dict(path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
@@ -156,7 +164,7 @@ final class PackedStereoLanTransport {final Runnable join;PackedStereoLanTranspo
     if code == 0:
         code = run('diagnostic', ['java', '-cp', str(classes) + __import__('os').pathsep + args.json_jar, package.replace('/', '.') + '.PackedSourceRetirementDiagnosticHost'])
     unchanged = pins == [ref(path) for path in paths]
-    result = dict(passed=code == 0 and unchanged, source_unchanged=unchanged, source_pins=pins, generated=ref(generated), checks=rows, limits=__doc__, device_calls=0)
+    result = dict(passed=code == 0 and unchanged, source_unchanged=unchanged, source_pins=pins, generated=ref(generated), trace_model=ref(trace), checks=rows, limits=__doc__, device_calls=0)
     (out / 'RESULT.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(ref(out / 'RESULT.json')))
     return code if code else (0 if unchanged else 1)

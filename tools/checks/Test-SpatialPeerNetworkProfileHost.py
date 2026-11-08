@@ -83,8 +83,9 @@ public class EndpointProfileMain {
         if not code:
             code = run('tests', [java, '-cp', cp, 'EndpointProfileMain',
                 'endpointPilotSelectsTwoProfilesOnOneResidentConfiguration',
+                'developmentUsbRelayRequiresCapabilityAndExactDisjointLoopbackTuples',
                 'endpointPilotRefusesMalformedAndUnsupportedUpdatesPreservingAcceptedSelection',
-                'endpointPilotDoesNotEnableExistingActivityParser'])
+                'sharedActivityParserCarriesTypedEndpointsWithoutChangingVisualControls'])
     result = {'passed': code == 0, 'checks': checks, 'source_pins': pins,
               'jvm_spec': pin(a.jvm_spec), 'support_snapshot_pins': support_pins,
               'tool_pins': [pin(path) for path in [java, javac, *spec['compiler_jars'], *spec['runtime_jars']]],

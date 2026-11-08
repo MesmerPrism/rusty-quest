@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.media;
 
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -211,7 +212,8 @@ public final class PackedStereoMediaSourceRuntime {
                 }
                 routeBindHost=localBindHost;routeSinkHost=sinkHost;routeSinkPort=sinkPort;
                 runtime.lanTransport = new PackedStereoLanTransport(runtime.sourceHost,
-                        runtime.profile.port, localBindHost, sinkHost, sinkPort);
+                        runtime.profile.port, localBindHost, sinkHost, sinkPort,
+                        runtime.senderTraceDebuggable);
             }
         }
         public void validateRoute() { runtime.validateRoute(); }
@@ -322,7 +324,7 @@ public final class PackedStereoMediaSourceRuntime {
                         prior.captureConsumerGeneration);
             }
             if(routeBindHost!=null)next.lanTransport=new PackedStereoLanTransport(next.sourceHost,
-                    next.profile.port,routeBindHost,routeSinkHost,routeSinkPort);
+                    next.profile.port,routeBindHost,routeSinkHost,routeSinkPort,next.senderTraceDebuggable);
             synchronized(LOCK) {
                 if(RUNTIMES.containsKey(prior.key))throw new IllegalStateException("prior pipeline registry still owned");
                 RUNTIMES.put(next.key,next);
@@ -442,6 +444,7 @@ public final class PackedStereoMediaSourceRuntime {
         final String sessionId;
         final String sourceKind;
         final Context context;
+        final boolean senderTraceDebuggable;
         final String sourceHost;
         final PortProfile profile;
         final PackedStereoStreamMetadata.Layout layout;
@@ -534,12 +537,23 @@ public final class PackedStereoMediaSourceRuntime {
             this.sessionId = sessionId;
             this.sourceKind = sourceKind;
             this.context = context;
+            this.senderTraceDebuggable = sampleSenderTraceDebuggable(context);
             this.sourceHost = sourceHost;
             this.profile = profile;
             this.layout = layout;
             this.leftCameraId = leftCameraId;
             this.rightCameraId = rightCameraId;
             this.synthetic = synthetic;
+        }
+
+        private static boolean sampleSenderTraceDebuggable(Context context) {
+            if (context == null) return false;
+            try {
+                ApplicationInfo info = context.getApplicationInfo();
+                return info != null && (info.flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            } catch (RuntimeException | LinkageError unavailable) {
+                return false;
+            }
         }
 
         void start() throws Exception {
@@ -1076,7 +1090,7 @@ public final class PackedStereoMediaSourceRuntime {
                     replayCodecConfig(clientOutput);
                     handshakeStage = "PUMP_PUBLICATION";
                     BoundedPacketPump pump = new BoundedPacketPump(
-                            clientOutput, 48, "rusty-packed-source-socket-pump");
+                            clientOutput, 48, "rusty-packed-source-socket-pump", senderTraceDebuggable);
                     synchronized (outputLock) {
                         if (stopRequested || socket != client) {
                             retiredConnection = new DetachedConnection(pump,clientOutput,client);

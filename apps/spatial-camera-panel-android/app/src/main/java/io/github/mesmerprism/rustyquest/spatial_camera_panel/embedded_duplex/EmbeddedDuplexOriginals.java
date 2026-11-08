@@ -559,9 +559,40 @@ public final class EmbeddedDuplexOriginals {
         finally{record.callbackJoined=true;record.callbackTerminal.complete(null);tryAppAdmissionJoin(record);}
     }
     private static JSONObject actualFutureFailure(Record record,Throwable failure)throws Exception{
-        return new JSONObject().put("schema","rusty.quest.embedded_duplex.original_failure.v2").put("code","actual_future_failed")
+        JSONObject value=new JSONObject().put("schema","rusty.quest.embedded_duplex.original_failure.v2").put("code","actual_future_failed")
             .put("operation",record.row.getString("operation")).put("original_id",record.id()).put("stage","actual_future_completion")
             .put("throwable_family",throwableFamily(failure)).put("cause_category",causeCategory(failure));
+        Set<Throwable> seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Throwable current=failure;
+        for(int depth=0;depth<16 && current!=null && seen.add(current);depth++){
+            if(current instanceof EmbeddedDuplexNativeOperationFailure){
+                try{
+                    JSONObject nativeFailure=((EmbeddedDuplexNativeOperationFailure)current).validatedFailure();
+                    requireNativeFailureSubject(record.row,nativeFailure);
+                    return value.put("schema","rusty.quest.embedded_duplex.original_failure.v3").put("native_failure",nativeFailure);
+                }catch(Exception invalid){return value;} // Malformed/foreign data supplies no precise evidence.
+            }
+            try{current=current.getCause();}catch(Throwable unavailable){return value;}
+        }
+        return value;
+    }
+    private static void requireNativeFailureSubject(JSONObject row,JSONObject nativeFailure)throws Exception{
+        // Reuse the closed parser for observations and persisted reloads.
+        nativeFailure=new EmbeddedDuplexNativeOperationFailure(nativeFailure.toString()).validatedFailure();
+        String operation=row.getString("operation"),nativeOperation=nativeFailure.getString("operation");
+        if(!(operation.equals("pair_session")?Set.of("fresh_pair_setup","pair_ceremony").contains(nativeOperation):operation.equals(nativeOperation))
+                ||"rejected_unknown".equals(nativeFailure.getString("code")))throw new IllegalStateException("Original native failure operation");
+        if(!nativeFailure.has("diagnostic"))return;
+        JSONObject d=nativeFailure.getJSONObject("diagnostic"),actor=row.getJSONObject("actor_binding");
+        if(!d.isNull("original_id")&&!row.getString("original_id").equals(d.getString("original_id"))
+                ||!d.isNull("native_generation")&&(actor.isNull("native_generation")||actor.getLong("native_generation")!=d.getLong("native_generation"))
+                ||!d.isNull("app_record_sha256")&&(actor.isNull("app_record_sha256")||!actor.getString("app_record_sha256").equals(d.getString("app_record_sha256"))))
+            throw new IllegalStateException("Original native failure actor");
+        if(!row.isNull("native_setup_binding")){
+            String request=row.getJSONObject("native_setup_binding").getString("setup_request_id");
+            for(String key:new String[]{"request_id","phase_id"})if(!d.isNull(key)&&!request.equals(d.getString(key)))
+                throw new IllegalStateException("Original native failure setup");
+        }
     }
     private static String throwableFamily(Throwable failure){
         if(failure instanceof java.util.concurrent.CompletionException)return "completion";
@@ -595,13 +626,17 @@ public final class EmbeddedDuplexOriginals {
             if(!keys(failure).equals(Set.of("schema","code"))||!"actual_future_failed".equals(failure.get("code")))throw new IllegalStateException("Original v1 failure fields");
             return;
         }
-        if(!"rusty.quest.embedded_duplex.original_failure.v2".equals(schema)
-                ||!keys(failure).equals(Set.of("schema","code","operation","original_id","stage","throwable_family","cause_category")))throw new IllegalStateException("Original failure schema/fields");
-        for(String key:keys(failure))if(!(failure.get(key) instanceof String))throw new IllegalStateException("Original failure scalar type");
+        boolean precise="rusty.quest.embedded_duplex.original_failure.v3".equals(schema);
+        Set<String> scalar=Set.of("schema","code","operation","original_id","stage","throwable_family","cause_category");
+        Set<String> expected=new HashSet<>(scalar);if(precise)expected.add("native_failure");
+        if(!precise&&!"rusty.quest.embedded_duplex.original_failure.v2".equals(schema)
+                ||!keys(failure).equals(expected))throw new IllegalStateException("Original failure schema/fields");
+        for(String key:scalar)if(!(failure.get(key) instanceof String))throw new IllegalStateException("Original failure scalar type");
         if(!"actual_future_failed".equals(failure.getString("code"))||!row.getString("operation").equals(failure.getString("operation"))
                 ||!row.getString("original_id").equals(failure.getString("original_id"))||!"actual_future_completion".equals(failure.getString("stage"))
                 ||!FAILURE_FAMILIES.contains(failure.getString("throwable_family"))
                 ||!FAILURE_FAMILIES.contains(failure.getString("cause_category"))&&!"unavailable".equals(failure.getString("cause_category")))throw new IllegalStateException("Original failure subject/category");
+        if(precise)requireNativeFailureSubject(row,failure.getJSONObject("native_failure"));
     }
     private static JSONObject validateResponse(Record record,Bundle response)throws Exception {
         if(response==null||!response.keySet().equals(Set.of("schema","status","challenge","receipt")))

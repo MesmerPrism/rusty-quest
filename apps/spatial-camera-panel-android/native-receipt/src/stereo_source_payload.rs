@@ -127,10 +127,14 @@ impl<O: Clone, P: Clone> OwnPeerSourceSet<O, P> {
 
     pub(crate) fn snapshot(
         &self,
-        now: u64,
+        now: impl FnOnce() -> Result<u64, String>,
         max_age: u64,
     ) -> Result<[Option<RetainedStereoFrame<StereoSourceLease<O, P>>>; 2], String> {
         let inputs = self.inputs.lock().map_err(|_| "source set poisoned")?;
+        // A caller-side clock sample can precede a newer publication while
+        // waiting for this lock. Sample here, as own_current does, so a fresh
+        // source is not rejected as Future by that scheduling interleaving.
+        let now = now()?;
         let snapshot = inputs.fresh_inputs(now, max_age);
         let clone = |f: Option<&RetainedStereoFrame<StereoSourceLease<O, P>>>| {
             f.map(|f| RetainedStereoFrame {
@@ -190,12 +194,57 @@ mod tests {
         set.bind(StereoOrigin::PeerStereo, epoch).unwrap();
         set.publish_own(frame(own.clone())).unwrap();
         set.publish_peer(frame(peer.clone())).unwrap();
-        let held = set.snapshot(11, 10).unwrap();
+        let held = set.snapshot(|| Ok(11), 10).unwrap();
         set.retire(StereoOrigin::OwnStereo, epoch).unwrap();
-        assert!(set.snapshot(11, 10).unwrap()[1].is_some());
+        assert!(set.snapshot(|| Ok(11), 10).unwrap()[1].is_some());
         assert_eq!(Arc::strong_count(&own), 2);
         drop(held);
         assert_eq!(Arc::strong_count(&own), 1);
+    }
+
+    #[test]
+    fn snapshot_samples_clock_after_lock_and_keeps_new_publications() {
+        let set = OwnPeerSourceSet::default();
+        let earlier_caller_time = 9;
+        let own = frame(Arc::new(10));
+        let peer = frame(Arc::new(20));
+        let epoch = own.identity.epoch;
+        // Both publications happen after the caller's earlier observation.
+        assert!(own.observed_at_ns > earlier_caller_time);
+        set.bind(StereoOrigin::OwnStereo, epoch).unwrap();
+        set.bind(StereoOrigin::PeerStereo, epoch).unwrap();
+        set.publish_own(own).unwrap();
+        set.publish_peer(peer).unwrap();
+        let held = set
+            .snapshot(
+                || {
+                    assert!(
+                        set.inputs.try_lock().is_err(),
+                        "clock must run under source lock"
+                    );
+                    Ok(11)
+                },
+                10,
+            )
+            .unwrap();
+        assert!(held.iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn snapshot_preserves_freshness_and_clock_failure_boundaries() {
+        let set: OwnPeerSourceSet<Arc<u32>, Arc<u32>> = OwnPeerSourceSet::default();
+        let own = frame(Arc::new(10));
+        set.bind(StereoOrigin::OwnStereo, own.identity.epoch)
+            .unwrap();
+        set.publish_own(own).unwrap();
+        assert!(set.snapshot(|| Ok(9), 10).unwrap()[0].is_none());
+        assert!(set.snapshot(|| Ok(21), 10).unwrap()[0].is_none());
+        assert!(set
+            .snapshot(|| Err("clock unavailable".into()), 10)
+            .is_err());
+        let current = set.snapshot(|| Ok(20), 10).unwrap();
+        assert!(current[0].is_some());
+        assert!(current[1].is_none());
     }
 }
 
@@ -294,7 +343,7 @@ mod peer_payload_retirement_controls {
             lease: std::sync::Arc::new(20),
         })
         .unwrap();
-        let held = set.snapshot(11, 10).unwrap();
+        let held = set.snapshot(|| Ok(11), 10).unwrap();
         set.retire(StereoOrigin::PeerStereo, epoch).unwrap();
         let state = set.peer_retirement_facts().unwrap();
         assert!(state.inactive);

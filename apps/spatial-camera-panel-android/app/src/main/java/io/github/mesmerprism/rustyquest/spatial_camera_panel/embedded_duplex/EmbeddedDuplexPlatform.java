@@ -272,6 +272,8 @@ final class EmbeddedDuplexPlatform {
     private final String remotePeerId;
     private final String routeConfigurationSha256;
     private final InetAddress remoteControlAddress;
+    private final boolean developmentUsbRelay;
+    private final FrozenEffectiveInputs effectiveTransportInputs;
     private final int remoteControlPort;
     private final File replayDirectory;
     private final AtomicFile replayFile;
@@ -644,6 +646,14 @@ final class EmbeddedDuplexPlatform {
             EmbeddedDuplexIdentity.Identity identity, String localPeerId, String remotePeerId,
             String routeConfigurationSha256, String remoteControlIp, int remoteControlPort,
             boolean localFixture) throws Exception {
+        this(context, display, identity, localPeerId, remotePeerId, routeConfigurationSha256,
+                remoteControlIp, remoteControlPort, localFixture, null);
+    }
+
+    EmbeddedDuplexPlatform(Context context, EmbeddedDuplexDisplay display,
+            EmbeddedDuplexIdentity.Identity identity, String localPeerId, String remotePeerId,
+            String routeConfigurationSha256, String remoteControlIp, int remoteControlPort,
+            boolean localFixture, FrozenEffectiveInputs inputs) throws Exception {
         if (context == null || display == null || identity == null || localPeerId.equals(remotePeerId)
                 || !routeConfigurationSha256.matches("sha256:[0-9a-f]{64}")
                 || remoteControlPort <= 0 || remoteControlPort > 65535) {
@@ -655,7 +665,10 @@ final class EmbeddedDuplexPlatform {
         this.localPeerId = localPeerId;
         this.remotePeerId = remotePeerId;
         this.routeConfigurationSha256 = routeConfigurationSha256;
-        this.remoteControlAddress = numericIpv4(remoteControlIp);
+        effectiveTransportInputs = inputs;
+        developmentUsbRelay = inputs != null && inputs.developmentUsbRelayForRoute(routeConfigurationSha256.substring(7));
+        if (inputs != null) inputs.requireControlEndpoint(remotePeerId, remoteControlIp, remoteControlPort);
+        this.remoteControlAddress = numericIpv4(remoteControlIp, developmentUsbRelay);
         this.remoteControlPort = remoteControlPort;
         this.localFixture = localFixture;
         replayDirectory = EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(context), "embedded-duplex-replay");
@@ -710,7 +723,9 @@ final class EmbeddedDuplexPlatform {
     /** No Start can be issued until every peer's authenticated control endpoint is ready. */
     void startControl(String localControlIp, int localControlPort) throws Exception {
         if (registry == null || endpoint != null) throw new IllegalStateException("control initialization order");
-        endpoint = new OwnerDispatchTcpEndpoint(numericIpv4(localControlIp), localControlPort,
+        if (effectiveTransportInputs != null)
+            effectiveTransportInputs.requireControlEndpoint(localPeerId, localControlIp, localControlPort);
+        endpoint = new OwnerDispatchTcpEndpoint(numericIpv4(localControlIp, developmentUsbRelay), localControlPort,
                 frame -> {
                     requireProcessCallback();
                     if (localFixture) {
@@ -1193,6 +1208,10 @@ final class EmbeddedDuplexPlatform {
     }
 
     private static InetAddress numericIpv4(String address) throws Exception {
+        return numericIpv4(address, false);
+    }
+
+    private static InetAddress numericIpv4(String address, boolean developmentUsbRelay) throws Exception {
         String[] parts = address.split("\\.", -1);
         if (parts.length != 4) throw new IllegalArgumentException("numeric IPv4 required");
         byte[] bytes = new byte[4];
@@ -1203,6 +1222,10 @@ final class EmbeddedDuplexPlatform {
             bytes[i] = (byte) value;
         }
         InetAddress parsed = InetAddress.getByAddress(bytes);
+        if (developmentUsbRelay) {
+            if (!"127.0.0.1".equals(address)) throw new IllegalArgumentException("literal USB relay loopback required");
+            return parsed;
+        }
         if (parsed.isAnyLocalAddress() || parsed.isLoopbackAddress() || parsed.isMulticastAddress()
                 || "255.255.255.255".equals(address)) throw new IllegalArgumentException("unicast peer IPv4 required");
         return parsed;

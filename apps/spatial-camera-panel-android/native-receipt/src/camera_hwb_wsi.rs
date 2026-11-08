@@ -32,6 +32,7 @@ use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandFrame;
 use crate::packed_sbs_normalizer::PackedSbsNormalizer;
 use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
+use crate::spatial_public_multistack_runtime::optional_color_pass;
 use crate::spatial_public_multistack_runtime::{
     current_spatial_public_guide_pass_plan,
     record_spatial_public_meta_passthrough_edge_window_cutout, SpatialPublicGuidePassRecord,
@@ -45,6 +46,7 @@ use crate::spatial_video_projection_settings::SpatialVideoProjectionSettings;
 
 pub(crate) struct CameraHwbRecordResult {
     pub(crate) projected_by_public_stack: bool,
+    pub(crate) optional_color_request: Option<optional_color_pass::OptionalColorRequest>,
     pub(crate) camera_projection_visible: bool,
     pub(crate) video_stats: SpatialVideoProjectionFrameStats,
     pub(crate) projection_zone_stats: ProjectionZoneRenderStats,
@@ -1053,6 +1055,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     packed_normalizer: Option<(&mut PackedSbsNormalizer, &AhbVulkanSampledImage, bool)>,
     public_guide_targets: Option<&mut SpatialPublicGuideTargets>,
     stereo_sources: Option<crate::spatial_public_multistack_runtime::StereoRecordingInputs<'_>>,
+    optional_color_format: Option<(vk::Format, &vk::PhysicalDeviceMemoryProperties)>,
     elapsed_seconds: f32,
     video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
     video_frame: Option<&SpatialVideoProjectionFrame>,
@@ -1147,6 +1150,10 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         .as_deref()
         .and_then(SpatialVideoProjectionRenderer::retained_unused_descriptor_binding);
     let stereo_selected = stereo_sources.is_some();
+    let ordinary_combined = stereo_sources.as_ref().is_some_and(|inputs| {
+        let mask = inputs.policy.guide_origins[2];
+        mask & 0xc000_0000 == 0x8000_0000 && inputs.sources.iter().all(Option::is_some)
+    });
     let prepared_video = match (video_renderer, video_frame) {
         (Some(renderer), Some(frame))
             if video_settings.active()
@@ -1187,6 +1194,14 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let mut guide_record =
         SpatialPublicGuidePassRecord::not_recorded(guide_plan, "camera-projection-not-attempted");
     let edge_window_selected = guide_plan.edge_window_selected();
+    let optional_color = optional_color_pass::requested();
+    let layer_override = f32::from_bits(guide_plan.layer_override_bits);
+    let source_color = optional_color.filter(|request| {
+        request.placement != optional_color_pass::COMBINED
+            && !projection_zone_frame.settings.synthetic_diagnostic()
+            && layer_override <= 0.0
+    });
+    let mut source_color_recorded = None;
     let projection_footprint_scale = projection_guard_band.footprint_scale;
     let mut projection_zone_ready = false;
     let mut projection_zone_descriptor_available = false;
@@ -1201,13 +1216,14 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
         if let Some(inputs) = stereo_sources {
-            guide_record = targets.record_stereo_source_banks(
+            (guide_record, source_color_recorded) = targets.record_stereo_source_banks(
                 device,
                 command_buffer,
                 gpu_timestamps,
                 frame_slot,
                 elapsed_seconds,
                 inputs,
+                source_color,
             )?;
         } else {
             guide_record = targets.record_spatial_public_guide_passes(
@@ -1362,19 +1378,43 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         frame_slot,
         CameraHwbGpuTimestampStage::FinalCompositor,
     );
-    begin_camera_hwb_final_render_pass(
-        device,
-        command_buffer,
-        render_pass,
-        framebuffer,
-        extent,
-        opaque_camera_only,
-    );
     let effective_zone_alpha_policy =
         crate::camera_hwb_projection_target::projection_zone_alpha_policy(
             projection_zone_frame.settings,
             projection_zone_composite_alpha(composite_alpha),
         );
+    let optional_color_request = optional_color.filter(|request| {
+        request.placement == optional_color_pass::COMBINED
+            && ordinary_combined
+            && public_projection_ready
+            && projection_zone_ready
+            && !opaque_camera_only
+            && !edge_window_selected
+            && !projection_zone_frame.settings.synthetic_diagnostic()
+            && !effective_zone_alpha_policy.readable_video_consumer_required
+            && effective_zone_alpha_policy.premultiplied_alpha_output
+    });
+    let offscreen_target =
+        optional_color_request
+            .and(optional_color_format)
+            .and_then(|(format, memory)| {
+                public_guide_targets
+                    .as_deref_mut()
+                    .and_then(|targets| {
+                        targets.prepare_optional_color_pass(device, memory, format, extent)
+                    })
+                    .map(|pass| pass.target())
+            });
+    let (draw_render_pass, draw_framebuffer) =
+        offscreen_target.unwrap_or((render_pass, framebuffer));
+    begin_camera_hwb_final_render_pass(
+        device,
+        command_buffer,
+        draw_render_pass,
+        draw_framebuffer,
+        extent,
+        opaque_camera_only,
+    );
     let mut native_video_drawn = false;
     let mut native_video_suppressed = !effective_zone_alpha_policy.readable_video_consumer_required;
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
@@ -1462,6 +1502,27 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         );
     }
     device.cmd_end_render_pass(command_buffer);
+    let mut recorded_optional_color = source_color_recorded.filter(|_| projection_zone_rendered);
+    if let (Some(_), Some(request)) = (offscreen_target, optional_color_request) {
+        let pass = public_guide_targets
+            .as_deref()
+            .and_then(SpatialPublicGuideTargets::optional_color_pass)
+            .expect("offscreen target belongs to the current color pass");
+        pass.prepare_eyes(command_buffer);
+        begin_camera_hwb_final_render_pass(
+            device,
+            command_buffer,
+            render_pass,
+            framebuffer,
+            extent,
+            false,
+        );
+        pass.draw(command_buffer, request.words, elapsed_seconds);
+        device.cmd_end_render_pass(command_buffer);
+        if projection_zone_rendered {
+            recorded_optional_color = Some(request);
+        }
+    }
     projection_readback.record_after_draw(
         device,
         command_buffer,
@@ -1513,6 +1574,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     );
     Ok(CameraHwbRecordResult {
         projected_by_public_stack,
+        optional_color_request: recorded_optional_color,
         camera_projection_visible,
         video_stats,
         projection_zone_stats: ProjectionZoneRenderStats {
@@ -1603,7 +1665,7 @@ unsafe fn begin_camera_hwb_final_render_pass(
 ) {
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, if opaque_clear { 1.0 } else { 0.0 }],
+            float32: crate::spatial_projection_background::clear_color(opaque_clear),
         },
     }];
     let render_area = vk::Rect2D {
@@ -1901,13 +1963,21 @@ pub(crate) unsafe fn create_render_pass(
     device: &ash::Device,
     format: vk::Format,
 ) -> Result<vk::RenderPass, String> {
+    create_color_render_pass(device, format, vk::ImageLayout::PRESENT_SRC_KHR)
+}
+
+pub(crate) unsafe fn create_color_render_pass(
+    device: &ash::Device,
+    format: vk::Format,
+    final_layout: vk::ImageLayout,
+) -> Result<vk::RenderPass, String> {
     let color_attachment = [vk::AttachmentDescription::default()
         .format(format)
         .samples(vk::SampleCountFlags::TYPE_1)
         .load_op(vk::AttachmentLoadOp::CLEAR)
         .store_op(vk::AttachmentStoreOp::STORE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)];
+        .final_layout(final_layout)];
     let color_attachment_ref = [vk::AttachmentReference::default()
         .attachment(0)
         .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];

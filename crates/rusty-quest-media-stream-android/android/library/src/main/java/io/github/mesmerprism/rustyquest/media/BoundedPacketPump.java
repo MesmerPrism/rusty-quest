@@ -20,6 +20,7 @@ public final class BoundedPacketPump implements Closeable {
     private final int maxPacketBytes;
     private final long maxQueuedBytes;
     private final OutputStream output;
+    private final boolean senderTraceDebuggable;
     private final Thread worker;
     private final AtomicBoolean outputClosed = new AtomicBoolean();
     private volatile boolean closed;
@@ -66,11 +67,20 @@ public final class BoundedPacketPump implements Closeable {
     }
 
     public BoundedPacketPump(OutputStream output, int capacity, String threadName) {
-        this(output, capacity, DEFAULT_MAX_PACKET_BYTES, DEFAULT_MAX_QUEUED_BYTES, threadName);
+        this(output, capacity, threadName, false);
+    }
+
+    BoundedPacketPump(OutputStream output, int capacity, String threadName, boolean senderTraceDebuggable) {
+        this(output, capacity, DEFAULT_MAX_PACKET_BYTES, DEFAULT_MAX_QUEUED_BYTES, threadName, senderTraceDebuggable);
     }
 
     BoundedPacketPump(OutputStream output, int capacity, int maxPacketBytes,
             long maxQueuedBytes, String threadName) {
+        this(output, capacity, maxPacketBytes, maxQueuedBytes, threadName, false);
+    }
+
+    BoundedPacketPump(OutputStream output, int capacity, int maxPacketBytes,
+            long maxQueuedBytes, String threadName, boolean senderTraceDebuggable) {
         if (output == null) throw new NullPointerException("output");
         if (capacity <= 0 || capacity > MAX_CAPACITY) {
             throw new IllegalArgumentException("capacity");
@@ -79,6 +89,7 @@ public final class BoundedPacketPump implements Closeable {
             throw new IllegalArgumentException("packet byte limits");
         }
         this.output = output;
+        this.senderTraceDebuggable = senderTraceDebuggable;
         this.capacity = capacity;
         this.maxPacketBytes = maxPacketBytes;
         this.maxQueuedBytes = maxQueuedBytes;
@@ -129,7 +140,9 @@ public final class BoundedPacketPump implements Closeable {
                     lock.notifyAll();
                     return true;
                 }
-                lock.wait();
+                boolean began = SenderTraceSections.begin(senderTraceDebuggable, SenderTraceSections.Phase.PUMP_CAPACITY_WAIT);
+                try { lock.wait(); }
+                finally { SenderTraceSections.end(began); }
             }
         }
     }
@@ -145,7 +158,12 @@ public final class BoundedPacketPump implements Closeable {
                     queuedBytes -= packet.length;
                     lock.notifyAll();
                 }
-                output.write(packet); output.flush();
+                boolean writeBegan = SenderTraceSections.begin(senderTraceDebuggable, SenderTraceSections.Phase.PUMP_WRITE);
+                try { output.write(packet); }
+                finally { SenderTraceSections.end(writeBegan); }
+                boolean flushBegan = SenderTraceSections.begin(senderTraceDebuggable, SenderTraceSections.Phase.PUMP_FLUSH);
+                try { output.flush(); }
+                finally { SenderTraceSections.end(flushBegan); }
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

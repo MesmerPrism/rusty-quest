@@ -14,8 +14,8 @@ use rusty_manifold_peer::{
     ManifoldPeerEnrollmentRequest, ManifoldPeerSessionRejectionReason, ManifoldPeerStatusProposal,
     ManifoldReciprocalEd25519RejectionReason, COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID,
     COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA, COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
-    COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID, PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA,
-    PEER_IDENTITY_SCHEMA, PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
+    PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA, PEER_IDENTITY_SCHEMA,
+    PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
 };
 use rusty_quest_broker_authority::QuestCommonLanContextDraft;
 use serde::Serialize;
@@ -530,7 +530,7 @@ fn transport(host: &Host) -> Result<Value, String> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(
         json!({"topology_contract_id": COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID,
-        "transport_contract_id": COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID,
+        "transport_contract_id": host.packaged_route.validated_transport_contract_id()?,
         "network_scope_id": host.packaged_route.network_scope_id,
         "endpoints": endpoints,
         "route_configuration_sha256": host.route_configuration_sha256}),

@@ -776,6 +776,18 @@ public final class EmbeddedDuplexActivationGateTest {
     // Full Java callback/registry/Gate fixture. Native two-principal admission is modeled:
     // the exact projection is supplied directly, so this proves neither JNI authentication
     // nor native process-fence admission. The Java CallbackGuard uses a real host file fence.
+    @Test public void retainedCallbackStillRejectsAnAbsentSelectedRunAndRestoresPriorContext() throws Exception {
+        EmbeddedDuplexRunContext prior=EmbeddedDuplexProcessHost.selectedContext();
+        try(RetainedCallbackFixture fixture=new RetainedCallbackFixture("stop")){
+            try{
+                fixture.selectedHostField.set(null,null);
+                assertThrows(IllegalStateException.class,()->fixture.invoke(false));
+                assertEquals(0,fixture.cleanup.providerCalls);
+            }finally{fixture.selectedHostField.set(null,fixture.fixtureHost);}
+        }
+        org.junit.Assert.assertSame(prior,EmbeddedDuplexProcessHost.selectedContext());
+    }
+
     private static final class RetainedCallbackFixture implements AutoCloseable {
         final EmbeddedDuplexPlatform platform = diagnosticOnlyPlatform();
         final FakeTarget target = new FakeTarget();
@@ -783,11 +795,27 @@ public final class EmbeddedDuplexActivationGateTest {
         final CleanupFixture cleanup;
         final JSONObject authority;
         final EmbeddedDuplexProcessFence fence;
+        final java.lang.reflect.Field selectedHostField;
+        final EmbeddedDuplexProcessHost priorHost, fixtureHost;
         RetainedCallbackFixture(String kind) throws Exception {
             cleanup = new CleanupFixture("lease.1", "receiver.7", 3, kind);
             java.io.File dir = java.nio.file.Files.createTempDirectory("retained-callback-fence-").toFile();
             fence = EmbeddedDuplexProcessFence.acquire(dir, null, null, () -> { });
             platform.bindProcessFence(fence);
+            // Explicit isolated host model, using the same supported test constructor
+            // as attachment controls. No Android storage, Native owner or SDK is started.
+            java.lang.reflect.Constructor<EmbeddedDuplexProcessHost> constructor=
+                    EmbeddedDuplexProcessHost.class.getDeclaredConstructor(android.content.Context.class);
+            constructor.setAccessible(true);
+            fixtureHost=constructor.newInstance((android.content.Context)null);
+            selectedHostField=EmbeddedDuplexProcessHost.class.getDeclaredField("instance");
+            selectedHostField.setAccessible(true);
+            synchronized(EmbeddedDuplexProcessHost.class){
+                priorHost=(EmbeddedDuplexProcessHost)selectedHostField.get(null);
+                selectedHostField.set(null,fixtureHost);
+            }
+            setPlatformField(platform,"operationalRun",EmbeddedDuplexProcessHost.selectedContext());
+            assertTrue(EmbeddedDuplexProcessHost.selectedContext().legacy());
             setPlatformField(platform, "localPeerId", "peer.b");
             setPlatformField(platform, "registry", cleanup.registry);
             setPlatformField(platform, "activationGate", gate);
@@ -803,7 +831,16 @@ public final class EmbeddedDuplexActivationGateTest {
         String invoke(boolean compensate) throws Exception {
             return platform.executeRetainedCleanupAndVerify(authority.toString(), cleanup.action, compensate);
         }
-        @Override public void close() throws Exception { cleanup.close(); fence.close(); }
+        @Override public void close() throws Exception {
+            try{cleanup.close();}finally{
+                try{fence.close();}finally{
+                    synchronized(EmbeddedDuplexProcessHost.class){
+                        if(selectedHostField.get(null)!=fixtureHost)throw new IllegalStateException("fixture selected host changed");
+                        selectedHostField.set(null,priorHost);
+                    }
+                }
+            }
+        }
     }
     private static void setPlatformField(EmbeddedDuplexPlatform platform, String name, Object value)
             throws Exception {

@@ -94,7 +94,15 @@ the exact v1 and v2 DTOs; v1 has no app disposition and must not acquire an
 inferred `clear`. Existing installed v1 producers retain their six-field schema.
 
 Run `tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` for actual Java cold
-acquisition/readback and unchanged effect-gate controls. Run
+acquisition/readback and unchanged effect-gate controls. Its digest controls
+preserve the null sentinel and exact UTF-8 SHA-256 bytes across golden, Unicode,
+replacement, randomized and long records. A JDK per-thread allocated-byte check
+compares the actual fence digest with the shared canonical byte helper under a
+broad relative budget; it has no wall-clock threshold and makes no ART throughput
+claim. Fence digests use that existing helper without caching or skipping any
+live file, custody, freshness or hash validation. The `JavaApi34` native-fence
+leaf compiles the fence together with its incarnation and canonical-JSON
+dependencies against the genuine SDK bootclasspath. Run
 `python tools/checks/Test-ColdPendingRunInspectionHost.py` for the complete
 source-extracted JNI inspection caller/projection against explicit JNI, registry
 and platform models. These host controls prove neither an installed JNI binding
@@ -119,6 +127,45 @@ uses an explicit existing host dependency directory to compile the production
 JSON/owner/handoff validators with real serde JSON and SHA-256, including an
 optional Java-exported handoff. Kernel identity and physical commit remain
 modeled leaves; these controls confer no historical ACK or device credit.
+
+## Fresh setup failure observations
+
+Fresh setup rejections use the existing debug-only JNI and Original query lane.
+`operation_failure.v2` carries the closed `fresh_setup_rejected` variant with
+an owning component, actual call-site stage, fixed reason and available
+request/phase, app/native generation, app-record and configuration identities.
+Unavailable identities stay null. The payload is bounded to 32 KiB; it contains
+no exception text, signatures, nonces, configuration bodies or authority snapshots.
+Host lookup, flight/current-phase, successor staging, archive sub-owners, begin,
+peer view exchange and current-session validation retain their actual rejection
+sites. A delegated error is `owner_rejected`; its message is never classified.
+Earlier precise failures and the existing v1 `pair_session_not_current` receipt
+are preserved rather than replaced by an outer generic stage.
+
+The actual failed Future callback persists validated Native data as
+`original_failure.v3` before publishing its outcome. The Original operation,
+ID, available actor and setup binding must match. A malformed or foreign carrier
+falls back to the existing finite v2 family/category diagnostic. Historical
+Original failure v1/v2 records remain readable without rewriting their bytes or
+outcome hashes. Reload uses the same closed Native parser and subject checks.
+All failed outcomes remain UNKNOWN/uncertain; diagnostic availability supplies
+no settlement, consumer ACK, cleanup, replay or new runtime authority.
+
+The existing host include seam compiles the exact pure `operation_failure.rs`
+file with `cargo test --locked -p spatial-camera-panel-native-receipt --lib
+operation_failure::tests`. The Original host check runs both the exact carrier
+parser controls and actual Future/store/reload controls. Its `--completion-only`
+mode includes failure-version compatibility and persisted diagnostic controls.
+Provide freshly source-compiled app and media classes in its support classpath;
+the source aggregate includes these media classes for the runtime status type.
+The source aggregate explicitly selects `android-system-host.gradle` to compile
+the same existing syscall models separately with JDK 17 and prepend them only
+to JVM test runtime classpaths. AGP's Android module image is not changed. This prevents the Android
+mockable SDK's unimplemented `Os.open` from standing in for a file-lock test.
+The models use real host descriptor/file operations; Android atomic no-follow,
+permissions and directory fsync remain modeled. The init adapter affects only
+`:app` JVM tests when explicitly selected, never the APK's main sources.
+These checks do not identify any historical device cause or qualify a repair.
 
 ## Validation boundaries
 

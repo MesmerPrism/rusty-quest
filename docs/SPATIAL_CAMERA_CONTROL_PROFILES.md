@@ -199,6 +199,54 @@ exact submitted-byte SHA-256 and immutable endpoint readback. Exceptions leave
 the preceding selection intact. There is no additional file watcher, receipt
 format, persistence path or new resource owner.
 
+### Explicit development USB ADB relay
+
+The optional `peer_network_transport` root field has one development value,
+`development-usb-adb-relay-v1`. Omission preserves the ordinary LAN path. This
+selection requires a debug APK with product inputs enabled, the packaged integer
+`rusty_quest_embedded_duplex_usb_adb_relay_enabled` equal to `1`, and native Cargo
+feature `development-usb-adb-relay` forwarding Manifold's
+`development-loopback-relay` feature. A missing or malformed capability, release
+build, unknown selection, or feature-off native consumer refuses the USB profile.
+The capability does not select the profile or start any connection.
+
+For this profile only, each of the two `peer_network_endpoints` rows also requires
+`local_source_port`. All four media/control endpoint hosts must be exactly
+`127.0.0.1`; aliases, other loopback addresses and LAN addresses are refused.
+Those four external relay ports and the two internal local producer ports must
+be positive integers in `1..65535`, and all six ports must differ. The producer
+ports bind local source sockets; the external media ports bind receiver and
+signed transport endpoints. They must not be substituted for one another.
+Ordinary LAN profiles refuse `local_source_port` and retain their existing
+source-port-equals-media-port invariant.
+
+The frozen effective route adds only the selected `transport_contract_id`,
+`rusty.manifold.peer.development_loopback_relay_tcp_transport.v1`, and one
+`local_source_port` per peer. Ordinary route JSON omits both fields. Native
+derivation validates the mode, recomputes existing media-binding runtime digests
+and lifecycle references, and retains the original installed manifest. Pair
+ceremonies select the transport contract from that exact frozen route. The
+private-key signing guard independently rechecks the mode, endpoints and producer
+ports before returning signing bytes. The Common-LAN topology contract and
+ordinary LAN signing encoding remain unchanged; the selected transport ID and
+effective route digest bind the development mode into the signed context.
+
+These checks authorize neither an ADB mapping nor a laptop relay process. The
+device owner must separately bind exact serials, owned forward/reverse ports,
+relay lifetime, reciprocal delivery and normal cleanup. Host validation does not
+prove USB throughput, camera delivery, GPU rendering, or a successful device run.
+
+Focused host gates are `tools/checks/Test-SpatialPeerNetworkProfileHost.py`,
+`tools/checks/Test-UsbAdbRelayPlatformHost.py`, and
+`tools/checks/Test-UsbAdbRelayInputsHost.py`. Their explicit JVM supplier, Android
+jar, product-input fixture and create-new output arguments keep modeled leaves
+separate from production parser/selector code. Native route/signing unit tests
+run with and without `development-usb-adb-relay`; the actual
+`EffectiveInputsHost.rs` derivation fixture also exercises both selections using
+explicit owner libraries. A modeled native deriver proves the JVM seam only;
+an actual native CLI supplier must be pinned separately for the composed host
+check. None of these gates opens media sockets or enters Android runtime effects.
+
 ## Optional development module directives
 
 The same strict profile envelope accepts `development_observation_module` and

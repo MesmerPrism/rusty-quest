@@ -48,6 +48,8 @@ pub(crate) use runtime_host::{prepared_renderer_identity, PreparedRendererIdenti
 mod pair_history_controls {
     #[path = "pair_ceremony_id.rs"]
     mod ceremony_id;
+    #[path = "operation_failure.rs"]
+    mod operation_failure;
     #[path = "."]
     mod renewal {
         #[path = "pair_renewal_guard.rs"]

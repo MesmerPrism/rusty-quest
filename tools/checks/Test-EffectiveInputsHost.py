@@ -47,6 +47,7 @@ def main():
         policy=json.dumps({'$schema':'rusty.manifold.development.lifetime_policy.v1',
             'policy_id':'policy.manifold.development-lifetime.v1','delegated_authority_horizon_ms':2592000000},separators=(',',':'))
         build_config.write_text('package io.github.mesmerprism.rustyquest.spatial_camera_panel;\npublic final class BuildConfig {\n'
+            'public static final boolean DEBUG=true;\n'
             'public static final boolean EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED=false;\n'
             'public static final String EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256="";\n'
             'public static final String EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_JSON='+json.dumps(policy)+';\n'

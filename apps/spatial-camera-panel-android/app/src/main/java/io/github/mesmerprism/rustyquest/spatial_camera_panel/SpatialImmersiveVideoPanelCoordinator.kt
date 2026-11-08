@@ -48,11 +48,12 @@ import com.meta.spatial.toolkit.Visible
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 internal class SpatialImmersiveVideoPanelCoordinator(
     private val context: Context,
     private val resolution: SpatialImmersiveVideoRouteResolution,
-    private val emitMarker: (String) -> Unit,
+    emitMarker: (String) -> Unit,
     private val recenterAfterNewVideoLoad: (String, String) -> Boolean,
     private val layerOwner: SpatialImmersiveVideoLayerOwner =
         SpatialImmersiveVideoLayerOwner.Outer,
@@ -60,9 +61,28 @@ internal class SpatialImmersiveVideoPanelCoordinator(
         SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
     initialBackgroundMode: SpatialBackgroundMode = SpatialBackgroundMode.Passthrough,
     directVideoConsumerInitiallyRequired: Boolean = true,
+    private val onControlObservationChanged: ((SpatialBackgroundControlObservation) -> Unit)? = null,
 ) {
+  private val emitMarker: (String) -> Unit =
+      if (onControlObservationChanged == null) emitMarker else { text ->
+        publishBackgroundControlObservation()
+        emitMarker(text)
+      }
+  private val sceneEpoch = nextSceneEpoch.incrementAndGet()
+  private var videoEntityEpoch = 0L
+  private var backingEntityEpoch = 0L
+  private var observedVideoEntityId = 0L
+  private var observedBackingEntityId = 0L
   private var entity: Entity? = null
+    set(value) {
+      field = value
+      observedVideoEntityId = if (onControlObservationChanged != null) value?.id ?: 0L else 0L
+    }
   private var blackBackdropEntity: Entity? = null
+    set(value) {
+      field = value
+      observedBackingEntityId = if (onControlObservationChanged != null) value?.id ?: 0L else 0L
+    }
   private var panelSceneObject: PanelSceneObject? = null
   @Volatile private var sceneRetired = false
   private var destroyed = false
@@ -145,6 +165,28 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   fun routePolicyMarker(): String =
       SpatialImmersiveVideoRouteModule.routePolicyMarker(resolution) +
           " videoLayerOwner=${layerOwner.token}"
+
+  /** Cached IDs and owned scalars only: no SDK getter, catalog walk or media operation. */
+  @Synchronized
+  fun backgroundControlObservation(): SpatialBackgroundControlObservation {
+    return SpatialBackgroundControlObservation(
+        sceneEpoch = sceneEpoch,
+        sceneRetired = sceneRetired,
+        mode = backgroundMode.token,
+        backingEntityId = observedBackingEntityId,
+        backingEntityEpoch = backingEntityEpoch,
+        videoEntityId = observedVideoEntityId,
+        videoEntityEpoch = videoEntityEpoch,
+        surfaceIdentity = surface?.let(System::identityHashCode) ?: 0,
+        decoderGeneration = directDecoderGeneration,
+    )
+  }
+
+  /** Serialize capture and the inert scalar assignment so an older publisher cannot win later. */
+  @Synchronized
+  fun publishBackgroundControlObservation() {
+    onControlObservationChanged?.invoke(backgroundControlObservation())
+  }
 
   fun sessionSnapshot(): SpatialImmersiveVideoSessionSnapshot {
     val config = activeConfig
@@ -393,8 +435,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
               blackBackdropPanelRegistration(index, registeredMode),
               VideoSurfacePanelRegistration(
                   requireNotNull(panelRegistrationIds[registeredMode]).get(index),
-                  surfaceConsumer = { _, videoSurface ->
-                    acceptVideoSurface(index, registeredMode, videoSurface)
+                  surfaceConsumer = { callbackEntity, videoSurface ->
+                    acceptVideoSurface(index, registeredMode, callbackEntity, videoSurface)
                   },
                   settingsCreator = {
                     mediaPanelSettings(
@@ -404,8 +446,8 @@ internal class SpatialImmersiveVideoPanelCoordinator(
                         registeredMode,
                     )
                   },
-                  panelSetup = { panel, _ ->
-                    acceptVideoPanel(index, registeredMode, panel)
+                  panelSetup = { panel, callbackEntity ->
+                    acceptVideoPanel(index, registeredMode, callbackEntity, panel)
                   },
               ),
           )
@@ -416,9 +458,11 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private fun acceptVideoSurface(
       index: Int,
       registeredMode: SpatialImmersiveVideoPresentationMode,
+      callbackEntity: Entity,
       videoSurface: Surface,
   ) {
-    if (sceneRetired || index != activeIndex || registeredMode != presentationMode) return
+    if (sceneRetired || (onControlObservationChanged != null && entity != callbackEntity) ||
+        index != activeIndex || registeredMode != presentationMode) return
     val config = catalog.getOrNull(index) ?: return
     surface = videoSurface
     startPlayer(config, videoSurface)
@@ -428,9 +472,11 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   private fun acceptVideoPanel(
       index: Int,
       registeredMode: SpatialImmersiveVideoPresentationMode,
+      callbackEntity: Entity,
       panel: PanelSceneObject,
   ) {
-    if (sceneRetired || index != activeIndex || registeredMode != presentationMode) return
+    if (sceneRetired || (onControlObservationChanged != null && entity != callbackEntity) ||
+        index != activeIndex || registeredMode != presentationMode) return
     val config = catalog.getOrNull(index) ?: return
     panelSceneObject = panel
     if (transitionTargetIndex == index) applyDirectLayerOpacity(0.0f)
@@ -986,6 +1032,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
       return
     }
     val registrationId = panelRegistrationIds[presentationMode]?.getOrNull(activeIndex) ?: return
+    videoEntityEpoch += 1L
     entity =
         Entity.create(
             Panel(registrationId),
@@ -1028,6 +1075,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
     val registrationId =
         blackBackdropRegistrationIds[presentationMode]?.getOrNull(activeIndex) ?: return
     val previousBackdrop = blackBackdropEntity
+    backingEntityEpoch += 1L
     blackBackdropEntity =
         Entity.create(
             Panel(registrationId),
@@ -1504,6 +1552,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   }
 
   companion object {
+    private val nextSceneEpoch = AtomicLong(0L)
     private const val DIRECT_PLAYER_THREAD_NAME = "RqImmersiveVideoPlayer"
     private const val DIRECT_VIDEO_BACKGROUND_Z_INDEX = -40
     private const val DIRECT_VIDEO_BLACK_BACKING_Z_INDEX = -41

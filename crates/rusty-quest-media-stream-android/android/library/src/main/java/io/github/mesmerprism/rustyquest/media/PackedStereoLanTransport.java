@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 final class PackedStereoLanTransport {
     private final String sourceHost, bindHost, sinkHost;
     private final int sourcePort, sinkPort;
+    private final boolean senderTraceDebuggable;
     private final Object lock = new Object();
     private volatile Socket source, sink;
     private volatile Thread worker, deadlineWorker;
@@ -28,6 +29,11 @@ final class PackedStereoLanTransport {
 
     PackedStereoLanTransport(String sourceHost, int sourcePort, String bindHost,
             String sinkHost, int sinkPort) {
+        this(sourceHost, sourcePort, bindHost, sinkHost, sinkPort, false);
+    }
+
+    PackedStereoLanTransport(String sourceHost, int sourcePort, String bindHost,
+            String sinkHost, int sinkPort, boolean senderTraceDebuggable) {
         if (sourceHost == null || bindHost == null || sinkHost == null
                 || sourceHost.isEmpty() || bindHost.isEmpty() || sinkHost.isEmpty()
                 || sourcePort <= 0 || sourcePort > 65535 || sinkPort <= 0 || sinkPort > 65535) {
@@ -35,6 +41,7 @@ final class PackedStereoLanTransport {
         }
         this.sourceHost = sourceHost; this.sourcePort = sourcePort;
         this.bindHost = bindHost; this.sinkHost = sinkHost; this.sinkPort = sinkPort;
+        this.senderTraceDebuggable = senderTraceDebuggable;
     }
 
     /** Same exact transport/socket originals, established before media authority. */
@@ -110,7 +117,10 @@ final class PackedStereoLanTransport {
                     // connection reuses the producer's header/config/keyframe gate.
                     while (!stopped) {
                         stage = "SOURCE_READ";
-                        int count = input.read(buffer);
+                        int count;
+                        boolean readBegan = SenderTraceSections.begin(senderTraceDebuggable, SenderTraceSections.Phase.LAN_READ);
+                        try { count = input.read(buffer); }
+                        finally { SenderTraceSections.end(readBegan); }
                         if (count < 0) throw new java.io.EOFException("local producer ended");
                         if (count == 0) continue;
                         stage = "SINK_WRITE";
@@ -119,8 +129,12 @@ final class PackedStereoLanTransport {
                             writeSocket = remote;
                             writeDeadlineNs = System.nanoTime() + 4_000_000_000L;
                         }
-                        output.write(buffer, 0, count);
-                        output.flush();
+                        boolean writeBegan = SenderTraceSections.begin(senderTraceDebuggable, SenderTraceSections.Phase.LAN_WRITE);
+                        try { output.write(buffer, 0, count); }
+                        finally { SenderTraceSections.end(writeBegan); }
+                        boolean flushBegan = SenderTraceSections.begin(senderTraceDebuggable, SenderTraceSections.Phase.LAN_FLUSH);
+                        try { output.flush(); }
+                        finally { SenderTraceSections.end(flushBegan); }
                         synchronized (lock) {
                             writeDeadlineNs = 0L;
                             writeSocket = null;

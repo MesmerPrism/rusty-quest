@@ -1,10 +1,19 @@
 import hashlib,json,os,pathlib,subprocess,sys,time
 import argparse
 parser=argparse.ArgumentParser(description='Actual control-profile hotloader with explicit retained JVM recipe and modeled Android leaves; no Gradle/device effects.')
-parser.add_argument('--reference-directory',type=pathlib.Path,required=True,help='Retained java.command.json, kotlin.command.json and resident-jvm.command.json supplier recipes')
+parser.add_argument('--reference-directory',type=pathlib.Path,help='Retained java.command.json, kotlin.command.json and resident-jvm.command.json supplier recipes')
+parser.add_argument('--jvm-spec',type=pathlib.Path,help='Explicit compiler/runtime/support supplier inventory instead of command recipes')
 parser.add_argument('--output',type=pathlib.Path,required=True)
-a=parser.parse_args();root=pathlib.Path(__file__).resolve().parents[2];ref=a.reference_directory.resolve();out=a.output.resolve();out.relative_to(root/'target');out.mkdir(parents=True,exist_ok=False);classes=out/'classes';classes.mkdir()
-j=json.loads((ref/'java.command.json').read_text());k=json.loads((ref/'kotlin.command.json').read_text());behavior=json.loads((ref/'resident-jvm.command.json').read_text());cp=str(classes)+os.pathsep+j[j.index('-cp')+1]
+a=parser.parse_args();root=pathlib.Path(__file__).resolve().parents[2];out=a.output.resolve();out.relative_to(root/'target');out.mkdir(parents=True,exist_ok=False);classes=out/'classes';classes.mkdir()
+if bool(a.reference_directory)==bool(a.jvm_spec):raise ValueError('Select exactly one explicit JVM supplier route')
+if a.jvm_spec:
+ spec=json.loads(a.jvm_spec.read_text(encoding='utf-8'));home=pathlib.Path(spec['java_home']);java=str(home/'bin/java.exe')
+ cp=os.pathsep.join([str(classes),*spec['runtime_jars'],*spec['support_classes']])
+ j=[str(home/'bin/javac.exe'),'-cp',cp]
+ k=[java,'-cp',os.pathsep.join(spec['compiler_jars']),'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler','-no-stdlib','-no-reflect','-jvm-target','17','-classpath',cp,'-Xfriend-paths='+','.join(spec['support_classes']),'-d',str(classes)]
+ behavior=[java]
+else:
+ ref=a.reference_directory.resolve();j=json.loads((ref/'java.command.json').read_text());k=json.loads((ref/'kotlin.command.json').read_text());behavior=json.loads((ref/'resident-jvm.command.json').read_text());cp=str(classes)+os.pathsep+j[j.index('-cp')+1]
 leaves={
 'android/content/Context.java':'package android.content; import java.io.File; public class Context {private final File root; public Context(File root){this.root=root;} public File getExternalFilesDir(String ignored){return root;} public File getFilesDir(){return root;}}',
 'android/os/Process.java':'package android.os; public class Process {public static int myPid(){return 123;}}',
@@ -18,6 +27,8 @@ for name,content in leaves.items():
  f=out/'leaves'/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(content);js.append(f)
 pkg='io/github/mesmerprism/rustyquest/spatial_camera_panel'
 sources=[root/('apps/spatial-camera-panel-android/app/src/main/java/'+pkg+'/'+n+'.kt') for n in ('SpatialCameraControlProfile','SpatialPeerNetworkProfilePilot','SpatialDevelopmentModuleDirective','SpatialDevelopmentModuleDirectiveContract','SpatialDevelopmentModuleProfile','SpatialCameraControlProfileHotloader')]+[root/'apps/spatial-camera-panel-android/host-tests/control_profile/ProfileHotloaderHost.kt']
+if a.jvm_spec:
+ sources += [root/('apps/spatial-camera-panel-android/app/src/main/java/'+pkg+'/StrictJsonByteIngress.kt'),root/('apps/spatial-camera-panel-android/app/src/test/java/'+pkg+'/SpatialCameraControlProfileTest.kt')]
 kc=[v for v in k if not v.endswith('.kt')];kc[kc.index('-classpath')+1]=cp;kc[kc.index('-d')+1]=str(classes);kc.extend(map(str,sources))
 commands=[('leaves',[j[0],'--release','17','-d',str(classes),*map(str,js)]),('kotlin',kc),('behavior',[behavior[0],'-cp',cp,'io.github.mesmerprism.rustyquest.spatial_camera_panel.ProfileHotloaderHostKt',str(out/'files')])]
 start=time.monotonic();checks=[]

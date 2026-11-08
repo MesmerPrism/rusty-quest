@@ -109,6 +109,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SpatialCargoChild.psm1') -Force
 if($OverlapJvmNativeCompilation -and [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)){throw 'JVM/native overlap requires a selected Android component contract.'}
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialUsbAdbRelayBuild.psm1') -Force
 if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
 $selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
 if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
@@ -1296,6 +1297,9 @@ $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
     -Path $EmbeddedDuplexProductInputRoot `
     -ApplicationId $resolvedAppId `
     -SigningCertificateSha256 $normalizedExpectedSignerSha256
+$developmentUsbAdbRelayEnabled = Resolve-SpatialUsbAdbRelayBuildSelection `
+    -ResourceDirectory $resolvedPrivateFeatureResourceDir -BuildType $BuildType `
+    -PublicationBuild:$PublicationBuild -EmbeddedProductSelected:($null -ne $embeddedDuplexProductInputs)
 $androidComponentSelection = $null
 if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
     if ($null -eq $embeddedDuplexProductInputs) { throw 'Selected Android components require authenticated product inputs.' }
@@ -1489,6 +1493,7 @@ $nativeIdentityDescriptor = [ordered]@{
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
 if($OverlapJvmNativeCompilation){$buildInputDescriptor['compilation_scheduling']='jvm-native-overlap'}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $nativeIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $nativeIdentityDescriptor -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $nativeIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
@@ -1541,6 +1546,7 @@ $shellIdentityDescriptor = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $shellIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $shellIdentityDescriptor -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $shellIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
@@ -1564,6 +1570,7 @@ if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
     $buildInputDescriptor['artifact_output'] = [ordered]@{schema='rusty.quest.artifact_output.v1';policy='explicit-external-parent-create-new';parent_path_recorded=$false;source_and_cache_disjoint=$true}
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $buildInputDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $buildInputDescriptor -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $buildInputDescriptor -ResolvedSelection $freshBuildSelection
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $buildInputDescriptor["fingerprint"] = $buildInputFingerprint
@@ -2122,6 +2129,7 @@ foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER'
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES',
@@ -2191,6 +2199,7 @@ try {
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER';path=$resolvedOpaqueProjectionShader},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI';path=$sourceBankBuildInputs.final_abi_version},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.primary_input_shader) { $sourceBankBuildInputs.primary_input_shader.path } else { $null })},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.optional_color_shader) { $sourceBankBuildInputs.optional_color_shader.path } else { $null })},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS';path=$sourceBankBuildInputs.own_capture_hold_limits.slots},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES';path=$sourceBankBuildInputs.own_capture_hold_limits.bytes},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES';path=$sourceBankBuildInputs.own_capture_hold_limits.gpu_uses})) {
@@ -2243,6 +2252,7 @@ try {
         "--release",
         "--target-dir", $nativeReceiptTargetDir
     )
+    $cargoArguments += @(Get-SpatialUsbAdbRelayCargoArguments -Enabled:$developmentUsbAdbRelayEnabled)
     if($OverlapJvmNativeCompilation){
         $nativeCargoChild=Start-SpatialCargoChild -FilePath $cargoCommand.Source -Arguments $cargoArguments `
             -WorkingDirectory (Get-Location).Path -CaptureDirectory (Join-Path $OutDir 'native-compilation')
@@ -2680,6 +2690,7 @@ $apkInspection = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$apkInspection['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $apkInspection -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $apkInspection -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $apkInspection -ResolvedSelection $freshBuildSelection
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
@@ -3413,6 +3424,7 @@ $manifest = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $manifest -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $manifest -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $manifest -ResolvedSelection $freshBuildSelection
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 if ($null -ne $gradleToolDistribution) { $manifest['gradle_tool_distribution'] = $gradleToolDistribution }
@@ -3469,6 +3481,7 @@ $runCapsule = [ordered]@{
     }
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $runCapsule -Selection $EmbeddedDuplexMediaPolicy
+Set-SpatialUsbAdbRelayBuildDescriptor -Descriptor $runCapsule -Enabled:$developmentUsbAdbRelayEnabled
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $runCapsule -ResolvedSelection $freshBuildSelection
 $runCapsulePath = Join-Path $OutDir "run-capsule.json"
 [void](Set-TextFileIfChanged -Path $runCapsulePath -Value ($runCapsule | ConvertTo-Json -Depth 16))

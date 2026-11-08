@@ -94,7 +94,7 @@ try {
         Env RUSTY_QUEST_SPATIAL_BUILD_ROOT $buildRoot
         Env RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR (Join-Path $buildRoot root)
         Env RUSTY_QUEST_SPATIAL_APP_BUILD_DIR (Join-Path $buildRoot app)
-        Run "android-$mode" $GradlePath @('-p','apps/spatial-camera-panel-android','--offline','--no-daemon','--build-cache',':app:compileDebugKotlin',':app:testDebugUnitTest')
+        Run "android-$mode" $GradlePath @('-I',(Join-Path $RepoRoot 'apps/spatial-camera-panel-android/host-tests/embedded_duplex/android-system-host.gradle'),'-p','apps/spatial-camera-panel-android','--offline','--no-daemon','--build-cache',':app:compileDebugKotlin',':app:testDebugUnitTest')
     }
     $finiteApp = Join-Path $OutputRoot 'android-finite/app'
     $finiteMedia = Join-Path $OutputRoot 'android-finite/media-stream-android'
@@ -133,6 +133,7 @@ try {
         '--input-spec',$currentSpec,'--support-classes',$mediaClasses,'--json-jar',$HostJsonJar)
     $support = @((Join-Path $finiteApp 'tmp/kotlin-classes/debug'),
         (Join-Path $finiteApp 'intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
+        $mediaClasses,
         (Join-Path $AndroidHome 'platforms/android-34/android.jar')) -join [IO.Path]::PathSeparator
     Run originals python @('tools/checks/Test-EmbeddedDuplexOriginalsHost.py','--root',$RepoRoot,
         '--output',(Join-Path $OutputRoot originals),'--java-home',$JavaHome,'--json-jar',$HostJsonJar,'--support-classpath',$support)
