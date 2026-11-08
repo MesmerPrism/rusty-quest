@@ -1,0 +1,23 @@
+// Explicit JVM-test syscall leaves; never an Android or APK source replacement.
+// AGP's compiler uses an Android java.base image. Compile these existing models
+// separately with JDK 17, then select them only after AGP finalized test classpaths.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.findProject(':app')
+    if (app != null && app.plugins.hasPlugin('com.android.application')) {
+        def models = app.tasks.register('compileExplicitHostSyscalls', org.gradle.api.tasks.compile.JavaCompile) {
+            source app.fileTree(new File(app.rootDir, 'host-tests/embedded_duplex/android-system-host')) { include '**/*.java' }
+            classpath = app.files()
+            destinationDirectory.set(app.layout.buildDirectory.dir('explicit-host-syscalls'))
+            options.release.set(17)
+            options.encoding = 'UTF-8'
+        }
+        app.tasks.named('compileDebugUnitTestJavaWithJavac', org.gradle.api.tasks.compile.JavaCompile).configure { task ->
+            task.source(new File(app.rootDir, 'host-tests/embedded_duplex/ExplicitHostSyscallsClasspathTest.java'))
+        }
+        app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach { task ->
+            task.systemProperty('rusty.quest.host.syscall.classes', models.get().destinationDirectory.get().asFile.absolutePath)
+            task.dependsOn(models)
+            task.classpath = app.files(models.flatMap { it.destinationDirectory }) + task.classpath
+        }
+    }
+}

@@ -2279,7 +2279,19 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
                 | "pair_status"
                 | "peer_snapshot"
                 | "peer_root_status"
-        ))?
+        ))
+        .map_err(|error| {
+            if operation == "fresh_pair_setup" {
+                operation_failure::fresh_rejection(
+                    &error,
+                    operation_failure::FreshStage::HostLookup,
+                    operation_failure::FreshReason::OwnerRejected,
+                    operation_failure::FreshSubject::default(),
+                )
+            } else {
+                error
+            }
+        })?
     };
 
     if matches!(
@@ -2291,7 +2303,18 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
     ) {
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
     }
-    let now = host.clock.now_ms()?;
+    let now = host.clock.now_ms().map_err(|error| {
+        if operation == "fresh_pair_setup" {
+            operation_failure::fresh_rejection(
+                &error,
+                operation_failure::FreshStage::Clock,
+                operation_failure::FreshReason::OwnerRejected,
+                operation_failure::FreshSubject::default(),
+            )
+        } else {
+            error
+        }
+    })?;
     let result = match operation {
         "runtime_evidence" => Checkout::take(host.provider.clone())?
             .get()
@@ -2357,7 +2380,14 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
             pair_ceremony::fresh_continue(&host)
         }
         "fresh_pair_setup" => {
-            pair_ceremony::require_empty_input(input)?;
+            pair_ceremony::require_empty_input(input).map_err(|error| {
+                operation_failure::fresh_rejection(
+                    &error,
+                    operation_failure::FreshStage::Input,
+                    operation_failure::FreshReason::GuardRefused,
+                    operation_failure::FreshSubject::default(),
+                )
+            })?;
             pair_ceremony::fresh_setup(&host)
         }
         "pair_ceremony" => {
@@ -2463,7 +2493,18 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
         }
         _ => Err("unsupported embedded runtime operation".into()),
     };
-    host.capability.require_live()?;
+    host.capability.require_live().map_err(|error| {
+        if operation == "fresh_pair_setup" {
+            operation_failure::fresh_rejection(
+                &error,
+                operation_failure::FreshStage::CurrentValidation,
+                operation_failure::FreshReason::OwnerRejected,
+                operation_failure::FreshSubject::default(),
+            )
+        } else {
+            error
+        }
+    })?;
     result
 }
 
