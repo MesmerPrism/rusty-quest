@@ -1,5 +1,9 @@
 # Rusty Quest
 
+The [8 November platform source integration](docs/PLATFORM_INTEGRATION_20261108.md)
+joins the current development lines and records the remaining compilation and
+qualification work before a new artifact is adopted.
+
 The standalone [renewal wire codec](crates/rusty-quest-peer-wire/README.md)
 and [desktop codec lab](examples/duplex-control-lab/README.md) provide lossless
 renewal projection and bounded JSON inspection through independent Rust
