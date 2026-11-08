@@ -20,6 +20,11 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.effectiveInputObservation();
     }
 
+    /** Debug adapter: only the existing cache and physical process identity are read. */
+    public static String cachedEffectiveInputs(String challenge,String runId,int pid,int uid,String ticks,String bootId) throws Exception {
+        return EmbeddedDuplexCachedInputs.read(challenge,runId,pid,uid,ticks,bootId);
+    }
+
     /** One bootstrap Original exists before enqueue or Activity pre-entry evaluation. */
     public static CompletableFuture<EmbeddedDuplexRuntimeStatus> bootstrapRealPeerCommand(Context context) {
         return bootstrapRealPeerFromActivity(context,()->
