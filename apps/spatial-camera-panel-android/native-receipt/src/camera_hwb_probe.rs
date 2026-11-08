@@ -1441,7 +1441,9 @@ struct CameraHwbWsiParts {
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
     image_available: vk::Semaphore,
-    render_finished: vk::Semaphore,
+    // Present waits outlive command-buffer fences. Reuse only after the same
+    // swapchain image is reacquired, including on the SDK queue-broker path.
+    render_finished: Vec<vk::Semaphore>,
     frame_fence: vk::Fence,
     gpu_timestamps: CameraHwbGpuTimestampTracker,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
@@ -1791,14 +1793,16 @@ impl CameraHwbWsiParts {
                 d.destroy_semaphore(image_available, None);
             });
         }
-        let render_finished = device
-            .create_semaphore(&semaphore_info, None)
-            .map_err(|error| format!("create-render-semaphore-{error:?}"))?;
-        {
+        let mut render_finished = Vec::with_capacity(images.len());
+        for _ in &images {
+            let semaphore = device
+                .create_semaphore(&semaphore_info, None)
+                .map_err(|error| format!("create-render-semaphore-{error:?}"))?;
             let d = device.clone();
             partial.own(move || unsafe {
-                d.destroy_semaphore(render_finished, None);
+                d.destroy_semaphore(semaphore, None);
             });
+            render_finished.push(semaphore);
         }
         let frame_fence = device
             .create_fence(
@@ -1915,7 +1919,9 @@ impl CameraHwbWsiParts {
         } = self;
         gpu_timestamps.destroy(&device);
         device.destroy_fence(frame_fence, None);
-        device.destroy_semaphore(render_finished, None);
+        for semaphore in render_finished {
+            device.destroy_semaphore(semaphore, None);
+        }
         device.destroy_semaphore(image_available, None);
         device.destroy_command_pool(command_pool, None);
         for framebuffer in framebuffers {
@@ -2191,7 +2197,7 @@ unsafe fn render_camera_hwb_probe(
         command_pool,
         command_buffers,
         image_available,
-        render_finished,
+        render_finished: render_finished_semaphores,
         frame_fence,
         mut gpu_timestamps,
         memory_properties,
@@ -3232,6 +3238,7 @@ unsafe fn render_camera_hwb_probe(
             Err(error) => return Err(format!("acquire-next-image-{error:?}")),
         };
         frame_timing.acquire_swapchain = acquire_started.elapsed();
+        let render_finished = render_finished_semaphores[image_index as usize];
         let command_buffer = command_buffers[image_index as usize];
         let public_stack_elapsed_seconds = render_started.elapsed().as_secs_f32();
         let latest_video_frame = if video_settings.active() {
@@ -3777,7 +3784,9 @@ unsafe fn render_camera_hwb_probe(
     processing_graph.camera_resources.destroy(&device);
     gpu_timestamps.destroy(&device);
     device.destroy_fence(frame_fence, None);
-    device.destroy_semaphore(render_finished, None);
+    for semaphore in render_finished_semaphores {
+        device.destroy_semaphore(semaphore, None);
+    }
     device.destroy_semaphore(image_available, None);
     device.destroy_command_pool(command_pool, None);
     for framebuffer in framebuffers {
@@ -4082,7 +4091,7 @@ unsafe fn render_peer_common_graph_resources(
         let command_buffers = &wsi.command_buffers;
         let frame_fence = wsi.frame_fence;
         let image_available = wsi.image_available;
-        let render_finished = wsi.render_finished;
+        let render_finished_semaphores = &wsi.render_finished;
         let swapchain = wsi.swapchain;
         let swapchain_loader = &wsi.swapchain_loader;
         let gpu_timestamps = &mut wsi.gpu_timestamps;
@@ -4314,6 +4323,7 @@ unsafe fn render_peer_common_graph_resources(
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
                 Err(error) => return Err(format!("peer-acquire-next-image-{error:?}")),
             };
+            let render_finished = render_finished_semaphores[image_index as usize];
             let command_buffer = command_buffers[image_index as usize];
             let latency_settings = current_camera_latency_settings();
             let camera_reprojection = current_camera_latency_stereo_reprojection(None, None);

@@ -24,6 +24,7 @@ function Resolve-SourceBankBuildInputs {
     $disabled = [ordered]@{enabled=$false; feature_id=$null; runtime_input=$null;
         feature_lock_sha256=$null; vertex_shader=$null; fragment_shader=$null;
         final_abi_version=1; primary_input_shader=$null; primary_provider_root=$null; optional_color_shader=$null;
+        optional_camera_color_abi_version=0;
         final_descriptor_shape=$null; final_policy_uniform_abi_version=1; final_policy_uniform_bytes=48;
         own_capture_hold_limits=[ordered]@{slots=$null;bytes=$null;gpu_uses=$null}}
     if ([string]::IsNullOrWhiteSpace($PrivateLayerProfilePath)) { return $disabled }
@@ -83,6 +84,18 @@ function Resolve-SourceBankBuildInputs {
             sha256 = (Get-FileHash -LiteralPath $optionalColorPath).Hash.ToLowerInvariant()
         }
     }
+    $cameraColorAbi = 0
+    $cameraColorField = $bridge.Value.PSObject.Properties['optional_camera_color_abi_version']
+    if ($null -ne $cameraColorField) {
+        if (($cameraColorField.Value -isnot [int] -and $cameraColorField.Value -isnot [long]) -or
+            $cameraColorField.Value -notin @(0,1)) {
+            throw 'Optional camera color ABI must be integer0 or1.'
+        }
+        $cameraColorAbi = [int]$cameraColorField.Value
+        if ($cameraColorAbi -eq 1 -and ($finalAbi -ne 2 -or $null -eq $optionalColor)) {
+            throw 'Optional camera color ABI1 requires final ABI2 and an explicit optional color shader.'
+        }
+    }
     $root = [string]$ValidatedProductInputs.root
     $lockRows = @($ValidatedProductInputs.artifacts | Where-Object path -CEQ 'planning-feature-lock.json')
     if ($lockRows.Count -ne 1) { throw 'Exactly one authenticated planning feature lock is required.' }
@@ -122,6 +135,7 @@ function Resolve-SourceBankBuildInputs {
     [ordered]@{enabled=$true;feature_id=[string]$feature.feature_id;runtime_input=$runtimeInput;
         feature_lock_sha256=$raw;
         final_abi_version=$finalAbi; primary_input_shader=$primary; optional_color_shader=$optionalColor;
+        optional_camera_color_abi_version=$cameraColorAbi;
         primary_provider_root=$(if($finalAbi -eq 2){[IO.Path]::GetFullPath($ShaderProviderRoot)}else{$null});
         final_descriptor_shape=$(if($finalAbi -eq 2){$shape}else{$null});
         final_policy_uniform_abi_version=$finalAbi; final_policy_uniform_bytes=$(if($finalAbi -eq 2){64}else{48});

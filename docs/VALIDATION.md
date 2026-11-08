@@ -9,12 +9,20 @@ streams, sibling failures, original error retention, inherited-pipe EOF refusal
 and the unchanged serialized path. Modeled compiler children perform no APK,
 Gradle cache or device work and establish no build speedup.
 
+The optional debug Vulkan metadata layer has explicit source/build selection,
+bounded recording and separately qualified loader/handle coverage. See
+[provenance diagnostic](VULKAN_PROVENANCE_DIAGNOSTIC.md#validation-and-later-qualification).
+
+The construction-time four-mode no-render interop diagnostic has focused
+actual Kotlin/JVM and standalone native query/mask/JNI controls. See
+[allocation diagnostic validation](NATIVE_INTEROP_ALLOCATION_DIAGNOSTIC.md#focused-source-checks)
+for commands, modeled leaves and the required later APK/device checks.
+
 The optional closed Background diagnostic has focused contract/custody,
 Android provider typecheck and cached Activity/scene controls. See
 [the diagnostic contract](SPATIAL_BACKGROUND_DIAGNOSTIC.md#validation-and-next-artifact)
-for exact commands and source-versus-artifact/device limits. Existing Entity
-scene-lifetime fixtures remain applicable; the adapter selects no backing-retention
-or texture-route diagnostic.
+for exact commands and source-versus-artifact/device limits. Existing immersive
+backing retention and Entity scene-lifetime fixtures remain applicable.
 
 The stereo qualification mask-strip unit controls cover v1 compatibility and
 the explicitly versioned primary-texel-center strip. Marker `[77,66,2,255]`

@@ -26,6 +26,14 @@ checks remain separate from app compilation, physical cleanup and streaming.
 
 ## Debug host receipt boundary
 
+
+The no-render interop allocation diagnostic selects only the disposable Surface
+and temporary Vulkan allocation probes, once at coordinator construction in a
+debug build. Absent/invalid/release selection retains Full behavior. Keep
+borrowed queries, truthful partial masks and real SDK renderer admission
+independent; retain both JNI entries without a selected-to-legacy fallback.
+See [the focused contract](../NATIVE_INTEROP_ALLOCATION_DIAGNOSTIC.md).
+
 The separate optional Background diagnostic is debug-source-set only, DUMP plus
 exact shell UID gated, and denies all calls without its private integer opt-in.
 It accepts only closed observe and Black/Video select requests to the current

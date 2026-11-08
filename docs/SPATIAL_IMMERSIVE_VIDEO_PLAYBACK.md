@@ -366,6 +366,80 @@ or respawn requests. The same coordinator cannot reacquire a retired scene.
 Decoder release and final thread shutdown retain the existing asynchronous
 player/lifecycle owners; the Android `super.onDestroy()` call remains synchronous.
 
+Direct Surface and panel callbacks also have to identify the current Entity.
+The fixed registration slot and presentation mode may be reused after a rebuild;
+they cannot admit a callback from the previous Entity into its successor. A
+callback received after the Entity reference is cleared cannot reacquire it.
+
+Requested video routes emit process-local `sceneEpoch`, `videoLayerOwner`,
+video/backing Entity epochs and IDs, callback Entity ID, Surface identity and
+decoder generation fields. The settings-request, creation, adoption, destruction
+and queued/begin/end decoder-release markers distinguish SDK scene work from
+asynchronous Media3 work. First-frame and playback markers retain the resources
+captured for their player generation. They contain no media path or key.
+The `native-interop-lifecycle` channel separately marks entry and completion of
+the no-render Surface creation/destruction and native Vulkan receipt call, with
+a per-call `probeGeneration`. These stages establish ordering for diagnosis;
+successful probe completion does not identify a concurrent renderer failure.
+
+Debug builds have one construction-time texture diagnostic property,
+`debug.rustyquest.spatial.immersive_video.texture_route`. Missing/`0` keeps
+the normal Android swapchain layer. `1` sets `forceSceneTexture=true` through
+the supported shape-options modifier for both video and its opaque backing;
+the declared shape/radius, stereo layout, pixel extent and compositor layer
+including its z-index are retained. Other values select `0`; release Activity
+bindings select `0` without reading the property. Restart the Activity/process
+through the normal owner route after changing it, before panel registration.
+This is an explicit diagnostic selection, not an adopted crash fix or a
+performance-equivalent route: the SDK additionally allocates and mirrors a
+SceneTexture while keeping the layer. It still uses the SDK's opaque-layer
+proxy/hole-punch mesh. The pre-creation `panel-texture-route-applied` marker
+reports the actual configured texture/layer/shape/stereo fields separately
+for backing and video. No scene-mesh-only selection is admitted because
+clearing the layer alone does not preserve the compositor ordering contract.
+
+A separate construction-time diagnostic property,
+`debug.rustyquest.spatial.immersive_video.retain_backings`, tests backing Panel
+lifetime without changing video decoders, shaders, shape, stereo or layer order.
+Only the exact value `1` in a debug build enables it. Missing, `0`, whitespace,
+and other values keep the existing destroy/recreate behavior; release builds
+select off without reading the property. The selection is fixed when each
+coordinator is constructed, so use the normal owner restart route before an A/B.
+This is a diagnostic hypothesis, not an adopted crash fix or an event default.
+
+When selected, one opaque backing Entity is retained per fixed catalog and
+presentation registration. Passthrough hides the active backing; returning
+updates its pose/visibility and reuses its Entity and creation epoch. Switching
+registrations hides the previous backing and retains it for later reuse. The
+registry cannot grow beyond the fixed registration set. Delayed callbacks for
+an owned hidden backing remain valid; foreign or retired callbacks are rejected
+without dereferencing their SDK Surface. Scene retirement takes all retained
+handles before callbacks and destroys each exactly once, including hidden
+entries; repeated or reentrant cleanup cannot release them again. If creation
+reenters retirement before the new Entity is registered, it is released once
+and acquisition is refused; it cannot be published into the retired registry.
+The selected-only `black-backing-retained-create-aborted` marker identifies
+that ownership path. This generic reentry control is not an observed crash cause.
+
+This diagnostic requires a fixed backing geometry. A catalog refresh that
+would change or remove geometry for any retained registration is rejected with
+`catalog-refresh-retention-rejected`, keeping the prior catalog and selection
+and marking `freshSceneRequired=true`. Geometry-preserving refreshes retain the
+normal path. The off/default path keeps its existing refresh behavior.
+Selected-only `backing-lifetime-policy-selected`,
+`black-backing-retained-hidden`, `black-backing-retained-reused`, and
+`black-backing-retained-release-begin/end` markers expose ownership transitions;
+ready callbacks identify their retained creation epoch and visibility.
+
+`tools/checks/Test-SpatialImmersiveVideoBackingLifetimeHost.py` uses the same
+explicit host arguments as the lifecycle fixture below. It compiles the real
+registry, actual property-binding initializer and selected coordinator methods,
+with SDK/Android leaves modeled. Controls cover strict debug selection and
+release inertness, default destroy/recreate, stable hide/reuse and callbacks,
+fixed registration bounds, geometry refresh rejection, and reentrant or failing
+release. These host checks do not establish SDK/GPU lifetime correctness or
+on-device crash resolution.
+
 The same pre-model handoff retires the optional virtual-room/skybox and staged
 asset Entity owners and cancels their pending scene adoption. The projection
 panel carrier separates its SDK Entity/SceneObject handles from Native/Surface
@@ -380,9 +454,22 @@ It compiles actual Activity destruction/SDK-hook methods, the lifecycle shutdown
 coordinator and selected video ownership/callback methods with modeled platform
 leaves. It covers a blocked cleanup worker, finishing `onStop`, repeated and
 reentrant cleanup, an entered scene mutation, late callbacks and a fresh
-coordinator. It does not run Android, Meta native code or a codec.
+coordinator, same-slot predecessor callbacks and a disabled diagnostic route.
+It does not run Android, Meta native code or a codec.
 Enabled room, skybox, staged-asset and retained panel-carrier cases cover the
 same boundary, including late load/adoption and blocked or failed Native stop.
+
+`tools/checks/Test-SpatialNativeInteropLifecycleHost.py` takes the same four
+explicit path arguments. It compiles the actual interop coordinator with modeled
+SDK/JNI leaves and checks that each entry/completion stage surrounds the owning
+call, generations advance, and scene-ready does not acquire a probe Surface.
+
+`tools/checks/Test-SpatialImmersiveVideoTextureRouteHost.py` takes those same
+path arguments. It compiles the actual texture policy and Activity selection
+method with modeled SDK configuration leaves, checking default/unknown inputs,
+release inertness and retained layer, z-index, geometry, top-bottom stereo,
+opacity and pixel extent. Actual SDK/Android compilation and on-device routing
+remain separate checks.
 
 This check does not establish same-process display reattachment after Whole
 retirement. A later launch still needs its actual scene, carrier and typed

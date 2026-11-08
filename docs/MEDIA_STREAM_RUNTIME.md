@@ -318,6 +318,30 @@ pinned host JSON dependency, API34 Android jar and create-new output under `targ
 The pure clock/generation controls and Android receiver typecheck do not establish
 headset, transport, codec or duplex readiness.
 
+The packed receiver also emits bounded `decoder-input-pressure` log markers:
+the first negative input dequeue (`waiting`), first recovery, first timeout,
+first other terminal wait outcome and first `extended-recovered` input wait over
+100 ms per receiver owner (at most five markers). Extended recovery is retained
+separately even when an earlier short wait consumed the first recovery marker;
+100 ms is an observation threshold and does not select or extend the input budget.
+They include receiver and
+connection generations, local elapsed-time start/duration, the selected input
+budget, attempt count, last negative input code and output/release/acquisition
+observation deltas. `hostAcquiredObserved` counts Java observations of exact
+native acquisition metadata; zero does not establish that native acquisition
+stopped. The getter observes metadata and does not consume Surface buffers.
+Markers contain no packet payload or raw frame data, change no receipt schema
+and cannot change a packet or exception outcome if logging fails. The existing
+total input deadline, 10 ms dequeue calls and same packet/codec/connection remain
+unchanged; a timeout remains terminal for a prepared receiver without SDK replay.
+
+`python tools/checks/Test-ReceiverInputPressureHost.py --java-home <jdk> --out-dir target/<fresh-output>`
+compiles the extracted actual `queuePacket` and pressure logger and checks ten
+packet, deadline, Stop, codec-error and bounded-logging schedules. Android codec,
+clock, output drain and acquisition counters are modeled. Run the existing
+receiver API34 typecheck separately. These checks prove no physical backpressure
+cause, Surface pump, recovery policy or headset fix.
+
 When a sender packet offer is rejected, its existing `packed-source` diagnostic
 is emitted before connection retirement can interrupt the accept worker and
 overwrite the mutable error. `PACKET_PUMP_FAILED` classifies a retained writer

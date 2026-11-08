@@ -95,10 +95,8 @@ deterministic scheduling controls. The second typechecks the production
 provider against Android API with a modeled Activity leaf, and checks source
 manifest/release-root isolation. The third compiles actual Activity/coordinator
 binding methods with modeled SDK leaves, including observing without lazy
-initialization. Existing Entity lifecycle checks remain applicable. The adapter does not select
-a texture-route or backing-retention diagnostic. Current-Entity callback guards
-apply only to a coordinator selected for background observation; unselected
-coordinators retain their existing callback dispatch. None produces an APK or proves runtime behavior.
+initialization. Existing Entity lifecycle/backing retention checks remain
+applicable. None produces an APK or proves runtime behavior.
 
 This resident Activity/manifest/provider addition needs a new APK; hotloading
 an effect or changing an existing profile cannot add it. The candidate owner

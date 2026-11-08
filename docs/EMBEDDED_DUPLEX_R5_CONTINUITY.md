@@ -722,3 +722,51 @@ category. No exception message, stack, endpoint or credential is exported.
 This retains safe failure classification, not a complete state-guard diagnosis.
 The outcome stays UNKNOWN/uncertain. Existing terminal failure rows, outcome
 hashes and ACK custody are read byte-exact and are never upgraded in place.
+
+## Bounded decoder-input diagnostic selection
+
+The embedded app retains a 100 ms codec-input bound when no app policy is
+declared. An app resource directory can explicitly supply the optional integer
+`rusty_quest_embedded_decoder_input_timeout_ms`, accepting exactly 100, 250,
+500 or 1000 ms. Missing, invalid or unavailable declarations fall back to
+100 ms. Keep an app-owned declaration in its selected resource directory;
+the public main resource tree deliberately does not define a competing entry.
+Resource packaging and hash closure follow the selected app build contract.
+
+Debug builds
+can select exactly 100, 250, 500 or 1000 ms with the construction-time property
+`debug.rustyquest.spatial.packed_decoder.input_timeout_ms`. Missing, unknown or
+unavailable overrides retain the declared app baseline. Release builds use that
+baseline without reading the property. `decoder-input-budget-selected` records
+the public fallback, declared baseline, selected bound and debug override state
+when constructing the incoming owner; changing the property afterward cannot
+reconfigure that existing owner.
+
+The existing bound covers both codec input-buffer waiting and pending-identity
+capacity waiting; a comparison must account for both. It does not recreate a codec,
+reconnect a prepared receiver, drop a compressed packet, change frame identity,
+refresh session authority or make timed-out work retryable. Root cause and
+appropriate operating policy still require actual pressure observations and
+device qualification; selecting a larger bound alone proves neither.
+
+Run the actual selector's host checks with
+`tools/checks/Test-EmbeddedDuplexDecoderInputTimeoutHost.py --java-home <JDK> --output-root <fresh-directory>`.
+They cover release read inertness, the four exact debug values and default
+fallback. The Android build and effective construction marker are separate
+checks.
+
+## Native WSI presentation synchronization
+
+`CameraHwbWsiParts` owns one render-finished binary semaphore for each actual
+swapchain image. Local camera, Peer and source-set renderers select it using the
+acquired image index, including when the SDK queue broker performs submission
+and presentation. A command-buffer fence or return from `vkQueuePresentKHR`
+does not prove that presentation has consumed its wait semaphore. Reacquiring
+the same image orders its semaphore reuse, following the
+[Khronos presentation guidance](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html).
+
+`tools/checks/Test-CameraWsiPresentSemaphoresHost.py --output <fresh-directory>`
+checks the actual allocation, selection and rollback/destruction statements
+with modeled Vulkan calls. Actual Android compilation and Vulkan validation
+remain separate gates. This ownership rule does not add presentation fences or
+strengthen the existing shutdown-after-idle contract.

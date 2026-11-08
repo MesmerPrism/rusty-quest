@@ -61,6 +61,7 @@ param(
     [switch]$CameraProjectionDefaultEnabled,
     [ValidateSet("disabled", "legacy-native-sidecar", "spatial-sdk-api-layer")]
     [string]$EnvironmentDepthOwner = "legacy-native-sidecar",
+    [switch]$VulkanProvenanceDiagnostic,
     [switch]$ImmersiveVideoDefaultEnabled,
     [string]$ImmersiveVideoDefaultOfflinePackId = "",
     [string]$OfflineMediaPackAssetDir = $env:RUSTY_QUEST_OFFLINE_MEDIA_PACK_ASSET_DIR,
@@ -107,6 +108,9 @@ Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -For
 Import-Module (Join-Path $PSScriptRoot "lib/SpatialApkInspection.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/SpatialCargoChild.psm1') -Force
 if($OverlapJvmNativeCompilation -and [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)){throw 'JVM/native overlap requires a selected Android component contract.'}
+
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialVulkanProvenanceSelection.psm1') -Force
+$vulkanProvenanceSelection=Resolve-SpatialVulkanProvenanceSelection -Requested:$VulkanProvenanceDiagnostic -BuildType $BuildType -PublicationBuild:$PublicationBuild -EnvironmentDepthOwner $EnvironmentDepthOwner
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/SpatialUsbAdbRelayBuild.psm1') -Force
@@ -1156,8 +1160,10 @@ $gradleToolDistribution = $null
 # The shared prerequisite owner authenticates the selected Gradle distribution below.
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $androidNativeSourcePaths = $null
+$vulkanProvenanceSourcePaths = $null
 if ($EnvironmentDepthOwner -ceq 'spatial-sdk-api-layer') {
     $androidNativeSourcePaths = Assert-AndroidNativeSourcePaths -SourceDirectory (Join-Path $appRoot 'app/src/main/cpp/spatial_depth_layer') -ObjectDirectory $cmakeStaging.object_directory
+    if($vulkanProvenanceSelection.enabled){$vulkanProvenanceSourcePaths=Assert-AndroidNativeSourcePaths -SourceDirectory (Join-Path $appRoot 'app/src/main/cpp/vulkan_provenance') -ObjectDirectory $cmakeStaging.object_directory}
 }
 $targetRoot = Join-Path $repoRoot "target"
 $buildStartedUtc = [DateTimeOffset]::UtcNow
@@ -1399,6 +1405,7 @@ $buildInputDescriptor = [ordered]@{
     locked_final_presentation = $lockedFinalPresentationEnabled
     camera_projection_default_enabled = [bool]$CameraProjectionDefaultEnabled
     environment_depth_owner = $EnvironmentDepthOwner
+    vulkan_provenance = $vulkanProvenanceSelection
     immersive_video_default_enabled = [bool]$ImmersiveVideoDefaultEnabled
     immersive_video_default_offline_pack_id = $resolvedImmersiveVideoDefaultOfflinePackId
     zone_compositor_default_preset = $ZoneCompositorDefaultPreset
@@ -1513,6 +1520,8 @@ $shellIdentityInputs = [ordered]@{
     media_stream_android = $embeddedMediaModuleRoot
     spatial_sdk_api_layer = Join-Path $appRoot "app/src/main/cpp/spatial_depth_layer"
 }
+if($vulkanProvenanceSelection.enabled){$shellIdentityInputs['vulkan_provenance_layer']=Join-Path $appRoot 'app/src/main/cpp/vulkan_provenance'}
+$shellIdentityInputs['vulkan_provenance_selection']=Join-Path $PSScriptRoot 'lib/SpatialVulkanProvenanceSelection.psm1'
 if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) {
     $shellIdentityInputs["private_source"] = $resolvedPrivateFeatureSourceDir
 }
@@ -1529,6 +1538,7 @@ $shellIdentityDescriptor = [ordered]@{
     app_label = $resolvedAppLabel
     android_build_type = $buildTypeLower
     gradle_version = $GradleVersion
+    vulkan_provenance = $vulkanProvenanceSelection
     android_sdk_build_tools = Split-Path -Leaf $buildTools
     defaults = $buildInputDescriptor.defaults
     source_bank_enabled = [bool]$sourceBankBuildInputs.enabled
@@ -1887,6 +1897,7 @@ function Invoke-SpatialGradlePhase {
             "-Pkotlin.project.persistent.dir.gradle.disableWrite=true",
             "-Pandroid.aapt2FromMavenOverride=$shortAapt2",
             "-PrqCmakeStagingDirectory=$($cmakeStaging.path)",
+            "-PrqVulkanProvenanceDiagnostic=$($vulkanProvenanceSelection.enabled.ToString().ToLowerInvariant())",
             "-PandroidJar=$mediaAndroidJar",
             "-PmediaBuildDir=$mediaAndroidBuildRoot",
             "-PrqSourceBanksForeignOwnership=$($sourceBankBuildInputs.enabled.ToString().ToLowerInvariant())"
@@ -2130,6 +2141,7 @@ foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER'
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_CAMERA_COLOR_ABI',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES',
@@ -2200,6 +2212,7 @@ try {
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI';path=$sourceBankBuildInputs.final_abi_version},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.primary_input_shader) { $sourceBankBuildInputs.primary_input_shader.path } else { $null })},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.optional_color_shader) { $sourceBankBuildInputs.optional_color_shader.path } else { $null })},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_CAMERA_COLOR_ABI';path=$sourceBankBuildInputs.optional_camera_color_abi_version},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS';path=$sourceBankBuildInputs.own_capture_hold_limits.slots},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES';path=$sourceBankBuildInputs.own_capture_hold_limits.bytes},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES';path=$sourceBankBuildInputs.own_capture_hold_limits.gpu_uses})) {
@@ -2652,7 +2665,9 @@ if ($missingRustDynamicStd.Count -gt 0) {
     throw "Dynamic Rust std experiment is not a deployable APK because its required libstd payload is absent."
 }
 $inspectionStopwatch.Stop()
+$vulkanProvenanceArtifact=Assert-SpatialVulkanProvenanceArtifact -ApkPath $apkOut -Selection $vulkanProvenanceSelection -ReadelfPath $llvmReadelf -ExpectedApplicationId $resolvedAppId
 $apkInspection = [ordered]@{
+    vulkan_provenance = $vulkanProvenanceArtifact
     android_components = $androidComponentClosure
     android_jvm_compilation = $androidJvmCompilation
     schema = "rusty.quest.spatial_camera_panel.apk_inspection.v1"
@@ -2862,6 +2877,9 @@ $manifest = [ordered]@{
     spatial_openxr_permission_declared = $true
     spatial_environment_depth_permission_surface = "horizonos.permission.USE_SCENE+USE_SCENE_DATA"
     spatial_environment_depth_owner = $EnvironmentDepthOwner
+    vulkan_provenance = $vulkanProvenanceSelection
+    vulkan_provenance_artifact = $vulkanProvenanceArtifact
+    vulkan_provenance_native_source_paths = $vulkanProvenanceSourcePaths
     spatial_environment_depth_real_provider_bound = $false
     spatial_environment_depth_data_source = $(if ($EnvironmentDepthOwner -eq "legacy-native-sidecar") { "legacy-native-sidecar-last-valid-or-neutral" } elseif ($EnvironmentDepthOwner -eq "disabled") { "neutral-disabled" } else { "spatial-sdk-api-layer-device-local-d16-ring" })
     spatial_environment_depth_diagnostic_policy = "distinguish-permission-pregrant-provider-binding-acquire-valid-sample"
@@ -3432,6 +3450,7 @@ if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) { $manifest['artif
 [void](Set-TextFileIfChanged -Path $manifestPath -Value ($manifest | ConvertTo-Json -Depth 12))
 
 $runCapsule = [ordered]@{
+    vulkan_provenance = $vulkanProvenanceSelection
     embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.apk_run_capsule.v1"

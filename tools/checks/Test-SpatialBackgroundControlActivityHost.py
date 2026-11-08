@@ -65,11 +65,11 @@ vr_pause = method(activity, '  override fun onVRPause(')
 assert vr_pause[vr_pause.index('{') + 1:].lstrip().startswith('invalidateBackgroundControl()')
 activity_fields = activity[activity.index('  @Volatile private var backgroundControlResources ='):activity.index('  private val storedProfileAuthority:')]
 # Include the real lazy initializer: construction failure must not be retried by observation/finally.
-coordinator_fields = coordinator[coordinator.index('  private var observedVideoEntityId ='):coordinator.index('  private var panelSceneObject:')]
+coordinator_fields = coordinator[coordinator.index('  private var observedVideoEntityId ='):coordinator.index('  private val retainBackingEntities =')]
 coordinator_accessor = '\n'.join(method(coordinator, s) for s in [
     '  fun backgroundControlObservation(', '  fun publishBackgroundControlObservation(',
 ])
-marker_binding = coordinator[coordinator.index('  private val emitMarker: (String) -> Unit ='):coordinator.index('  private val sceneEpoch =')]
+marker_binding = coordinator[coordinator.index('  private val emitMarker: (String) -> Unit ='):coordinator.index('  private val textureRoute =')]
 (out / 'Controls.kt').write_text('''package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -113,7 +113,7 @@ internal class SpatialImmersiveVideoPanelCoordinator(
  context:Any, resolution:SpatialImmersiveVideoRouteResolution, emitMarker:(String)->Unit,
  recenterAfterNewVideoLoad:(String,String)->Boolean,layerOwner:SpatialImmersiveVideoLayerOwner,
  initialPresentationMode:SpatialImmersiveVideoPresentationMode,initialBackgroundMode:SpatialBackgroundMode,
- directVideoConsumerInitiallyRequired:Boolean,
+ directVideoConsumerInitiallyRequired:Boolean,diagnosticTextureRoute:Int,
  onControlObservationChanged:((SpatialBackgroundControlObservation)->Unit)?=null,
 ) {
  companion object{var constructions=0;var failConstruction=false}

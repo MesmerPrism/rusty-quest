@@ -58,13 +58,22 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         if (!"camera2_mediacodec_surface".equals(source.source.getString("source_kind"))) {
             throw new IllegalArgumentException("embedded product requires Camera2 stereo source");
         }
+        int declaredInputTimeoutMs = EmbeddedDuplexDecoderInputTimeout.declaredDefault(context);
+        int codecInputTimeoutMs = EmbeddedDuplexDecoderInputTimeout.readForCurrentBuild(declaredInputTimeoutMs);
+        try {
+            android.util.Log.i("RQSpatialCameraPanel", "RUSTY_QUEST_SPATIAL_CAMERA_PANEL channel=embedded-duplex "
+                    + "status=decoder-input-budget-selected codecInputTimeoutMs=" + codecInputTimeoutMs
+                    + " defaultMs=" + EmbeddedDuplexDecoderInputTimeout.DEFAULT_MS
+                    + " declaredDefaultMs=" + declaredInputTimeoutMs
+                    + " diagnosticOverride=" + (codecInputTimeoutMs != declaredInputTimeoutMs));
+        } catch (RuntimeException ignored) { /* Diagnostic logging cannot refuse resource construction. */ }
         incoming = new EmbeddedDuplexReceiver(generation, display,
                 sink.sinkTransportHost, sink.sinkTransportPort, sink.sourceTransportHost,
                 sink.width, sink.height, sink.fps,
                 // Bounded headroom for codec delay and render callbacks. The
                 // first-frame deadline and explicit overflow failures remain enforced.
                 new PackedStereoMediaReceiver.Bounds(64 * 1024, sink.maxPacketBytes,
-                        sink.width, sink.height, 32, 3000, 4000, 100, 15000, 10000, 8, 250));
+                        sink.width, sink.height, 32, 3000, 4000, codecInputTimeoutMs, 15000, 10000, 8, 250));
     }
 
     /** Host retains this owner before any Own capture or display effect runs. */

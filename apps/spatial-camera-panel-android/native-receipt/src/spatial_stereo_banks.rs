@@ -203,6 +203,7 @@ pub(crate) struct StereoBankResources {
     pub(super) pipeline: vk::Pipeline,
     pub(super) displacement_pipeline: vk::Pipeline,
     pub(super) video_layout: vk::DescriptorSetLayout,
+    pub(super) camera_color_enabled: bool,
     vertex_spirv: Vec<u8>,
     fragment_spirv: Vec<u8>,
     pending_fence: Option<vk::Fence>,
@@ -234,6 +235,29 @@ impl Drop for StereoBankResources {
 }
 
 impl SpatialPublicGuideTargets {
+    #[cfg(target_os = "android")]
+    pub(crate) unsafe fn bind_optional_camera_display(
+        &self,
+        device: &ash::Device,
+        view: vk::ImageView,
+    ) -> Result<(), String> {
+        let state = self
+            .stereo_banks
+            .as_ref()
+            .ok_or("camera-color-stereo-missing")?;
+        if !state.camera_color_enabled || state.submission_entered {
+            return Err("camera-color-binding-not-admitted".into());
+        }
+        write_color_views(
+            device,
+            state.guides,
+            abi2::CAMERA_COLOR_BINDING,
+            self.sampler,
+            [view],
+        );
+        Ok(())
+    }
+
     pub(crate) unsafe fn activate_stereo_banks(
         &mut self,
         device: &ash::Device,
@@ -283,7 +307,7 @@ impl SpatialPublicGuideTargets {
         abi::check_final_layout_limits(&limits, &demand)?;
         #[cfg(target_os = "android")]
         let source_color_binding = {
-            let extra = abi2::ORIGIN_ARRAY_COUNT;
+            let extra = abi2::ORIGIN_ARRAY_COUNT + u32::from(primary_build::CAMERA_COLOR_ABI == 1);
             let extended = abi::LayoutDemand {
                 samplers: demand.samplers + extra,
                 sampled_images: demand.sampled_images + extra,
@@ -294,8 +318,9 @@ impl SpatialPublicGuideTargets {
         };
         #[cfg(not(target_os = "android"))]
         let source_color_binding = false;
+        let camera_color_binding = source_color_binding && primary_build::CAMERA_COLOR_ABI == 1;
         let source_color_samplers = if source_color_binding {
-            abi2::ORIGIN_ARRAY_COUNT
+            abi2::ORIGIN_ARRAY_COUNT + u32::from(camera_color_binding)
         } else {
             0
         };
@@ -331,6 +356,7 @@ impl SpatialPublicGuideTargets {
             pipeline: vk::Pipeline::null(),
             displacement_pipeline: vk::Pipeline::null(),
             video_layout,
+            camera_color_enabled: camera_color_binding,
             vertex_spirv: vertex_spirv.to_vec(),
             fragment_spirv: final_fragment.to_vec(),
             pending_fence: None,
@@ -356,6 +382,9 @@ impl SpatialPublicGuideTargets {
             };
             if source_color_binding {
                 guide_bindings.push(abi2::final_display_binding());
+            }
+            if camera_color_binding {
+                guide_bindings.push(abi2::final_camera_color_binding());
             }
             state.guides_layout = device
                 .create_descriptor_set_layout(
@@ -973,6 +1002,15 @@ impl SpatialPublicGuideTargets {
                     let own = &self.targets[0];
                     let peer = &state.peer.as_ref().unwrap().targets[0];
                     let raw = [own, peer, &primary.targets[0]];
+                    if state.camera_color_enabled {
+                        write_color_views(
+                            device,
+                            state.guides,
+                            abi2::CAMERA_COLOR_BINDING,
+                            self.sampler,
+                            [own.image_view],
+                        );
+                    }
                     let mut views = raw.map(|target| target.image_view);
                     if let Some(request) = color_request.filter(|request| {
                         abi2::source_color_origin(

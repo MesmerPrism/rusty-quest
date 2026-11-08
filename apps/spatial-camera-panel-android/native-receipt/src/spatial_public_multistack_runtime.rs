@@ -757,6 +757,10 @@ impl SpatialPublicGuideTargets {
             || extent.width % 2 != 0
             || extent.height == 0
             || self.optional_color_failed
+            || !self
+                .stereo_banks
+                .as_ref()
+                .is_some_and(|bank| bank.camera_color_enabled)
         {
             return None;
         }
@@ -1519,8 +1523,15 @@ impl SpatialPublicGuideTargets {
         zone_frame: &CameraHwbProjectionZoneFrame,
         camera_content_only: bool,
         layer_override: f32,
+        color_stage: crate::spatial_optional_color_policy::CameraColorStage,
     ) -> Result<bool, String> {
+        use crate::spatial_optional_color_policy::CameraColorStage;
         let stereo = self.stereo_banks.as_deref();
+        if color_stage != CameraColorStage::Inactive
+            && !stereo.is_some_and(|bank| bank.camera_color_enabled)
+        {
+            return Err("camera-color-provider-abi-not-selected".into());
+        }
         if let Some(stereo) = stereo {
             if self
                 .projection_zone_video_pipeline
@@ -1548,22 +1559,29 @@ impl SpatialPublicGuideTargets {
             device,
             &surface_features.uniform(displacement, zone_frame.draw_rects),
         )?;
-        let tessellated_effective = projection_surface_tessellation_allowed(
-            camera_content_only,
-            zone_frame.settings.synthetic_diagnostic(),
-        ) && surface_features.tessellated_effective(
-            displacement,
-            PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2 && pipeline.displacement_pipeline.is_some(),
-        );
+        let tessellated_effective = color_stage != CameraColorStage::Capture
+            && projection_surface_tessellation_allowed(
+                camera_content_only,
+                zone_frame.settings.synthetic_diagnostic(),
+            )
+            && surface_features.tessellated_effective(
+                displacement,
+                PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
+                    && pipeline.displacement_pipeline.is_some(),
+            );
         let strength_cycle_phase_turns =
             advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
-            set_packed_projection_target_view(
-                device,
-                command_buffer,
-                extent,
-                zone_frame.draw_rects[eye_index],
-            );
+            if color_stage == CameraColorStage::Capture {
+                set_packed_eye_view(device, command_buffer, extent, eye_index);
+            } else {
+                set_packed_projection_target_view(
+                    device,
+                    command_buffer,
+                    extent,
+                    zone_frame.draw_rects[eye_index],
+                );
+            }
             device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -1607,7 +1625,7 @@ impl SpatialPublicGuideTargets {
                     &[],
                 );
             }
-            let push = OpaqueProjectionPush::for_packed_eye(
+            let mut push = OpaqueProjectionPush::for_packed_eye(
                 eye_index,
                 elapsed_seconds,
                 strength_cycle_phase_turns,
@@ -1615,8 +1633,9 @@ impl SpatialPublicGuideTargets {
                 footprint_scale,
                 layer_override,
             );
+            push.params0[1] = color_stage.provider_mode();
             push_projection_constants(device, command_buffer, final_layout, &push);
-            if stereo.is_some() {
+            if stereo.is_some() && color_stage != CameraColorStage::Capture {
                 crate::spatial_stereo_qualification::observe_final_draw(tessellated_effective);
             }
             device.cmd_draw(
@@ -1633,8 +1652,9 @@ impl SpatialPublicGuideTargets {
         }
         // One diagnostic-only5x1 draw after both normal eyes, inside this same
         // render pass/submission. Exact source leases and UBO are still held.
-        if let Some((stereo, plan)) =
-            stereo.and_then(|s| s.mask_diagnostic_plan(extent).map(|p| (s, p)))
+        if let Some((stereo, plan)) = stereo
+            .filter(|_| color_stage == CameraColorStage::Inactive)
+            .and_then(|s| s.mask_diagnostic_plan(extent).map(|p| (s, p)))
         {
             device.cmd_set_viewport(
                 command_buffer,

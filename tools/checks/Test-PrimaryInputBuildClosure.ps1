@@ -31,6 +31,20 @@ Profile $null $null;$v1=Resolve
 if($v1.final_abi_version -ne 1 -or $null -ne $v1.primary_input_shader){throw 'Original ABI1 changed'}
 Profile 2 'primary.frag.glsl';$v2=Resolve
 if($v2.final_abi_version -ne 2 -or $v2.primary_input_shader.path -cne $shader -or $v2.primary_input_shader.sha256 -cne (Get-FileHash $shader).Hash.ToLowerInvariant()){throw 'ABI2 shader role/hash missing'}
+if($v2.optional_camera_color_abi_version -ne 0){throw 'Camera-only color routing must default off'}
+function CameraColor($Version,$WithShader=$true) {
+ $p=Get-Content $profilePath -Raw|ConvertFrom-Json
+ $p.required_public_bridge | Add-Member -NotePropertyName optional_camera_color_abi_version -NotePropertyValue $Version
+ if($WithShader){$p.required_public_bridge | Add-Member -NotePropertyName optional_color_shader -NotePropertyValue 'primary.frag.glsl'}
+ Write-Json $profilePath $p
+}
+Profile 2 'primary.frag.glsl';CameraColor 1;$camera=Resolve
+if($camera.optional_camera_color_abi_version -ne 1 -or $camera.optional_color_shader.sha256 -cne (Get-FileHash $shader).Hash.ToLowerInvariant()){throw 'Camera-only color capability/shader identity missing'}
+Deny {Profile 2 'primary.frag.glsl';CameraColor 1 $false}
+Deny {Profile 1 $null;CameraColor 1}
+foreach($invalid in @($true,'1',1.5,-1,2)) { Deny {Profile 2 'primary.frag.glsl';CameraColor $invalid} }
+Profile 2 'primary.frag.glsl';CameraColor 0;$legacy=Resolve
+if($legacy.optional_camera_color_abi_version -ne 0){throw 'Explicit legacy routing changed'}
 Deny {Profile 2 $null};Deny {Profile 1 'primary.frag.glsl'};Deny {Profile 3 'primary.frag.glsl'}
 Deny {Profile $true 'primary.frag.glsl'};Deny {Profile 2 'missing.frag.glsl'}
 Deny {Profile 2 '../outside.frag.glsl'}

@@ -122,6 +122,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             initialPresentationMode = SpatialImmersiveVideoPresentationMode.HeadFixedBorder,
             initialBackgroundMode = SpatialBackgroundMode.Passthrough,
             directVideoConsumerInitiallyRequired = false,
+            diagnosticTextureRoute = immersiveVideoDiagnosticTextureRoute(),
         )
       }
   @Volatile private var backgroundControlResources = SpatialBackgroundControlObservation()
@@ -143,6 +144,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             initialPresentationMode = SpatialImmersiveVideoPresentationMode.WorldAnchored,
             initialBackgroundMode = SpatialBackgroundMode.Black,
             directVideoConsumerInitiallyRequired = false,
+            diagnosticTextureRoute = immersiveVideoDiagnosticTextureRoute(),
             onControlObservationChanged = backgroundControlObservationCallback(),
         )
       }
@@ -680,6 +682,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         storeLeftPrimary = { _, _ -> false },
     )
   }
+  private fun immersiveVideoDiagnosticTextureRoute(): Int {
+    return if (BuildConfig.DEBUG) {
+      SpatialImmersiveVideoPanelTextureRoute.parseCode(
+          activityReadSystemProperty(IMMERSIVE_VIDEO_TEXTURE_ROUTE_PROPERTY)
+      )
+    } else {
+      0
+    }
+  }
   private val controllerInputRouteCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialControllerInputRouteCoordinator(
         SpatialControllerInputRouteBindings(
@@ -726,7 +737,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     SpatialNativeInteropCoordinator(
         SpatialNativeInteropBindings(
             scene = scene,
-            recordNoRenderReceipt = ::nativeRecordNoRenderInteropReceipt,
+            recordSelectedNoRenderReceipt = ::nativeRecordSelectedNoRenderInteropReceipt,
             requestMultimodalInput = { probe, phase ->
               nativeInputBootstrapCoordinator.requestMultimodalInputIfReady(probe, phase)
             },
@@ -734,7 +745,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               nativeInputBootstrapCoordinator.startControllerActionsIfReady(probe, phase)
             },
             marker = ::marker,
-        )
+        ),
+        diagnosticMode = SpatialNativeInteropDiagnosticPolicy.select(BuildConfig.DEBUG) {
+          // This discriminator admits exact raw tokens; the generic helper trims them.
+          Class.forName("android.os.SystemProperties")
+              .getMethod("get", String::class.java, String::class.java)
+              .invoke(null, SpatialNativeInteropDiagnosticPolicy.PROPERTY, "") as String
+        },
     )
   }
   private val surfaceParticleParameterCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -5403,6 +5420,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       openXrSessionHandle: Long,
       openXrGetInstanceProcAddrHandle: Long,
       surfaceValid: Boolean,
+  ): Long
+
+  private external fun nativeRecordSelectedNoRenderInteropReceipt(
+      openXrInstanceHandle: Long,
+      openXrSessionHandle: Long,
+      openXrGetInstanceProcAddrHandle: Long,
+      surfaceValid: Boolean,
+      allowVulkanObjectConstruction: Boolean,
   ): Long
 
   private external fun nativeSetMarkerFilePersistenceEnabled(enabled: Boolean)

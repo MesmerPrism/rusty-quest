@@ -78,6 +78,7 @@ mod spatial_guide_processing;
 mod spatial_multimodal_input;
 #[cfg(target_os = "android")]
 mod spatial_native_passthrough;
+mod spatial_optional_color_policy;
 mod spatial_presentation_policy;
 #[cfg(any(target_os = "android", test))]
 mod spatial_projection_background;
@@ -160,13 +161,54 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     openxr_get_instance_proc_addr_handle: i64,
     surface_valid: u8,
 ) -> i64 {
+    record_no_render_interop_receipt(
+        openxr_instance_handle,
+        openxr_session_handle,
+        openxr_get_instance_proc_addr_handle,
+        surface_valid != 0,
+        true,
+        "legacy",
+    )
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeRecordSelectedNoRenderInteropReceipt(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    openxr_instance_handle: i64,
+    openxr_session_handle: i64,
+    openxr_get_instance_proc_addr_handle: i64,
+    surface_valid: u8,
+    allow_vulkan_object_construction: u8,
+) -> i64 {
+    record_no_render_interop_receipt(
+        openxr_instance_handle,
+        openxr_session_handle,
+        openxr_get_instance_proc_addr_handle,
+        surface_valid != 0,
+        allow_vulkan_object_construction != 0,
+        "selected",
+    )
+}
+
+// Selection suppresses only temporary Vulkan allocation. The borrowed XR handle
+// observations and capability queries remain independent of renderer admission.
+fn record_no_render_interop_receipt(
+    openxr_instance_handle: i64,
+    openxr_session_handle: i64,
+    openxr_get_instance_proc_addr_handle: i64,
+    surface_valid: bool,
+    allow_vulkan_object_construction: bool,
+    receipt_entry: &'static str,
+) -> i64 {
     let instance_nonzero = openxr_instance_handle != 0;
     let session_nonzero = openxr_session_handle != 0;
     let get_proc_nonzero = openxr_get_instance_proc_addr_handle != 0;
-    let surface_valid = surface_valid != 0;
     let openxr_probe = probe_openxr_native_capabilities(
         openxr_instance_handle,
         openxr_get_instance_proc_addr_handle,
+        allow_vulkan_object_construction,
     );
 
     let mut mask = RECEIPT_RECEIVED;
@@ -237,9 +279,15 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         session_nonzero,
         get_proc_nonzero,
         surface_valid,
+        receipt_entry,
+        allow_vulkan_object_construction,
         &openxr_probe,
     );
-    log_vulkan_object_probe(&openxr_probe);
+    log_vulkan_object_probe(
+        receipt_entry,
+        allow_vulkan_object_construction,
+        &openxr_probe,
+    );
     mask
 }
 
@@ -264,6 +312,7 @@ struct OpenXrNativeCapabilityProbe {
     create_vulkan_instance_resolved: bool,
     get_vulkan_graphics_device2_resolved: bool,
     create_vulkan_device_resolved: bool,
+    vulkan_object_construction_attempted: bool,
     vulkan_instance_created: bool,
     vulkan_create_instance_result: String,
     vulkan_graphics_device_obtained: bool,
@@ -300,6 +349,7 @@ impl OpenXrNativeCapabilityProbe {
             create_vulkan_instance_resolved: false,
             get_vulkan_graphics_device2_resolved: false,
             create_vulkan_device_resolved: false,
+            vulkan_object_construction_attempted: false,
             vulkan_instance_created: false,
             vulkan_create_instance_result: "not-called".to_string(),
             vulkan_graphics_device_obtained: false,
@@ -325,6 +375,7 @@ struct OpenXrFunctionResolution {
 fn probe_openxr_native_capabilities(
     openxr_instance_handle: i64,
     openxr_get_instance_proc_addr_handle: i64,
+    allow_vulkan_object_construction: bool,
 ) -> OpenXrNativeCapabilityProbe {
     if openxr_instance_handle == 0 {
         return OpenXrNativeCapabilityProbe::unavailable("missing-instance");
@@ -438,11 +489,13 @@ fn probe_openxr_native_capabilities(
         resolve_openxr_function(instance, get_instance_proc_addr, "xrCreateVulkanDeviceKHR");
     probe.create_vulkan_device_resolved = create_vulkan_device.resolved;
 
-    if probe.vulkan_requirements2_succeeded
+    if allow_vulkan_object_construction
+        && probe.vulkan_requirements2_succeeded
         && create_vulkan_instance.resolved
         && get_vulkan_graphics_device2.resolved
         && create_vulkan_device.resolved
     {
+        probe.vulkan_object_construction_attempted = true;
         probe_no_present_vulkan_objects(
             &mut probe,
             instance,
@@ -715,11 +768,17 @@ fn log_receipt(
     session_nonzero: bool,
     get_proc_nonzero: bool,
     surface_valid: bool,
+    receipt_entry: &str,
+    allow_vulkan_object_construction: bool,
     openxr_probe: &OpenXrNativeCapabilityProbe,
 ) {
     let message = format!(
-        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-interop-receipt status=received renderPolicy=no-render nativeReceiptMask={} openXrInstanceHandleNonZero={} openXrSessionHandleNonZero={} openXrGetInstanceProcAddrHandleNonZero={} surfaceValid={} openXrGetInstanceProcAddrCallable={} xrGetInstancePropertiesResolved={} xrGetInstancePropertiesSucceeded={} xrGetInstanceProcAddrResult={} xrGetInstancePropertiesResult={} xrRuntimeName={} xrRuntimeVersion={} xrGetSystemResolved={} xrGetSystemSucceeded={} xrSystemIdNonZero={} xrGetSystemResult={} xrGetVulkanGraphicsRequirements2Resolved={} xrGetVulkanGraphicsRequirements2Succeeded={} xrGetVulkanGraphicsRequirements2Result={} xrVulkanMinApiVersion={} xrVulkanMaxApiVersion={} xrCreateVulkanInstanceResolved={} xrGetVulkanGraphicsDevice2Resolved={} xrCreateVulkanDeviceResolved={} vkInstanceCreated={} vkCreateInstanceResult={} vkGraphicsDeviceObtained={} vkGraphicsDeviceResult={} vkGraphicsComputeQueueFound={} vkQueueFamilyIndex={} vkDeviceCreated={} vkCreateDeviceResult={} vkQueueObtained={} vkObjectsDestroyed={} vkDeviceName={} vkDeviceApiVersion={}",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-interop-receipt status=received renderPolicy=no-render nativeReceiptMask={} receiptEntry={} allowVulkanObjectConstruction={} vulkanObjectConstructionAttempted={} vulkanObjectConstructionSkipped={} openXrInstanceHandleNonZero={} openXrSessionHandleNonZero={} openXrGetInstanceProcAddrHandleNonZero={} surfaceValid={} openXrGetInstanceProcAddrCallable={} xrGetInstancePropertiesResolved={} xrGetInstancePropertiesSucceeded={} xrGetInstanceProcAddrResult={} xrGetInstancePropertiesResult={} xrRuntimeName={} xrRuntimeVersion={} xrGetSystemResolved={} xrGetSystemSucceeded={} xrSystemIdNonZero={} xrGetSystemResult={} xrGetVulkanGraphicsRequirements2Resolved={} xrGetVulkanGraphicsRequirements2Succeeded={} xrGetVulkanGraphicsRequirements2Result={} xrVulkanMinApiVersion={} xrVulkanMaxApiVersion={} xrCreateVulkanInstanceResolved={} xrGetVulkanGraphicsDevice2Resolved={} xrCreateVulkanDeviceResolved={} vkInstanceCreated={} vkCreateInstanceResult={} vkGraphicsDeviceObtained={} vkGraphicsDeviceResult={} vkGraphicsComputeQueueFound={} vkQueueFamilyIndex={} vkDeviceCreated={} vkCreateDeviceResult={} vkQueueObtained={} vkObjectsDestroyed={} vkDeviceName={} vkDeviceApiVersion={}",
         mask,
+        receipt_entry,
+        bool_token(allow_vulkan_object_construction),
+        bool_token(openxr_probe.vulkan_object_construction_attempted),
+        bool_token(!allow_vulkan_object_construction),
         bool_token(instance_nonzero),
         bool_token(session_nonzero),
         bool_token(get_proc_nonzero),
@@ -759,9 +818,17 @@ fn log_receipt(
     android_log_info("RQSpatialCameraPanelNative", &message);
 }
 
-fn log_vulkan_object_probe(openxr_probe: &OpenXrNativeCapabilityProbe) {
+fn log_vulkan_object_probe(
+    receipt_entry: &str,
+    allow_vulkan_object_construction: bool,
+    openxr_probe: &OpenXrNativeCapabilityProbe,
+) {
     let message = format!(
-        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-vulkan-object-probe status=observed renderPolicy=no-render vkInstanceCreated={} vkCreateInstanceResult={} vkGraphicsDeviceObtained={} vkGraphicsDeviceResult={} vkGraphicsComputeQueueFound={} vkQueueFamilyIndex={} vkDeviceCreated={} vkCreateDeviceResult={} vkQueueObtained={} vkObjectsDestroyed={} vkDeviceName={} vkDeviceApiVersion={}",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-vulkan-object-probe status=observed renderPolicy=no-render receiptEntry={} allowVulkanObjectConstruction={} vulkanObjectConstructionAttempted={} vulkanObjectConstructionSkipped={} vkInstanceCreated={} vkCreateInstanceResult={} vkGraphicsDeviceObtained={} vkGraphicsDeviceResult={} vkGraphicsComputeQueueFound={} vkQueueFamilyIndex={} vkDeviceCreated={} vkCreateDeviceResult={} vkQueueObtained={} vkObjectsDestroyed={} vkDeviceName={} vkDeviceApiVersion={}",
+        receipt_entry,
+        bool_token(allow_vulkan_object_construction),
+        bool_token(openxr_probe.vulkan_object_construction_attempted),
+        bool_token(!allow_vulkan_object_construction),
         bool_token(openxr_probe.vulkan_instance_created),
         openxr_probe.vulkan_create_instance_result,
         bool_token(openxr_probe.vulkan_graphics_device_obtained),
