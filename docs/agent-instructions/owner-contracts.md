@@ -26,6 +26,23 @@ checks remain separate from app compilation, physical cleanup and streaming.
 
 ## Debug host receipt boundary
 
+
+The no-render interop allocation diagnostic selects only the disposable Surface
+and temporary Vulkan allocation probes, once at coordinator construction in a
+debug build. Absent/invalid/release selection retains Full behavior. Keep
+borrowed queries, truthful partial masks and real SDK renderer admission
+independent; retain both JNI entries without a selected-to-legacy fallback.
+See [the focused contract](../NATIVE_INTEROP_ALLOCATION_DIAGNOSTIC.md).
+
+The separate optional Background diagnostic is debug-source-set only, DUMP plus
+exact shell UID gated, and denies all calls without its private integer opt-in.
+It accepts only closed observe and Black/Video select requests to the current
+Activity's existing handler, with one-shot process/Activity/scene/revision
+fences. It launches no Activity and creates no Native session, Peer or Manifold
+authority. Its mode receipt proves no rendering or decoder cleanup. Keep its
+component/classes/authority out of release artifacts. See the
+[focused diagnostic contract](../SPATIAL_BACKGROUND_DIAGNOSTIC.md).
+
 The Spatial Camera Panel debug host receipt provider is debug-source-set only.
 Its authority is derived from the selected application id as
 `${applicationId}.debug-host-receipt`, requires Android `DUMP` plus the runtime

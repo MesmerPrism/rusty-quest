@@ -18,6 +18,19 @@ import java.io.ByteArrayOutputStream;
 
 /** One immutable data snapshot; it grants no enrollment, Native or socket authority. */
 final class FrozenEffectiveInputs {
+    static final String USB_ADB_RELAY = "development-usb-adb-relay-v1";
+    static final String USB_TRANSPORT_CONTRACT = "rusty.manifold.peer.development_loopback_relay_tcp_transport.v1";
+    /** Packaged capability alone selects no transport and opens no socket. */
+    static boolean developmentUsbRelayCapability(Context context) {
+        if (!io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.DEBUG
+                || !io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED
+                || context == null) return false;
+        try {
+            int id = context.getResources().getIdentifier(
+                    "rusty_quest_embedded_duplex_usb_adb_relay_enabled", "integer", context.getPackageName());
+            return id != 0 && context.getResources().getInteger(id) == 1;
+        } catch (RuntimeException unavailable) { return false; }
+    }
     interface Deriver { String derive(String exactRequest) throws Exception; }
 
     static byte[] readActiveProfile(Context context) throws Exception {
@@ -45,7 +58,7 @@ final class FrozenEffectiveInputs {
         Set<String> peers = new HashSet<>();
         JSONArray routePeers = new JSONObject(base.json("route-configuration.json")).getJSONArray("peers");
         for (int i = 0; i < routePeers.length(); i++) peers.add(routePeers.getJSONObject(i).getString("peer_id"));
-        new SpatialPeerNetworkProfilePilot(peers).select(profile);
+        new SpatialPeerNetworkProfilePilot(peers, developmentUsbRelayCapability(context)).select(profile);
     }
     final EmbeddedDuplexPackagedInputs verifiedBase;
     final long generation;
@@ -53,14 +66,16 @@ final class FrozenEffectiveInputs {
     private final Map<String, String> documents;
     private static final class FreezeSeal { volatile FrozenEffectiveInputs snapshot; }
     private final FreezeSeal seal;
+    private final boolean developmentUsbRelay;
 
     private FrozenEffectiveInputs(EmbeddedDuplexPackagedInputs base, long generation,
-            Map<String, String> documents, String lineageJson, FreezeSeal seal) {
+            Map<String, String> documents, String lineageJson, FreezeSeal seal, boolean developmentUsbRelay) {
         this.verifiedBase = base;
         this.generation = generation;
         this.documents = Collections.unmodifiableMap(new HashMap<>(documents));
         this.lineageJson = lineageJson;
         this.seal = seal;
+        this.developmentUsbRelay = developmentUsbRelay;
     }
 
     static FrozenEffectiveInputs packaged(EmbeddedDuplexPackagedInputs base) throws Exception {
@@ -73,7 +88,7 @@ final class FrozenEffectiveInputs {
                 .put("base_route_sha256", base.digest("route-configuration.json"))
                 .put("profile_sha256", JSONObject.NULL)
                 .put("effective_route_sha256", base.digest("route-configuration.json"));
-        return new FrozenEffectiveInputs(base, generation, base.documentSnapshot(), lineage.toString(), seal);
+        return new FrozenEffectiveInputs(base, generation, base.documentSnapshot(), lineage.toString(), seal, false);
     }
 
     /** Captured by the existing runtime generation owner; freeze is irreversible for this selector. */
@@ -81,6 +96,7 @@ final class FrozenEffectiveInputs {
         private final EmbeddedDuplexPackagedInputs base;
         private final long generation;
         private final Deriver deriver;
+        private final boolean developmentUsbRelayEnabled;
         private FrozenEffectiveInputs current;
         private boolean frozen;
         private final FreezeSeal seal = new FreezeSeal();
@@ -90,8 +106,16 @@ final class FrozenEffectiveInputs {
         }
 
         Selector(EmbeddedDuplexPackagedInputs base, long generation, Deriver deriver) throws Exception {
+            this(base, generation, deriver, false);
+        }
+
+        Selector(EmbeddedDuplexPackagedInputs base, long generation, Deriver deriver,
+                boolean developmentUsbRelayEnabled) throws Exception {
             if (generation <= 0 || deriver == null) throw new IllegalArgumentException("effective input owner required");
             this.base = base; this.generation = generation; this.deriver = deriver;
+            this.developmentUsbRelayEnabled = developmentUsbRelayEnabled
+                    && io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.DEBUG
+                    && io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED;
             this.current = packaged(base, generation, seal);
         }
 
@@ -117,14 +141,15 @@ final class FrozenEffectiveInputs {
             JSONArray routePeers = new JSONObject(base.json("route-configuration.json")).getJSONArray("peers");
             for (int i = 0; i < routePeers.length(); i++) peers.add(routePeers.getJSONObject(i).getString("peer_id"));
             // Reuse the complete strict byte/profile owner, including duplicate-key rejection.
-            new SpatialPeerNetworkProfilePilot(peers).select(snapshot);
+            new SpatialPeerNetworkProfilePilot(peers, developmentUsbRelayEnabled).select(snapshot);
             JSONObject request = new JSONObject().put("$schema", "rusty.quest.embedded_duplex.effective_inputs_request.v1")
                     .put("base_manifest_sha256", sha256(base.manifestJson()))
                     .put("installed_role_id", base.selectedRoleId())
                     .put("documents", new JSONObject(base.documentSnapshot()))
                     .put("profile_json", new String(snapshot, StandardCharsets.UTF_8));
             // Publish exactly once after all typed, native and response checks succeed.
-            FrozenEffectiveInputs accepted = fromNative(base, generation, snapshot, deriver.derive(request.toString()), seal);
+            FrozenEffectiveInputs accepted = fromNative(base, generation, snapshot, deriver.derive(request.toString()), seal,
+                    developmentUsbRelayEnabled);
             current = accepted;
             return accepted;
         }
@@ -134,7 +159,7 @@ final class FrozenEffectiveInputs {
     }
 
     private static FrozenEffectiveInputs fromNative(EmbeddedDuplexPackagedInputs base, long generation,
-            byte[] profile, String response, FreezeSeal seal) throws Exception {
+            byte[] profile, String response, FreezeSeal seal, boolean developmentUsbRelayEnabled) throws Exception {
         JSONObject result = new JSONObject(response);
         fields(result, "$schema", "documents", "lineage");
         if (!"rusty.quest.embedded_duplex.effective_inputs_result.v1".equals(result.getString("$schema")))
@@ -157,7 +182,65 @@ final class FrozenEffectiveInputs {
                 || !sha256(profile).equals(lineage.getString("profile_sha256"))
                 || !sha256(docs.get("route-configuration.json")).equals(lineage.getString("effective_route_sha256")))
             throw new IllegalStateException("effective input lineage differs");
-        return new FrozenEffectiveInputs(base, generation, docs, lineage.toString(), seal);
+        boolean usb = USB_ADB_RELAY.equals(new JSONObject(new String(profile, StandardCharsets.UTF_8))
+                .optString("peer_network_transport", ""));
+        JSONObject route = new JSONObject(docs.get("route-configuration.json"));
+        if (usb != route.has("transport_contract_id")
+                || usb && (!developmentUsbRelayEnabled
+                    || !USB_TRANSPORT_CONTRACT.equals(route.getString("transport_contract_id"))))
+            throw new IllegalStateException("effective transport selection differs");
+        if (usb) validateUsbRoute(profile, route);
+        return new FrozenEffectiveInputs(base, generation, docs, lineage.toString(), seal, usb);
+    }
+
+    private static void validateUsbRoute(byte[] profile, JSONObject route) throws Exception {
+        JSONArray requested = new JSONObject(new String(profile, StandardCharsets.UTF_8)).getJSONArray("peer_network_endpoints");
+        JSONArray actual = route.getJSONArray("peers");
+        if (requested.length() != 2 || actual.length() != 2) throw new IllegalStateException("USB route peer cardinality");
+        Set<String> matched = new HashSet<>();
+        for (int i = 0; i < requested.length(); i++) {
+            JSONObject expected = requested.getJSONObject(i), found = null;
+            for (int j = 0; j < actual.length(); j++) {
+                JSONObject peer = actual.getJSONObject(j);
+                if (expected.getString("peer_id").equals(peer.getString("peer_id"))) {
+                    if (found != null) throw new IllegalStateException("USB route peer duplicate");
+                    found = peer;
+                }
+            }
+            if (found == null || !matched.add(found.getString("peer_id"))
+                    || found.getInt("local_source_port") != expected.getInt("local_source_port"))
+                throw new IllegalStateException("USB source endpoint differs");
+            for (String endpoint : new String[]{"media_endpoint", "control_endpoint"}) {
+                JSONObject wanted = expected.getJSONObject(endpoint), observed = found.getJSONObject(endpoint);
+                if (!"127.0.0.1".equals(observed.getString("host"))
+                        || !wanted.getString("host").equals(observed.getString("host"))
+                        || wanted.getInt("port") != observed.getInt("port")
+                        || !wanted.getString("protocol").equals(observed.getString("protocol")))
+                    throw new IllegalStateException("USB relay endpoint differs");
+            }
+        }
+    }
+
+    boolean developmentUsbRelayForRoute(String routeDigest) throws Exception {
+        requireConsumable();
+        if (!digest("route-configuration.json").equals(routeDigest))
+            throw new IllegalStateException("effective transport route differs");
+        return developmentUsbRelay;
+    }
+
+    void requireControlEndpoint(String peerId, String host, int port) throws Exception {
+        requireConsumable();
+        JSONArray peers = new JSONObject(json("route-configuration.json")).getJSONArray("peers");
+        JSONObject endpoint = null;
+        for (int i = 0; i < peers.length(); i++) {
+            JSONObject peer = peers.getJSONObject(i);
+            if (peerId.equals(peer.getString("peer_id"))) {
+                if (endpoint != null) throw new IllegalStateException("ambiguous effective control peer");
+                endpoint = peer.getJSONObject("control_endpoint");
+            }
+        }
+        if (endpoint == null || !host.equals(endpoint.getString("host")) || port != endpoint.getInt("port"))
+            throw new IllegalStateException("effective control endpoint differs");
     }
 
     String json(String name) {

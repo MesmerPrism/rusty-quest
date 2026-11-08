@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class PackedStereoMediaReceiver implements AutoCloseable {
     private static final String MIME_H264 = "video/avc";
     private static final AtomicLong NEXT_HANDLE = new AtomicLong(1L);
+    private static final long EXTENDED_INPUT_PRESSURE_MS = 100L;
 
     private final Object lock = new Object();
     private final Surface surface;
@@ -90,6 +91,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private long preRenderRejected, identityWindowOverflows, maxQueuedWindow, maxRenderWindow;
     private String decoderClass = "NONE";
     private boolean connectionBytesSeen, connectionConfigSeen, connectionKeyframeSeen;
+    // At most five pressure observations per receiver owner. These markers do
+    // not change the closed activation/status payload or the codec wait policy.
+    private boolean firstInputPressureReported, firstInputRecoveryReported;
+    private boolean firstInputTimeoutReported, firstInputTerminalReported;
+    private boolean firstExtendedInputRecoveryReported;
 
     public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
             Bounds bounds, FrameListener listener) {
@@ -537,7 +543,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         boolean keyframeSeen = false;
         while (!stopRequested) {
             transportStage = "PACKET_READ";
-            RmanvidPacketReader.Packet packet = reader.readPacket();
+            RmanvidPacketReader.Packet packet;
+            boolean readTracing = ReceiverTraceSections.begin(ReceiverTraceSections.READ_PACKET);
+            try { packet = reader.readPacket(); }
+            finally { ReceiverTraceSections.end(readTracing); }
             transportStage = "DECODE";
             boolean config = (packet.flags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0;
             boolean keyframe = (packet.flags & RmanvidPacketReader.FLAG_KEY_FRAME) != 0;
@@ -567,45 +576,121 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
 
     private void queuePacket(MediaCodec codec, long activeConnection,
             RmanvidPacketReader.Packet packet) throws Exception {
-        long deadline = SystemClock.elapsedRealtime() + bounds.codecInputTimeoutMs;
-        int inputIndex;
-        do {
-            inputIndex = codec.dequeueInputBuffer(10_000L);
-            if (inputIndex < 0) drain(codec, activeConnection);
-        } while (inputIndex < 0 && !stopRequested && SystemClock.elapsedRealtime() < deadline);
-        if (inputIndex < 0) throw closed("DECODER_INPUT_TIMEOUT", null);
-        ByteBuffer input = codec.getInputBuffer(inputIndex);
-        if (input == null || packet.payload.length > input.capacity()) {
-            throw closed("DECODER_INPUT_CAPACITY", null);
-        }
-        input.clear();
-        input.put(packet.payload);
-        boolean config = (packet.flags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0;
-        if (!config) {
-            awaitIdentityCapacity(codec, activeConnection);
-            synchronized (lock) {
-                if (pendingFrames.containsKey(packet.ptsUs) || retiredRenderFrames.containsKey(packet.ptsUs)) {
-                    throw closed("IDENTITY_PTS_COLLISION", null);
+        boolean tracing = ReceiverTraceSections.begin(ReceiverTraceSections.QUEUE_PACKET);
+        try {
+            long startedMs = SystemClock.elapsedRealtime();
+            long deadline = startedMs + bounds.codecInputTimeoutMs;
+            int inputIndex = -1, attempts = 0, lastInputCode = 0;
+            long beforeOutputs = 0, beforeReleased = 0, beforeAcquired = 0;
+            boolean pressure = false, timedOut = false;
+            try {
+                do {
+                    inputIndex = codec.dequeueInputBuffer(10_000L);
+                    attempts++;
+                    if (inputIndex < 0) {
+                        lastInputCode = inputIndex;
+                        if (!pressure) {
+                            synchronized (lock) {
+                                beforeOutputs = outputsDequeued;
+                                beforeReleased = outputsReleasedForRender;
+                                beforeAcquired = acquiredFrames;
+                            }
+                            pressure = true;
+                            logInputPressure(activeConnection, startedMs, attempts, lastInputCode,
+                                    beforeOutputs, beforeReleased, beforeAcquired, "waiting");
+                        }
+                        drain(codec, activeConnection);
+                    }
+                } while (inputIndex < 0 && !stopRequested && SystemClock.elapsedRealtime() < deadline);
+                if (inputIndex < 0) {
+                    timedOut = !stopRequested;
+                    throw closed("DECODER_INPUT_TIMEOUT", null);
                 }
-                if (pendingFrames.size() >= bounds.maxPendingFrames) {
-                    identityWindowOverflows++;
-                    throw closed(queuedWindowLocked() >= renderWindowLocked()
-                            ? "IDENTITY_WINDOW_OVERFLOW_DECODE" : "IDENTITY_WINDOW_OVERFLOW_RENDER", null);
+            } finally {
+                if (pressure) {
+                    // Capture before outcome logging so those calls cannot classify
+                    // an otherwise short input wait as an extended recovery.
+                    long waitElapsedMs = Math.max(0L, SystemClock.elapsedRealtime() - startedMs);
+                    logInputPressure(activeConnection, startedMs, attempts, lastInputCode,
+                            beforeOutputs, beforeReleased, beforeAcquired,
+                            inputIndex >= 0 ? "recovered" : stopRequested ? "stopped" : timedOut ? "timeout" : "failed");
+                    if (inputIndex >= 0 && waitElapsedMs > EXTENDED_INPUT_PRESSURE_MS) {
+                        logInputPressure(activeConnection, startedMs, attempts, lastInputCode,
+                                beforeOutputs, beforeReleased, beforeAcquired, "extended-recovered");
+                    }
                 }
-                pendingFrames.put(packet.ptsUs,
-                        new PendingFrame(activeConnection, FrameIdentity.from(packet)));
-                maxQueuedWindow = Math.max(maxQueuedWindow, queuedWindowLocked());
             }
-        }
-        // Only the two MediaCodec flags that RMANVID semantically carries are
-        // forwarded; transport bits must never become EOS/PARTIAL_FRAME.
-        codec.queueInputBuffer(inputIndex, 0, packet.payload.length, packet.ptsUs,
-                codecInputFlags(packet.flags));
-        synchronized (lock) {
-            receivedPackets++; inputsQueued++;
-            stageTrace.progress(ReceiverStageTrace.INPUT, activeConnection,
-                    SystemClock.elapsedRealtimeNanos(), packet.ptsUs, config ? 0L : packet.pair.pairId);
-        }
+            ByteBuffer input = codec.getInputBuffer(inputIndex);
+            if (input == null || packet.payload.length > input.capacity()) {
+                throw closed("DECODER_INPUT_CAPACITY", null);
+            }
+            input.clear();
+            input.put(packet.payload);
+            boolean config = (packet.flags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0;
+            if (!config) {
+                awaitIdentityCapacity(codec, activeConnection);
+                synchronized (lock) {
+                    if (pendingFrames.containsKey(packet.ptsUs) || retiredRenderFrames.containsKey(packet.ptsUs)) {
+                        throw closed("IDENTITY_PTS_COLLISION", null);
+                    }
+                    if (pendingFrames.size() >= bounds.maxPendingFrames) {
+                        identityWindowOverflows++;
+                        throw closed(queuedWindowLocked() >= renderWindowLocked()
+                                ? "IDENTITY_WINDOW_OVERFLOW_DECODE" : "IDENTITY_WINDOW_OVERFLOW_RENDER", null);
+                    }
+                    pendingFrames.put(packet.ptsUs,
+                            new PendingFrame(activeConnection, FrameIdentity.from(packet)));
+                    maxQueuedWindow = Math.max(maxQueuedWindow, queuedWindowLocked());
+                }
+            }
+            // Only the two MediaCodec flags that RMANVID semantically carries are
+            // forwarded; transport bits must never become EOS/PARTIAL_FRAME.
+            codec.queueInputBuffer(inputIndex, 0, packet.payload.length, packet.ptsUs,
+                    codecInputFlags(packet.flags));
+            synchronized (lock) {
+                receivedPackets++; inputsQueued++;
+                stageTrace.progress(ReceiverStageTrace.INPUT, activeConnection,
+                        SystemClock.elapsedRealtimeNanos(), packet.ptsUs, config ? 0L : packet.pair.pairId);
+            }
+
+        } finally { ReceiverTraceSections.end(tracing); }
+    }
+
+    /** Observation only; never extends a deadline, polls a Surface or changes packet custody. */
+    private void logInputPressure(long activeConnection, long startedMs, int attempts, int lastInputCode,
+            long beforeOutputs, long beforeReleased, long beforeAcquired, String outcome) {
+        try {
+            String observation;
+            synchronized (lock) {
+                if ("waiting".equals(outcome)) {
+                    if (firstInputPressureReported) return;
+                    firstInputPressureReported = true;
+                } else if ("recovered".equals(outcome)) {
+                    if (firstInputRecoveryReported) return;
+                    firstInputRecoveryReported = true;
+                } else if ("timeout".equals(outcome)) {
+                    if (firstInputTimeoutReported) return;
+                    firstInputTimeoutReported = true;
+                } else if ("extended-recovered".equals(outcome)) {
+                    if (firstExtendedInputRecoveryReported) return;
+                    firstExtendedInputRecoveryReported = true;
+                } else {
+                    if (firstInputTerminalReported) return;
+                    firstInputTerminalReported = true;
+                }
+                observation = "channel=packed-receiver status=decoder-input-pressure outcome=" + outcome
+                        + " receiverGeneration=" + generation + " connectionGeneration=" + activeConnection
+                        + " waitStartedElapsedMs=" + startedMs
+                        + " waitElapsedMs=" + Math.max(0L, SystemClock.elapsedRealtime() - startedMs)
+                        + " inputBudgetMs=" + bounds.codecInputTimeoutMs + " inputAttempts=" + attempts
+                        + " lastInputCode=" + lastInputCode
+                        + " outputsDrained=" + Math.max(0L, outputsDequeued - beforeOutputs)
+                        + " outputsReleased=" + Math.max(0L, outputsReleasedForRender - beforeReleased)
+                        + " hostAcquiredObserved=" + Math.max(0L, acquiredFrames - beforeAcquired)
+                        + " queuedWindow=" + queuedWindowLocked() + " renderWindow=" + renderWindowLocked();
+            }
+            android.util.Log.i("RQSpatialCameraPanel", observation);
+        } catch (RuntimeException ignored) { /* A diagnostic cannot change packet or failure custody. */ }
     }
 
     private void awaitIdentityCapacity(MediaCodec codec, long activeConnection) throws Exception {
@@ -631,7 +716,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         if (acquisitionProbe == null || stopRequested) return;
         // JNI or the host's reader callback may reenter the process. Never hold
         // the receiver lock while querying it.
-        AcquiredFrame acquired = acquisitionProbe.latestAcquired(generation, activeConnection);
+        AcquiredFrame acquired;
+        boolean probeTracing = ReceiverTraceSections.begin(ReceiverTraceSections.ACQUIRE_PROBE);
+        try { acquired = acquisitionProbe.latestAcquired(generation, activeConnection); }
+        finally { ReceiverTraceSections.end(probeTracing); }
         if (acquired == null) return;
         synchronized (lock) {
             if (decoder != codec || stopRequested || acquired.receiverGeneration != generation
@@ -668,77 +756,89 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     }
 
     private void drain(MediaCodec codec, long activeConnection) throws Exception {
-        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-        while (!stopRequested) {
-            int outputIndex = codec.dequeueOutputBuffer(info, 0L);
-            if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) continue;
-            if (outputIndex < 0) return;
-            boolean codecConfig = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
-            boolean emptyEos = info.size == 0
-                    && (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
-            if (codecConfig || emptyEos) {
-                codec.releaseOutputBuffer(outputIndex, false);
-                continue;
-            }
-            PendingFrame pending;
-            synchronized (lock) {
-                outputsDequeued++;
-                pending = pendingFrames.get(info.presentationTimeUs);
-                if (pending == null || pending.connectionGeneration != activeConnection
-                        || pending.readyForRender) {
-                    throw closed("OUTPUT_IDENTITY_MISSING", null);
+        boolean tracing = ReceiverTraceSections.begin(ReceiverTraceSections.DRAIN);
+        try {
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            while (!stopRequested) {
+                int outputIndex = codec.dequeueOutputBuffer(info, 0L);
+                if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) continue;
+                if (outputIndex < 0) return;
+                boolean codecConfig = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+                boolean emptyEos = info.size == 0
+                        && (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                if (codecConfig || emptyEos) {
+                    releaseOutput(codec, outputIndex, false);
+                    continue;
                 }
-                stageTrace.progress(ReceiverStageTrace.OUTPUT, activeConnection,
-                        SystemClock.elapsedRealtimeNanos(), info.presentationTimeUs, pending.identity.pairId);
-                // PTS is an exact lookup key, never an ordering promise. Retain
-                // queued frames across reordered output until their own output
-                // arrives or this connection is retired.
-            }
-            final long presentationTimeNs;
-            try {
-                presentationTimeNs = Math.multiplyExact(info.presentationTimeUs, 1_000L);
-            } catch (ArithmeticException overflow) {
-                synchronized (lock) { pendingFrames.remove(info.presentationTimeUs); }
-                codec.releaseOutputBuffer(outputIndex, false);
-                throw new IOException("decoder output timestamp overflows nanoseconds", overflow);
-            }
-            boolean accepted = true;
-            if (lifecycleListener != null) {
-                try {
-                    accepted = lifecycleListener.onFrameReadyForRender(
-                            generation, pending.connectionGeneration, presentationTimeNs,
-                            pending.identity);
-                } catch (RuntimeException callbackFailure) {
-                    accepted = false;
-                    failure = "pre-render callback failed: " + safeMessage(callbackFailure);
-                }
-            }
-            if (!accepted) {
-                synchronized (lock) { preRenderRejected++; }
-            }
-            synchronized (lock) {
-                PendingFrame current = pendingFrames.get(info.presentationTimeUs);
-                accepted = accepted && current == pending && decoder == codec && !stopRequested;
-                if (accepted) {
-                    pending.presentationTimeNs = presentationTimeNs;
-                    pending.releaseOrdinal = Math.incrementExact(nextReleaseOrdinal);
-                    nextReleaseOrdinal = pending.releaseOrdinal;
-                    pending.readyForRender = true;
-                    outputsReleasedForRender++;
-                    maxRenderWindow = Math.max(maxRenderWindow, renderWindowLocked());
-                } else {
-                    pendingFrames.remove(info.presentationTimeUs);
-                }
-            }
-            codec.releaseOutputBuffer(outputIndex, accepted);
-            if (accepted) {
+                PendingFrame pending;
                 synchronized (lock) {
-                    stageTrace.progress(ReceiverStageTrace.RELEASE, activeConnection,
+                    outputsDequeued++;
+                    pending = pendingFrames.get(info.presentationTimeUs);
+                    if (pending == null || pending.connectionGeneration != activeConnection
+                            || pending.readyForRender) {
+                        throw closed("OUTPUT_IDENTITY_MISSING", null);
+                    }
+                    stageTrace.progress(ReceiverStageTrace.OUTPUT, activeConnection,
                             SystemClock.elapsedRealtimeNanos(), info.presentationTimeUs, pending.identity.pairId);
+                    // PTS is an exact lookup key, never an ordering promise. Retain
+                    // queued frames across reordered output until their own output
+                    // arrives or this connection is retired.
                 }
+                final long presentationTimeNs;
+                try {
+                    presentationTimeNs = Math.multiplyExact(info.presentationTimeUs, 1_000L);
+                } catch (ArithmeticException overflow) {
+                    synchronized (lock) { pendingFrames.remove(info.presentationTimeUs); }
+                    releaseOutput(codec, outputIndex, false);
+                    throw new IOException("decoder output timestamp overflows nanoseconds", overflow);
+                }
+                boolean accepted = true;
+                if (lifecycleListener != null) {
+                    try {
+                        boolean callbackTracing = ReceiverTraceSections.begin(ReceiverTraceSections.PRE_RENDER);
+                        try {
+                            accepted = lifecycleListener.onFrameReadyForRender(
+                                    generation, pending.connectionGeneration, presentationTimeNs,
+                                    pending.identity);
+                        } finally { ReceiverTraceSections.end(callbackTracing); }
+                    } catch (RuntimeException callbackFailure) {
+                        accepted = false;
+                        failure = "pre-render callback failed: " + safeMessage(callbackFailure);
+                    }
+                }
+                if (!accepted) {
+                    synchronized (lock) { preRenderRejected++; }
+                }
+                synchronized (lock) {
+                    PendingFrame current = pendingFrames.get(info.presentationTimeUs);
+                    accepted = accepted && current == pending && decoder == codec && !stopRequested;
+                    if (accepted) {
+                        pending.presentationTimeNs = presentationTimeNs;
+                        pending.releaseOrdinal = Math.incrementExact(nextReleaseOrdinal);
+                        nextReleaseOrdinal = pending.releaseOrdinal;
+                        pending.readyForRender = true;
+                        outputsReleasedForRender++;
+                        maxRenderWindow = Math.max(maxRenderWindow, renderWindowLocked());
+                    } else {
+                        pendingFrames.remove(info.presentationTimeUs);
+                    }
+                }
+                releaseOutput(codec, outputIndex, accepted);
+                if (accepted) {
+                    synchronized (lock) {
+                        stageTrace.progress(ReceiverStageTrace.RELEASE, activeConnection,
+                                SystemClock.elapsedRealtimeNanos(), info.presentationTimeUs, pending.identity.pairId);
+                    }
+                }
+                if (!accepted) throw closed("PRE_RENDER_IDENTITY_REJECTED", null);
             }
-            if (!accepted) throw closed("PRE_RENDER_IDENTITY_REJECTED", null);
-        }
+        } finally { ReceiverTraceSections.end(tracing); }
+    }
+
+    private static void releaseOutput(MediaCodec codec, int outputIndex, boolean render) {
+        boolean tracing = ReceiverTraceSections.begin(ReceiverTraceSections.RELEASE_OUTPUT);
+        try { codec.releaseOutputBuffer(outputIndex, render); }
+        finally { ReceiverTraceSections.end(tracing); }
     }
 
     private void rendered(MediaCodec callbackCodec, long callbackConnection, long ptsUs) {
@@ -1149,12 +1249,18 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private final class CountingInputStream extends FilterInputStream {
         CountingInputStream(InputStream in) { super(in); }
         @Override public int read() throws IOException {
-            int value = super.read();
+            int value;
+            boolean tracing = ReceiverTraceSections.begin(ReceiverTraceSections.SOCKET_READ);
+            try { value = super.read(); }
+            finally { ReceiverTraceSections.end(tracing); }
             if (value >= 0) count(1);
             return value;
         }
         @Override public int read(byte[] b, int off, int len) throws IOException {
-            int n = super.read(b, off, len);
+            int n;
+            boolean tracing = ReceiverTraceSections.begin(ReceiverTraceSections.SOCKET_READ);
+            try { n = super.read(b, off, len); }
+            finally { ReceiverTraceSections.end(tracing); }
             if (n > 0) count(n);
             return n;
         }

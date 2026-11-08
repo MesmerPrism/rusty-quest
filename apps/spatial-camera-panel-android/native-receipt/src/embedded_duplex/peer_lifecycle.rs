@@ -644,8 +644,29 @@ fn renew_state_after_signed_pair(
     host: &Host,
     state: &mut State,
     pair_proof: &Value,
+    role: &'static str,
+) -> Result<Value, String> {
+    let mut stage = "native_entry";
+    let result = renew_state_after_signed_pair_at_stage(host, state, pair_proof, &mut stage);
+    if host.development_lifetime_policy.is_some() && result.is_err() {
+        crate::android_log_info(
+            "RQSpatialCameraPanelNative",
+            &format!(
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=embedded-duplex-renewal outcome=failed role={role} stage={stage}"
+            ),
+        );
+    }
+    result
+}
+
+fn renew_state_after_signed_pair_at_stage(
+    host: &Host,
+    state: &mut State,
+    pair_proof: &Value,
+    stage: &mut &'static str,
 ) -> Result<Value, String> {
     host.capability.require_live()?;
+    *stage = "native_retained_receipt";
     if let Some(index) = state
         .renewed_session_proofs
         .iter()
@@ -657,8 +678,11 @@ fn renew_state_after_signed_pair(
             .cloned()
             .ok_or("retained renewal receipt missing".into());
     }
+    *stage = "native_media";
     require_renewable_media(state)?;
+    *stage = "native_signed_proof";
     let renewal = serde_json::from_value(pair_proof.clone()).map_err(safe_decode)?;
+    *stage = "native_os_clock";
     let before = monotonic_ns()?;
     let wall = i64::try_from(
         SystemTime::now()
@@ -675,19 +699,27 @@ fn renew_state_after_signed_pair(
         .ok_or("OS clock uncertainty overflow")?;
     let now = u64::try_from(wall).map_err(|_| "OS authority wall clock negative")?;
     let result = {
+        *stage = "native_provider_checkout";
         let mut provider = Checkout::take(host.provider.clone())?;
+        *stage = "native_provider_clock";
         let clock = provider
             .get()
             .read_concurrent_peer_clock(wall, after, uncertainty)
             .map_err(|_| "current OS authority clock rejected")?;
-        provider
+        *stage = "native_entropy";
+        let entropy = entropy()?;
+        let (result, provider_stage) = provider
             .get()
-            .renew_concurrent_peer_authority(&clock, &renewal, now, &entropy()?)
-            .map_err(|_| "current signed authority renewal retained Pending")?
+            .renew_concurrent_peer_authority_observed(&clock, &renewal, now, &entropy);
+        *stage = provider_stage;
+        result.map_err(|_| "current signed authority renewal retained Pending")?
     };
+    *stage = "native_receipt_projection";
     let value = serde_json::to_value(result).map_err(safe_decode)?;
     host.capability.require_live()?;
+    *stage = "native_route_projection";
     projection(host)?;
+    *stage = "native_count";
     let count = state
         .renewal_count
         .checked_add(1)
@@ -747,7 +779,7 @@ pub(super) fn renew_after_signed_pair(host: &Host, pair_proof: &Value) -> Result
     let mut checked = Checkout::take(host.peer_lifecycle.clone())?;
     let state = checked.get();
     state.renewal_pending = true;
-    let result = renew_state_after_signed_pair(host, state, pair_proof);
+    let result = renew_state_after_signed_pair(host, state, pair_proof, "responder");
     match &result {
         Ok(_) => {
             state.renewal_pending = false;
@@ -792,7 +824,7 @@ fn renew(host: &Host, state: &mut State) -> Result<(), String> {
     {
         return Err("actual signed remote authority renewal absent".into());
     }
-    renew_state_after_signed_pair(host, state, proof)?;
+    renew_state_after_signed_pair(host, state, proof, "initiator")?;
     let cycle = pair
         .get("renewal_id")
         .and_then(Value::as_str)

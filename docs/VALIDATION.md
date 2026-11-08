@@ -9,6 +9,21 @@ streams, sibling failures, original error retention, inherited-pipe EOF refusal
 and the unchanged serialized path. Modeled compiler children perform no APK,
 Gradle cache or device work and establish no build speedup.
 
+The optional debug Vulkan metadata layer has explicit source/build selection,
+bounded recording and separately qualified loader/handle coverage. See
+[provenance diagnostic](VULKAN_PROVENANCE_DIAGNOSTIC.md#validation-and-later-qualification).
+
+The construction-time four-mode no-render interop diagnostic has focused
+actual Kotlin/JVM and standalone native query/mask/JNI controls. See
+[allocation diagnostic validation](NATIVE_INTEROP_ALLOCATION_DIAGNOSTIC.md#focused-source-checks)
+for commands, modeled leaves and the required later APK/device checks.
+
+The optional closed Background diagnostic has focused contract/custody,
+Android provider typecheck and cached Activity/scene controls. See
+[the diagnostic contract](SPATIAL_BACKGROUND_DIAGNOSTIC.md#validation-and-next-artifact)
+for exact commands and source-versus-artifact/device limits. Existing immersive
+backing retention and Entity scene-lifetime fixtures remain applicable.
+
 The stereo qualification mask-strip unit controls cover v1 compatibility and
 the explicitly versioned primary-texel-center strip. Marker `[77,66,2,255]`
 requires an actual retired final ABI2 frame with primary prefix6, current source
@@ -1722,3 +1737,17 @@ so its registered `check_all.ps1` invocation includes these regressions.
 This focused gate invokes real host Cargo in isolated fixture sources, covers
 Java-only freshness, native/dependency/feature/compiler-flag invalidation and
 exclusive-lock cleanup, and retains its outputs. It proves no Android/device effect.
+
+### Fresh setup diagnostic custody
+
+`tools/Test-QuestFreshSetupSource.ps1` includes the real pure Native failure
+parser controls through the existing host include seam. The focused command is
+`cargo test --locked -p spatial-camera-panel-native-receipt --lib operation_failure::tests`;
+verify a nonzero executed test count. `tools/checks/Test-EmbeddedDuplexOriginalsHost.py`
+runs the exact Java Native carrier and Original failure v1/v2/v3 compatibility,
+Future completion, persistence and unchanged-byte reload controls. Its bounded
+`--completion-only` mode also runs those diagnostics. Select actual current
+app Java/Kotlin classes, media classes and Android API jar in the support
+classpath; no earlier APK supplies test support. See the
+[failure observation contract](EMBEDDED_DUPLEX_R5_CONTINUITY.md#fresh-setup-failure-observations).
+Host success supplies no device failure cause, cleanup or restart qualification.

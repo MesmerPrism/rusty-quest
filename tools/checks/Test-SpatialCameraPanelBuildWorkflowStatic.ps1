@@ -319,7 +319,7 @@ function Get-KotlinIsolationBuildObservation([string]$Source,[string]$Mode,[stri
     . ([scriptblock]::Create($geometry))
     $created=@(& ([scriptblock]::Create($targets[0].Extent.Text)))
     $shortAapt2='fixture-aapt2';$cmakeStaging=@{path='fixture-cmake'};$mediaAndroidJar='fixture-android.jar';$mediaAndroidBuildRoot='fixture-media'
-    $sourceBankBuildInputs=@{enabled=$false};$UseSourceCompositionVersionName=$false;$gradleTimingInitPath='fixture-timing.gradle'
+    $sourceBankBuildInputs=@{enabled=$false};$UseSourceCompositionVersionName=$false;$sourceRuntimeStampEnabled=$false;$gradleTimingInitPath='fixture-timing.gradle'
     $argumentConstruction=$Source.Substring($argv[0].Extent.StartOffset,$dispatch[0].Extent.StartOffset-$argv[0].Extent.StartOffset)
     . ([scriptblock]::Create($argumentConstruction))
     # Consume only the real fixed-phase assignments, never invoke a tool or the

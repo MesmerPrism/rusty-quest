@@ -420,6 +420,12 @@ impl ProjectionZoneCompositorPrepareStatus {
     }
 }
 
+#[cfg(any(target_os = "android", test))]
+#[path = "spatial_binocular_display.rs"]
+pub(crate) mod binocular_display;
+#[cfg(target_os = "android")]
+#[path = "spatial_optional_color_pass.rs"]
+pub(crate) mod optional_color_pass;
 #[path = "spatial_stereo_banks.rs"]
 mod stereo_banks;
 pub(crate) use stereo_banks::{
@@ -430,6 +436,14 @@ pub(crate) use stereo_banks::{
 pub(crate) use stereo_banks::{StereoRecordingInputs, StereoRecordingSource};
 pub(crate) struct SpatialPublicGuideTargets {
     stereo_banks: Option<Box<stereo_banks::StereoBankResources>>,
+    #[cfg(target_os = "android")]
+    optional_color_pass: Option<optional_color_pass::OptionalColorPass>,
+    #[cfg(target_os = "android")]
+    binocular_display: Option<binocular_display::Pass>,
+    #[cfg(target_os = "android")]
+    binocular_display_failed: bool,
+    #[cfg(target_os = "android")]
+    optional_color_failed: bool,
     targets: Vec<SpatialPublicGuideTarget>,
     extent: vk::Extent2D,
     format: vk::Format,
@@ -738,7 +752,93 @@ impl SpatialPublicGuideTargets {
         )
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) unsafe fn prepare_optional_color_pass(
+        &mut self,
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        extent: vk::Extent2D,
+    ) -> Option<&optional_color_pass::OptionalColorPass> {
+        if extent.width < 2
+            || extent.width % 2 != 0
+            || extent.height == 0
+            || self.optional_color_failed
+            || !self
+                .stereo_banks
+                .as_ref()
+                .is_some_and(|bank| bank.camera_color_enabled)
+        {
+            return None;
+        }
+        if self.optional_color_pass.is_none() {
+            match optional_color_pass::OptionalColorPass::new(
+                device,
+                memory,
+                format,
+                extent,
+                self.projection_render_pass,
+            ) {
+                Ok(pass) => self.optional_color_pass = Some(pass),
+                Err(error) => {
+                    log_marker(format!(
+                        "status=optional-color-pass-unavailable reason={} runtimeCrash=false",
+                        crate::marker_token(&error),
+                    ));
+                    self.optional_color_failed = true;
+                }
+            }
+        }
+        self.optional_color_pass.as_ref()
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn optional_color_pass(&self) -> Option<&optional_color_pass::OptionalColorPass> {
+        self.optional_color_pass.as_ref()
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) unsafe fn prepare_binocular_display(
+        &mut self,
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        render_pass: vk::RenderPass,
+    ) -> Option<(vk::RenderPass, vk::Framebuffer)> {
+        if extent.width < 2
+            || extent.width % 2 != 0
+            || extent.height == 0
+            || self.binocular_display_failed
+        {
+            return None;
+        }
+        if self.binocular_display.is_none() {
+            match binocular_display::Pass::new(device, memory, format, extent, render_pass) {
+                Ok(pass) => self.binocular_display = Some(pass),
+                Err(error) => {
+                    log_marker(format!(
+                        "status=binocular-display-unavailable reason={} runtimeCrash=false",
+                        crate::marker_token(&error),
+                    ));
+                    self.binocular_display_failed = true;
+                }
+            }
+        }
+        self.binocular_display.as_ref()?.target(extent)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn binocular_display(&self) -> Option<&binocular_display::Pass> {
+        self.binocular_display.as_ref()
+    }
+
     pub(crate) unsafe fn destroy(mut self, device: &ash::Device) {
+        #[cfg(target_os = "android")]
+        {
+            drop(self.binocular_display.take());
+            drop(self.optional_color_pass.take());
+        }
         if let Some(state) = self.stereo_banks.take() {
             state.destroy(device);
         }
@@ -1469,8 +1569,15 @@ impl SpatialPublicGuideTargets {
         zone_frame: &CameraHwbProjectionZoneFrame,
         camera_content_only: bool,
         layer_override: f32,
+        color_stage: crate::spatial_optional_color_policy::CameraColorStage,
     ) -> Result<bool, String> {
+        use crate::spatial_optional_color_policy::CameraColorStage;
         let stereo = self.stereo_banks.as_deref();
+        if color_stage != CameraColorStage::Inactive
+            && !stereo.is_some_and(|bank| bank.camera_color_enabled)
+        {
+            return Err("camera-color-provider-abi-not-selected".into());
+        }
         if let Some(stereo) = stereo {
             if self
                 .projection_zone_video_pipeline
@@ -1498,22 +1605,29 @@ impl SpatialPublicGuideTargets {
             device,
             &surface_features.uniform(displacement, zone_frame.draw_rects),
         )?;
-        let tessellated_effective = projection_surface_tessellation_allowed(
-            camera_content_only,
-            zone_frame.settings.synthetic_diagnostic(),
-        ) && surface_features.tessellated_effective(
-            displacement,
-            PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2 && pipeline.displacement_pipeline.is_some(),
-        );
+        let tessellated_effective = color_stage != CameraColorStage::Capture
+            && projection_surface_tessellation_allowed(
+                camera_content_only,
+                zone_frame.settings.synthetic_diagnostic(),
+            )
+            && surface_features.tessellated_effective(
+                displacement,
+                PROJECTION_SURFACE_UNIFORM_ABI_VERSION >= 2
+                    && pipeline.displacement_pipeline.is_some(),
+            );
         let strength_cycle_phase_turns =
             advance_spatial_public_strength_cycle_phase(elapsed_seconds);
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
-            set_packed_projection_target_view(
-                device,
-                command_buffer,
-                extent,
-                zone_frame.draw_rects[eye_index],
-            );
+            if color_stage == CameraColorStage::Capture {
+                set_packed_eye_view(device, command_buffer, extent, eye_index);
+            } else {
+                set_packed_projection_target_view(
+                    device,
+                    command_buffer,
+                    extent,
+                    zone_frame.draw_rects[eye_index],
+                );
+            }
             device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -1557,7 +1671,7 @@ impl SpatialPublicGuideTargets {
                     &[],
                 );
             }
-            let push = OpaqueProjectionPush::for_packed_eye(
+            let mut push = OpaqueProjectionPush::for_packed_eye(
                 eye_index,
                 elapsed_seconds,
                 strength_cycle_phase_turns,
@@ -1565,8 +1679,9 @@ impl SpatialPublicGuideTargets {
                 footprint_scale,
                 layer_override,
             );
+            push.params0[1] = color_stage.provider_mode();
             push_projection_constants(device, command_buffer, final_layout, &push);
-            if stereo.is_some() {
+            if stereo.is_some() && color_stage != CameraColorStage::Capture {
                 crate::spatial_stereo_qualification::observe_final_draw(tessellated_effective);
             }
             device.cmd_draw(
@@ -1583,8 +1698,9 @@ impl SpatialPublicGuideTargets {
         }
         // One diagnostic-only5x1 draw after both normal eyes, inside this same
         // render pass/submission. Exact source leases and UBO are still held.
-        if let Some((stereo, plan)) =
-            stereo.and_then(|s| s.mask_diagnostic_plan(extent).map(|p| (s, p)))
+        if let Some((stereo, plan)) = stereo
+            .filter(|_| color_stage == CameraColorStage::Inactive)
+            .and_then(|s| s.mask_diagnostic_plan(extent).map(|p| (s, p)))
         {
             device.cmd_set_viewport(
                 command_buffer,
@@ -3838,6 +3954,14 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
         };
     Ok(SpatialPublicGuideTargets {
         stereo_banks: None,
+        #[cfg(target_os = "android")]
+        optional_color_pass: None,
+        #[cfg(target_os = "android")]
+        binocular_display: None,
+        #[cfg(target_os = "android")]
+        binocular_display_failed: false,
+        #[cfg(target_os = "android")]
+        optional_color_failed: false,
         targets,
         extent,
         format,
@@ -5093,13 +5217,16 @@ unsafe fn create_fragment_pipeline_with_vertex(
         .layout(pipeline_layout)
         .render_pass(render_pass)
         .subpass(0)];
-    let pipeline = device
-        .create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_info, None)
-        .map_err(|(_, error)| format!("create-{label}-pipeline-{error:?}"))?
-        .remove(0);
+    let result = device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_info, None);
     device.destroy_shader_module(frag_module, None);
     device.destroy_shader_module(vert_module, None);
-    Ok(pipeline)
+    match result {
+        Ok(mut pipelines) => Ok(pipelines.remove(0)),
+        Err((pipelines, error)) => {
+            destroy_pipelines(device, pipelines);
+            Err(format!("create-{label}-pipeline-{error:?}"))
+        }
+    }
 }
 
 unsafe fn destroy_pipelines(device: &ash::Device, pipelines: Vec<vk::Pipeline>) {

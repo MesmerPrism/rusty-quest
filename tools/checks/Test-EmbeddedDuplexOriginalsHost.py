@@ -181,6 +181,7 @@ def main():
     if (production / 'EmbeddedDuplexColdRecovery.java').exists():
         sources.append(production / 'EmbeddedDuplexColdRecovery.java')
         sources.append(production / 'EmbeddedDuplexNative.java')
+    sources.append(fixture.with_name('EmbeddedDuplexNativeFailureHostTest.java'))
     if args.whole_publication:
         sources.append(fixture.with_name('EmbeddedDuplexWholePublicationHostTest.java'))
         sources.append(production / 'EmbeddedDuplexRuntimeConfigurationBinding.java')
@@ -197,7 +198,7 @@ def main():
     with (out / 'compile.log').open('wb') as stream:
         subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
     with (out / 'controls.log').open('wb') as stream:
-        for main_class in ['EmbeddedDuplexOriginalsHostTest'] + (['EmbeddedDuplexWholePublicationHostTest'] if args.whole_publication else []):
+        for main_class in ['EmbeddedDuplexNativeFailureHostTest', 'EmbeddedDuplexOriginalsHostTest'] + (['EmbeddedDuplexWholePublicationHostTest'] if args.whole_publication else []):
             subprocess.run([str(java_home / 'bin/java.exe'), '-Djava.io.tmpdir=' + str(out / 'runtime'), '-Dhost.proc=' + str(proc), *(['-Dhost.captured.whole=' + str(args.captured_whole_row.resolve()), '-Dhost.handoff.output=' + str(out / 'captured-handoff.json')] if args.captured_whole_row else []), '-cp', os.pathsep.join((str(classes), str(jar), args.support_classpath)), package.replace('/', '.') + '.' + main_class, *(['--completion-only'] if args.completion_only else [])], stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
     if any(hashlib.sha256((root / relative).read_bytes()).hexdigest() != digest for relative, digest in source_pins.items()):
         raise ValueError('Source changed during the exact-body host controls; rerun against stable inputs')

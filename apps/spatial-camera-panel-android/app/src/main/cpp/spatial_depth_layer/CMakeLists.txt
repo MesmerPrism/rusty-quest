@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(rusty_quest_spatial_sdk_depth_handoff LANGUAGES CXX)
 
+option(RQ_ENABLE_VULKAN_PROVENANCE "Build the separately selected debug Vulkan metadata layer" OFF)
+if(RQ_ENABLE_VULKAN_PROVENANCE)
+  add_subdirectory(../vulkan_provenance vulkan-provenance)
+endif()
+
 add_library(
   XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff
   SHARED

@@ -78,6 +78,15 @@ cleanup, snapshot and loop boundaries with modeled GPU leaves. Its controls
 cover revision and processing changes, exact fatal-error propagation and fence
 ownership; they supply no Android, device rendering or driver-cleanup evidence.
 
+Source freshness snapshots sample the local monotonic clock while holding the
+source-set mutex, matching Own admission. A producer cannot publish a later
+observation between that clock sample and the immutable snapshot. Clock failure,
+genuinely future observations and the existing maximum-age bound retain their
+failure semantics. `Test-StereoSourceSnapshotHost.py` compiles the actual source
+and payload owners to exercise lock ordering, both-source publication, freshness
+boundaries and retained lease retirement. These controls do not identify the
+cause of any particular missing bank or prove live frame continuity.
+
 Primary requires an additional bank allocation and one raw draw plus five guide
 passes when enabled. No performance or memory equivalence is asserted without
 measurement. Host controls model Vulkan calls; native Android compilation and

@@ -1,0 +1,79 @@
+package io.github.mesmerprism.rustyquest.media;
+
+import android.os.Trace;
+import java.io.ByteArrayInputStream;
+import java.io.FilterInputStream;
+import java.io.InputStream;
+import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+public final class ReceiverSocketTraceHost {
+    final Object lock = new Object();
+    long bytesRead;
+    boolean connectionBytesSeen;
+    PRODUCTION_COUNTING_INPUT
+    static void check(boolean okay, String label) { if (!okay) throw new AssertionError(label); }
+    static final String SOCKET = "rusty.media.receiver.socket_read";
+    public static void main(String[] args) throws Exception {
+        ReceiverSocketTraceHost host = new ReceiverSocketTraceHost();
+        Trace.enabled = true;
+        CountingInputStream single = host.new CountingInputStream(new ByteArrayInputStream(new byte[]{7}));
+        check(single.read() == 7 && host.bytesRead == 1 && host.connectionBytesSeen, "single-byte result/count unchanged");
+        check(Trace.events.size() == 2 && Trace.events.get(0).equals("B:" + SOCKET)
+                && Trace.events.get(1).equals("E:" + SOCKET), "socket read span missing or unbalanced");
+        Trace.reset(); Trace.enabled = true;
+        CountingInputStream bulk = host.new CountingInputStream(new ByteArrayInputStream(new byte[]{1,2,3}));
+        check(bulk.read(new byte[4], 1, 2) == 2 && host.bytesRead == 3, "bulk byte count exactly once");
+        check(Trace.events.size() == 2, "one bulk I/O span");
+        check(bulk.read(new byte[4], 0, 4) == 1 && bulk.read() == -1 && host.bytesRead == 4,
+                "partial read and EOF counts unchanged");
+        Trace.reset();
+        check(host.new CountingInputStream(new ByteArrayInputStream(new byte[]{8})).read() == 8
+                && Trace.events.isEmpty(), "disabled path has no sections");
+        Trace.enabled = true;
+        IOException expected = new IOException("original read failure");
+        InputStream failed = new InputStream() { public int read() throws IOException { throw expected; } };
+        try { host.new CountingInputStream(failed).read(); throw new AssertionError("missing IO exception"); }
+        catch (IOException observed) { check(observed == expected, "I/O exception identity preserved"); }
+        check(Trace.current(Thread.currentThread()) == null, "I/O failure closes span");
+        Trace.reset(); Trace.enabled = true;
+        final CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        InputStream blocked = new InputStream() {
+            public int read() throws IOException {
+                entered.countDown();
+                try { if (!release.await(2, TimeUnit.SECONDS)) throw new IOException("fixture timeout"); }
+                catch (InterruptedException interrupted) { throw new IOException(interrupted); }
+                return 9;
+            }
+        };
+        Thread worker;
+        synchronized (host.lock) {
+            worker = new Thread(() -> {
+                try { host.new CountingInputStream(blocked).read(); }
+                catch (Throwable failure) { error.set(failure); }
+            });
+            worker.start();
+            check(entered.await(2, TimeUnit.SECONDS), "underlying I/O entered");
+            check(SOCKET.equals(Trace.current(worker)), "blocked underlying I/O is inside socket span");
+            release.countDown();
+            long deadline = System.nanoTime() + 2_000_000_000L;
+            while (worker.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield();
+            check(worker.getState() == Thread.State.BLOCKED && Trace.current(worker) == null,
+                    "count monitor wait is outside socket span");
+        }
+        worker.join(2000L);
+        check(!worker.isAlive() && error.get() == null, "read worker retires");
+        // Android Trace RuntimeExceptions must not replace a stream result or its IOException.
+        for (int fault = 0; fault < 3; fault++) {
+            Trace.reset(); Trace.enabled = true;
+            Trace.failEnabled = fault == 0; Trace.failBegin = fault == 1; Trace.failEnd = fault == 2;
+            try { host.new CountingInputStream(failed).read(); throw new AssertionError("missing original failure"); }
+            catch (IOException observed) { check(observed == expected, "trace failure cannot mask I/O failure"); }
+        }
+        Trace.reset();
+        System.out.println("receiver-socket-trace:pass");
+    }
+}

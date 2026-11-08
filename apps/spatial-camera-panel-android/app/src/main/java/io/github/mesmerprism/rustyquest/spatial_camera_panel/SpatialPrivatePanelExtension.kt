@@ -16,6 +16,10 @@ internal data class SpatialPrivatePanelExtensionHost(
     val recenterVideo: (String, String) -> Boolean,
     val notifyLaunchOptionsChanged: () -> Unit,
     val marker: (String) -> Unit,
+    val setOptionalColorPass: (Int, IntArray) -> Boolean = { _, _ -> false },
+    val optionalColorPassEffectivePlacement: () -> Int = { 0 },
+    val setBinocularDisplayMode: (Int) -> Boolean = { false },
+    val binocularDisplayEffectiveMode: () -> Int = { -1 },
 )
 
 internal enum class SpatialPrivatePanelLockedInputAction {

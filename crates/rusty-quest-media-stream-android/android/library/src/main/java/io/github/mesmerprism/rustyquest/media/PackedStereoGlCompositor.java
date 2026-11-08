@@ -53,6 +53,7 @@ final class PackedStereoGlCompositor implements Closeable {
     private final CaptureCorrelation rightCorrelation = new CaptureCorrelation();
     private final CaptureFrameTrace leftFrameTrace;
     private final CaptureFrameTrace rightFrameTrace;
+    private final CaptureStallDiagnostics stallDiagnostics;
     private final CountDownLatch ready = new CountDownLatch(1);
     private final Thread thread;
     private volatile SurfaceNotificationOwner surfaceNotifications;
@@ -235,24 +236,31 @@ final class PackedStereoGlCompositor implements Closeable {
             Surface encoderInputSurface,
             boolean synthetic,
             Listener listener) throws Exception {
-        this(layout, encoderInputSurface, synthetic, listener, null, null, null);
+        this(layout, encoderInputSurface, synthetic, listener, null, null, null, null);
     }
 
     PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
             PackedStereoPoolExecutor executor, Listener listener) throws Exception {
-        this(layout, null, false, listener, executor, null, null);
+        this(layout, null, false, listener, executor, null, null, null);
     }
 
     PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
             PackedStereoPoolExecutor executor, Listener listener,
             CaptureFrameTrace leftTrace, CaptureFrameTrace rightTrace) throws Exception {
-        this(layout, null, false, listener, executor, leftTrace, rightTrace);
+        this(layout, null, false, listener, executor, leftTrace, rightTrace, null);
+    }
+
+    PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
+            PackedStereoPoolExecutor executor, Listener listener,
+            CaptureFrameTrace leftTrace, CaptureFrameTrace rightTrace,
+            CaptureStallDiagnostics stallDiagnostics) throws Exception {
+        this(layout, null, false, listener, executor, leftTrace, rightTrace, stallDiagnostics);
     }
 
     private PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
             Surface encoderInputSurface, boolean synthetic, Listener listener,
             PackedStereoPoolExecutor executor, CaptureFrameTrace leftTrace,
-            CaptureFrameTrace rightTrace) throws Exception {
+            CaptureFrameTrace rightTrace, CaptureStallDiagnostics stallDiagnostics) throws Exception {
         this.layout = layout;
         this.poolExecutor = executor;
         this.encoderInputSurface = encoderInputSurface;
@@ -260,6 +268,7 @@ final class PackedStereoGlCompositor implements Closeable {
         this.listener = listener;
         this.leftFrameTrace = leftTrace;
         this.rightFrameTrace = rightTrace;
+        this.stallDiagnostics = stallDiagnostics;
         this.pairer = new PackedStereoFramePairer(RING_SIZE - 2, layout.maxPairDeltaNs);
         this.thread = new Thread(new Runnable() {
             @Override
@@ -510,7 +519,7 @@ final class PackedStereoGlCompositor implements Closeable {
                 if (stopRequested) {
                     break;
                 }
-                if (pool != null) { gl.makePbufferCurrent(); pool.pollReady(); }
+                if (pool != null) { gl.makePbufferCurrent(); pollCapturePool(pool); }
                 if (request != null) {
                     renderSynthetic(gl, request);
                 }
@@ -537,6 +546,13 @@ final class PackedStereoGlCompositor implements Closeable {
                 quarantinedGl = gl; cleanupRejected = true; notifyFailure(pending);
             }
         }
+    }
+
+    private void pollCapturePool(PackedStereoPoolExecutor.Pool pool) throws Exception {
+        CaptureStallDiagnostics.Window probe = stallDiagnostics == null ? null : stallDiagnostics.active();
+        long token = probe == null ? 0L : probe.begin(CaptureStallDiagnostics.POOL_POLL_READY, -1L);
+        try { pool.pollReady(); }
+        finally { if (probe != null) probe.end(CaptureStallDiagnostics.POOL_POLL_READY, token); }
     }
 
     private void consumeCameraFrame(

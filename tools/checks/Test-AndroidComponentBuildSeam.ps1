@@ -9,7 +9,9 @@ foreach($name in @('Get-FileSha256','Get-StringSha256','Get-DirectorySha256','Ge
     $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true)
     Invoke-Expression $definition.Extent.Text
 }
-Import-Module (Join-Path $RepoRoot 'tools/lib/AndroidComponentClosure.psm1') -Force
+$componentModule=Import-Module (Join-Path $RepoRoot 'tools/lib/AndroidComponentClosure.psm1') -Force -PassThru
+Import-Module (Join-Path $RepoRoot 'tools/lib/SpatialVulkanProvenanceSelection.psm1') -Force
+$actualArgumentCheck=& $componentModule {(Get-Command Assert-AndroidComponentGradleArguments).ScriptBlock}
 Import-Module (Join-Path $RepoRoot 'tools/EmbeddedDuplexFreshSetupPolicy.psm1') -Force
 $actualGradlePhaseCommand=(Get-Command Invoke-AndroidComponentGradlePhase).ScriptBlock
 $assignments=@{}
@@ -70,6 +72,11 @@ try {
         @('classes'), @(':app:assembleDebug'), @('--init-script','relative.gradle'),
         @('-PrqAndroidComponentKotlinTask=other'), @('-PunknownProjection=value'),
         @('--no-daemon','--no-daemon'), @('--configuration-cache','--no-configuration-cache')
+        @('-PrqVulkanProvenanceDiagnostic='), @('-PrqVulkanProvenanceDiagnostic=1'),
+        @('-PrqVulkanProvenanceDiagnostic=True'), @('-PrqVulkanProvenanceDiagnostic=false '),
+        @('-PrqVulkanProvenanceDiagnostic=true','-PrqVulkanProvenanceDiagnostic=false'),
+        @('-PrqVulkanProvenanceDiagnostic=true',':app:assembleDebug'),
+        @("-PrqVulkanProvenanceDiagnostic=true`n:app:assembleDebug")
     )
     foreach($damage in $argumentDamages){
         try{$null=Invoke-AndroidComponentGradlePhase @invocation -Arguments $damage;throw 'Uncontrolled Gradle argument accepted.'}
@@ -80,17 +87,19 @@ try {
     $capturedArguments=Join-Path $scratch 'assemble-arguments.txt'
     [IO.File]::WriteAllText($fakeGradle,"@echo off`necho %*> `"$capturedArguments`"`nexit /b 0`n")
     $invocation.ExpectedGradleSha256=Get-FileSha256 $fakeGradle
-    foreach($variant in @('Debug','Release')){
+    foreach($variant in @('Debug','Release')){foreach($diagnostic in @('false','true')){
         $invocation.BuildType=$variant
-        $execution=Invoke-AndroidComponentGradlePhase @invocation -Arguments @('--no-daemon')
+        $execution=Invoke-AndroidComponentGradlePhase @invocation -Arguments @('--no-daemon',"-PrqVulkanProvenanceDiagnostic=$diagnostic")
         $expectedTask=":app:assemble$variant"
         $actualArguments=[IO.File]::ReadAllText($capturedArguments).Trim()
         $actualTasks=@([regex]::Matches($actualArguments,'(?:^|\s)"?(:[^"\s]+)"?(?=\s|$)') | ForEach-Object {$_.Groups[1].Value})
         if($execution.phase -cne 'Assemble' -or $execution.task -cne $expectedTask -or
-            $actualTasks.Count -ne 1 -or $actualTasks[0] -cne $expectedTask){
+            $actualTasks.Count -ne 1 -or $actualTasks[0] -cne $expectedTask -or
+            ([regex]::Matches($actualArguments,'-PrqVulkanProvenanceDiagnostic=(?:true|false)')).Count -ne 1 -or
+            -not$actualArguments.Contains("-PrqVulkanProvenanceDiagnostic=$diagnostic")){
             throw 'Actual component phase did not dispatch its one selected assemble task.'
         }
-    }
+    }}
     $invocation.BuildType='Debug'
     $invocation.ExpectedGradleSha256='0'*64
     try{$null=Invoke-AndroidComponentGradlePhase @invocation -Arguments @('--no-daemon');throw 'Changed Gradle executable accepted.'}
@@ -116,6 +125,23 @@ try {
     # drift must not replace the original child failure or discard its metadata.
     $inventoryPath=Join-Path $scratch 'inventory.json'
     [IO.File]::WriteAllText($inventoryPath,$selected.json,[Text.UTF8Encoding]::new($false))
+    # Real selected-source inventory and exact early/assemble task dispatch.
+    # Only the transport is modeled; no Gradle compiler or APK work is run.
+    foreach($phase in @('JvmPreflight','Assemble')){foreach($diagnostic in @('false','true')){
+        $evidence=Join-Path $scratch ('diagnostic-'+$phase+'-'+$diagnostic)
+        $execution=Invoke-AndroidComponentGradlePhase -Phase $phase -GradlePath $fakeGradle -ExpectedGradleSha256 (Get-FileSha256 $fakeGradle) `
+            -ProjectDirectory $scratch -GradleUserHome (Join-Path $scratch 'gradle-home') -BuildType Debug `
+            -InventoryPath $inventoryPath -ExpectedInventorySha256 $selected.sha256 -EvidenceDirectory $evidence `
+            -Arguments @('--no-daemon',"-PrqVulkanProvenanceDiagnostic=$diagnostic")
+        $expectedTask=if($phase-ceq'JvmPreflight'){':app:verifySelectedAndroidJvmCompilation'}else{':app:assembleDebug'}
+        $actualArguments=[IO.File]::ReadAllText($capturedArguments).Trim()
+        $actualTasks=@([regex]::Matches($actualArguments,'(?:^|\s)"?(:[^"\s]+)"?(?=\s|$)')|ForEach-Object{$_.Groups[1].Value})
+        if($execution.task-cne$expectedTask-or$actualTasks.Count-ne1-or$actualTasks[0]-cne$expectedTask-or
+           -not$actualArguments.Contains("-PrqVulkanProvenanceDiagnostic=$diagnostic")-or
+           -not$actualArguments.Contains($inventoryPath)){
+            throw 'Selected diagnostic property/inventory/task did not reach the actual component phase.'
+        }
+    }}
     $privateOwner=Join-Path $privateSources 'Owner.kt'
     [IO.File]::WriteAllText($fakeGradle,"@echo off`necho changed> `"$privateOwner`"`necho modeled-child-failure`nexit /b 17`n")
     $priorNativePreference=$global:PSNativeCommandUseErrorActionPreference
@@ -232,15 +258,23 @@ try {
     [IO.File]::WriteAllText((Join-Path $scratch 'platforms/android-34/android.jar'),'modeled transport only')
     function Assert-QuestBuildSourceCompositionCurrent { param($Composition,[switch]$AllowWorkingTreeChanges) }
     function Assert-ModeledProjection {
+        param([string[]]$Arguments)
+        $diagnostics=@($Arguments|Where-Object{$_-clike'-PrqVulkanProvenanceDiagnostic=*'})
+        $expectedDiagnostic='-PrqVulkanProvenanceDiagnostic='+$vulkanProvenanceSelection.enabled.ToString().ToLowerInvariant()
+        if($diagnostics.Count-ne1-or$diagnostics[0]-cne$expectedDiagnostic){throw 'Actual canonical producer lost its explicit diagnostic property.'}
+        & $actualArgumentCheck -Arguments $Arguments
         if($env:ANDROID_HOME -cne $scratch -or $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID -cne 'fixture' -or
             -not [string]::IsNullOrEmpty($env:RUSTY_QUEST_SPATIAL_UNSELECTED_FIXTURE)){throw 'Selected Gradle projection was not applied.'}
         throw 'modeled-selected-gradle-failure'
     }
-    function Invoke-AndroidComponentJvmCompilation { param($GradlePath,$ExpectedGradleSha256,$ProjectDirectory,$GradleUserHome,$BuildType,$Arguments,$InventoryPath,$ExpectedInventorySha256,$EvidenceDirectory,$PythonPath) Assert-ModeledProjection }
-    function Invoke-AndroidComponentGradlePhase { param($GradlePath,$ExpectedGradleSha256,$ProjectDirectory,$GradleUserHome,$BuildType,$Arguments,$InventoryPath,$ExpectedInventorySha256,$EvidenceDirectory,$Phase,$PythonPath) Assert-ModeledProjection }
+    function Invoke-AndroidComponentJvmCompilation { param($GradlePath,$ExpectedGradleSha256,$ProjectDirectory,$GradleUserHome,$BuildType,$Arguments,$InventoryPath,$ExpectedInventorySha256,$EvidenceDirectory,$PythonPath) Assert-ModeledProjection -Arguments $Arguments }
+    function Invoke-AndroidComponentGradlePhase { param($GradlePath,$ExpectedGradleSha256,$ProjectDirectory,$GradleUserHome,$BuildType,$Arguments,$InventoryPath,$ExpectedInventorySha256,$EvidenceDirectory,$Phase,$PythonPath) Assert-ModeledProjection -Arguments $Arguments }
     $savedAmbient=$env:RUSTY_QUEST_SPATIAL_UNSELECTED_FIXTURE
     try{
         $env:RUSTY_QUEST_SPATIAL_UNSELECTED_FIXTURE='unselected-synthetic-value'
+        $EnvironmentDepthOwner='spatial-sdk-api-layer'
+        foreach($diagnostic in @($false,$true)){
+        $vulkanProvenanceSelection=Resolve-SpatialVulkanProvenanceSelection -Requested:$diagnostic -BuildType Debug -EnvironmentDepthOwner $EnvironmentDepthOwner
         foreach($BuildMode in @('DevFast','Candidate')){foreach($phase in @('JvmPreflight','Assemble')){
             $beforeEnvironment=@{};Get-ChildItem Env: | ForEach-Object {$beforeEnvironment[$_.Name]=[string]$_.Value}
             try{$null=Invoke-SpatialGradlePhase -Phase $phase -ComponentEvidenceDirectory '';throw 'Modeled failure was lost.'}
@@ -254,7 +288,7 @@ try {
             foreach($key in $beforeEnvironment.Keys){
                 if(-not $afterEnvironment.ContainsKey($key) -or $afterEnvironment[$key] -cne $beforeEnvironment[$key]){throw 'Gradle failure did not restore parent environment.'}
             }
-        }}
+        }}}
     }finally{$env:RUSTY_QUEST_SPATIAL_UNSELECTED_FIXTURE=$savedAmbient}
     # Real shared executable pre/post guard, modeled compiler transport only:
     # changing the selected launcher between phases cannot become a fresh pin.

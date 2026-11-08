@@ -165,6 +165,14 @@ unsafe fn render_source_set_common_graph(
             wsi.memory_properties,
         ));
         let surface_generation = NEXT_SDK_SURFACE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        let optional_color_route =
+            crate::spatial_public_multistack_runtime::optional_color_pass::ActiveRoute::begin(
+                surface_generation,
+            );
+        let binocular_display_route =
+            crate::spatial_public_multistack_runtime::binocular_display::ActiveRoute::begin(
+                surface_generation,
+            );
         crate::spatial_stereo_qualification::carrier_live();
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         crate::spatial_stereo_qualification::carrier_device(
@@ -209,7 +217,7 @@ unsafe fn render_source_set_common_graph(
         let command_buffers = &wsi.command_buffers;
         let frame_fence = wsi.frame_fence;
         let image_available = wsi.image_available;
-        let render_finished = wsi.render_finished;
+        let render_finished_semaphores = &wsi.render_finished;
         let swapchain = wsi.swapchain;
         let swapchain_loader = &wsi.swapchain_loader;
         let gpu_timestamps = &mut wsi.gpu_timestamps;
@@ -333,6 +341,7 @@ unsafe fn render_source_set_common_graph(
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
                 Err(error) => return Err(format!("peer-acquire-next-image-{error:?}")),
             };
+            let render_finished = render_finished_semaphores[image_index as usize];
             let command_buffer = command_buffers[image_index as usize];
             let latency_settings = current_camera_latency_settings();
             let camera_reprojection = current_camera_latency_stereo_reprojection(None, None);
@@ -493,6 +502,7 @@ unsafe fn render_source_set_common_graph(
                 },
                 processing_graph.public_guide_targets.as_mut(),
                 stereo_inputs,
+                Some((wsi.surface_format.format, &memory_properties)),
                 render_started.elapsed().as_secs_f32(),
                 Some(video_renderer),
                 latest_video_frame.as_ref(),
@@ -759,6 +769,8 @@ unsafe fn render_source_set_common_graph(
                     }
                 }
             }
+            optional_color_route.observe_retired(record_result.optional_color_request);
+            binocular_display_route.observe_retired(record_result.binocular_display_observation);
             frames_presented = frames_presented.saturating_add(1);
             record_presented_frame(
                 record_result.video_stats.ready,

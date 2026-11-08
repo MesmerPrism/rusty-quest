@@ -1,5 +1,8 @@
 //! Closed packaged route/profile decoding for one reciprocal embedded media product.
 
+use rusty_manifold_peer::COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID;
+#[cfg(feature = "development-usb-adb-relay")]
+use rusty_manifold_peer::DEVELOPMENT_LOOPBACK_RELAY_TCP_TRANSPORT_CONTRACT_ID;
 use rusty_quest_broker_authority::{packaged_json_sha256, QuestBrokerMediaSessionProductBinding};
 use serde::Deserialize;
 use std::{collections::BTreeSet, net::IpAddr};
@@ -27,6 +30,7 @@ pub(crate) struct PackagedDuplexRoute {
     pub(crate) package_name: String,
     pub(crate) route_configuration_sha256: String,
     pub(crate) network_scope_id: String,
+    pub(crate) transport_contract_id: String,
     pub(crate) profile: PackedStereoProfile,
     pub(crate) peers: [PackagedPeer; 2],
     pub(crate) installed_peer_index: usize,
@@ -42,6 +46,7 @@ pub(crate) struct PackagedPeer {
     pub(crate) right_camera_id: String,
     pub(crate) media: PackagedEndpoint,
     pub(crate) control: PackagedEndpoint,
+    pub(crate) local_source_port: Option<u16>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -83,6 +88,8 @@ struct RouteConfiguration {
     package_name: String,
     packed_profile_sha256: String,
     network_scope_id: String,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    transport_contract_id: Option<String>,
     peers: Vec<RoutePeer>,
     runtime_local_identity_source: String,
     device_local_private_key_source: String,
@@ -97,6 +104,41 @@ struct RoutePeer {
     camera2: CameraPair,
     media_endpoint: PackagedEndpoint,
     control_endpoint: PackagedEndpoint,
+    #[serde(default, deserialize_with = "deserialize_present")]
+    local_source_port: Option<u16>,
+}
+
+// Missing optional development fields retain LAN bytes. An explicit null is
+// malformed rather than another spelling of the ordinary LAN selection.
+pub(crate) fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+pub(crate) fn selected_route_transport(value: Option<&str>) -> Result<&'static str, String> {
+    if value.is_none() {
+        return Ok(COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID);
+    }
+    #[cfg(feature = "development-usb-adb-relay")]
+    if value == Some(DEVELOPMENT_LOOPBACK_RELAY_TCP_TRANSPORT_CONTRACT_ID) {
+        return Ok(DEVELOPMENT_LOOPBACK_RELAY_TCP_TRANSPORT_CONTRACT_ID);
+    }
+    Err("unsupported development transport selection".into())
+}
+
+pub(crate) fn is_development_usb_transport(value: &str) -> bool {
+    #[cfg(feature = "development-usb-adb-relay")]
+    {
+        value == DEVELOPMENT_LOOPBACK_RELAY_TCP_TRANSPORT_CONTRACT_ID
+    }
+    #[cfg(not(feature = "development-usb-adb-relay"))]
+    {
+        let _ = value;
+        false
+    }
 }
 
 #[derive(Deserialize)]
@@ -134,14 +176,16 @@ pub(crate) fn decode_and_validate_packaged_route(
         return Err("packaged route identity".into());
     }
     validate_profile(&profile_value)?;
+    let transport_contract_id =
+        selected_route_transport(route_value.transport_contract_id.as_deref())?;
     let peers: [PackagedPeer; 2] = route_value
         .peers
         .into_iter()
-        .map(validate_peer)
+        .map(|peer| validate_peer(peer, transport_contract_id))
         .collect::<Result<Vec<_>, _>>()?
         .try_into()
         .map_err(|_| "packaged peer cardinality")?;
-    validate_peer_pair(&peers)?;
+    validate_transport_peers(&peers, transport_contract_id)?;
     let installed = peers
         .iter()
         .position(|peer| peer.installed_role_id == expected.installed_role_id)
@@ -168,6 +212,7 @@ pub(crate) fn decode_and_validate_packaged_route(
         package_name: route_value.package_name,
         route_configuration_sha256: format!("sha256:{}", route.sha256),
         network_scope_id: route_value.network_scope_id,
+        transport_contract_id: transport_contract_id.to_owned(),
         profile: profile_value,
         peers,
         installed_peer_index: installed,
@@ -176,6 +221,21 @@ pub(crate) fn decode_and_validate_packaged_route(
 }
 
 impl PackagedDuplexRoute {
+    /// Recheck even manually assembled or altered in-memory routes before a
+    /// private key signs. The persisted contract ID is not a trusted boolean.
+    pub(crate) fn validated_transport_contract_id(&self) -> Result<&str, String> {
+        if self.installed_peer_index >= self.peers.len() {
+            return Err("transport installed peer index invalid".into());
+        }
+        let selected = if self.transport_contract_id == COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID {
+            selected_route_transport(None)?
+        } else {
+            selected_route_transport(Some(&self.transport_contract_id))?
+        };
+        validate_transport_peers(&self.peers, selected)?;
+        Ok(selected)
+    }
+
     pub(crate) fn local_peer(&self) -> &PackagedPeer {
         &self.peers[self.installed_peer_index]
     }
@@ -233,7 +293,7 @@ fn validate_profile(profile: &PackedStereoProfile) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_peer(peer: RoutePeer) -> Result<PackagedPeer, String> {
+fn validate_peer(peer: RoutePeer, transport: &str) -> Result<PackagedPeer, String> {
     if !dotted(&peer.peer_id)
         || !dotted(&peer.installed_role_id)
         || !dotted(&peer.device_id)
@@ -243,8 +303,18 @@ fn validate_peer(peer: RoutePeer) -> Result<PackagedPeer, String> {
     {
         return Err("packaged peer identity".into());
     }
-    validate_endpoint(&peer.media_endpoint, "rmanvid-v4-packed-stereo")?;
-    validate_endpoint(&peer.control_endpoint, "rqod1")?;
+    let development = is_development_usb_transport(transport);
+    if (development && peer.local_source_port.filter(|port| *port != 0).is_none())
+        || (!development && peer.local_source_port.is_some())
+    {
+        return Err("packaged peer development source selection".into());
+    }
+    validate_endpoint(
+        &peer.media_endpoint,
+        "rmanvid-v4-packed-stereo",
+        development,
+    )?;
+    validate_endpoint(&peer.control_endpoint, "rqod1", development)?;
     if peer.media_endpoint.host == peer.control_endpoint.host
         && peer.media_endpoint.port == peer.control_endpoint.port
     {
@@ -258,10 +328,25 @@ fn validate_peer(peer: RoutePeer) -> Result<PackagedPeer, String> {
         right_camera_id: peer.camera2.right_id,
         media: peer.media_endpoint,
         control: peer.control_endpoint,
+        local_source_port: peer.local_source_port,
     })
 }
 
-fn validate_endpoint(endpoint: &PackagedEndpoint, protocol: &str) -> Result<(), String> {
+fn validate_endpoint(
+    endpoint: &PackagedEndpoint,
+    protocol: &str,
+    development: bool,
+) -> Result<(), String> {
+    if development {
+        return if endpoint.protocol == protocol
+            && endpoint.host == "127.0.0.1"
+            && endpoint.port != 0
+        {
+            Ok(())
+        } else {
+            Err("development relay endpoint semantics".into())
+        };
+    }
     let parsed = endpoint
         .host
         .parse::<IpAddr>()
@@ -274,6 +359,30 @@ fn validate_endpoint(endpoint: &PackagedEndpoint, protocol: &str) -> Result<(), 
         || parsed.to_string() != endpoint.host
     {
         return Err("endpoint semantics".into());
+    }
+    Ok(())
+}
+
+fn validate_transport_peers(peers: &[PackagedPeer; 2], transport: &str) -> Result<(), String> {
+    validate_peer_pair(peers)?;
+    let development = is_development_usb_transport(transport);
+    let mut ports = BTreeSet::new();
+    for peer in peers {
+        validate_endpoint(&peer.media, "rmanvid-v4-packed-stereo", development)?;
+        validate_endpoint(&peer.control, "rqod1", development)?;
+        if development {
+            let source = peer
+                .local_source_port
+                .filter(|port| *port != 0)
+                .ok_or("development relay local source absent")?;
+            for port in [peer.media.port, peer.control.port, source] {
+                if !ports.insert(port) {
+                    return Err("development relay port collision".into());
+                }
+            }
+        } else if peer.local_source_port.is_some() {
+            return Err("ordinary LAN route has development source port".into());
+        }
     }
     Ok(())
 }
@@ -417,7 +526,8 @@ fn validate_bindings(
             if peer.device_id == source.device_id {
                 if endpoint.source_bindings.len() != 1
                     || endpoint.source_bindings[0].source_host != "127.0.0.1"
-                    || endpoint.source_bindings[0].source_port != source.media.port
+                    || endpoint.source_bindings[0].source_port
+                        != source.local_source_port.unwrap_or(source.media.port)
                     || endpoint.source_bindings[0].track_role != "stereo"
                     || endpoint.transport_bind_host != source.media.host
                     || !endpoint.receiver_ports.is_empty()
@@ -556,6 +666,35 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     use std::{env, fs, path::Path};
+
+    #[test]
+    fn optional_development_fields_are_strict_and_source_selected() {
+        assert_eq!(
+            selected_route_transport(None).unwrap(),
+            COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID
+        );
+        assert!(selected_route_transport(Some(COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID)).is_err());
+        assert!(selected_route_transport(Some("unknown")).is_err());
+        let usb = selected_route_transport(Some(
+            "rusty.manifold.peer.development_loopback_relay_tcp_transport.v1",
+        ));
+        assert_eq!(usb.is_ok(), cfg!(feature = "development-usb-adb-relay"));
+        let peer = json!({"peer_id":"peer.a","installed_role_id":"role.a","device_id":"device.a",
+            "camera2":{"left_id":"50","right_id":"51"},
+            "media_endpoint":{"protocol":"rmanvid-v4-packed-stereo","host":"10.0.0.1","port":46061},
+            "control_endpoint":{"protocol":"rqod1","host":"10.0.0.1","port":46071}});
+        assert!(serde_json::from_value::<RoutePeer>(peer.clone()).is_ok());
+        let mut null = peer.clone();
+        null["local_source_port"] = Value::Null;
+        assert!(serde_json::from_value::<RoutePeer>(null).is_err());
+        let mut wrong = peer.clone();
+        wrong["local_source_port"] = json!(47061);
+        assert!(validate_peer(
+            serde_json::from_value(wrong).unwrap(),
+            COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID
+        )
+        .is_err());
+    }
 
     #[test]
     #[ignore = "requires an exact generated embedded-duplex input directory"]

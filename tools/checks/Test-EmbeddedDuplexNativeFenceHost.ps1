@@ -167,13 +167,16 @@ if ($Mode -eq 'Native') {
     $javaOutput = Join-Path $OutputRoot 'java-api34'
     [void](New-Item -ItemType Directory -Force -Path $javaOutput)
     $source = Join-Path $snapshot 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexProcessFence.java'
-    & $javac '-source' '8' '-target' '8' '-bootclasspath' $jar '-encoding' 'UTF-8' '-d' $javaOutput $source 2>&1 | Tee-Object -FilePath (Join-Path $OutputRoot 'java-api34.log')
+    $sourceDirectory = Split-Path $source -Parent
+    $javaSources = @($source, (Join-Path $sourceDirectory 'EmbeddedDuplexProcessIncarnation.java'), (Join-Path $sourceDirectory 'EmbeddedDuplexCanonicalJson.java'))
+    & $javac '-source' '8' '-target' '8' '-bootclasspath' $jar '-encoding' 'UTF-8' '-d' $javaOutput @javaSources 2>&1 | Tee-Object -FilePath (Join-Path $OutputRoot 'java-api34.log')
     $compileExit = $LASTEXITCODE
     $negative = Join-Path $javaOutput 'Api34Negative.java'
     [IO.File]::WriteAllText($negative, 'final class Api34Negative { String x(java.nio.file.Path p) throws Exception { return java.nio.file.Files.readString(p); } }')
     & $javac '-source' '8' '-target' '8' '-bootclasspath' $jar '-d' $javaOutput $negative 2>&1 | Tee-Object -FilePath (Join-Path $OutputRoot 'java-api34-negative.log')
     $negativeExit = $LASTEXITCODE
     Verify-Snapshot
-    Json (Join-Path $OutputRoot 'java-api34-result.json') ([ordered]@{ compile_exit = $compileExit; negative_exit = $negativeExit; sdk_jar_sha256 = Hash $jar; source_sha256 = Hash $source; scope = 'production ProcessFence Java source against genuine SDK34 bootclasspath; no desktop system modules'; lint = 'not run'; full_app_java_compile = 'not run'; language_target = 8 })
+    $javaSourcePins = @($javaSources | ForEach-Object { [ordered]@{ path = $_; sha256 = Hash $_ } })
+    Json (Join-Path $OutputRoot 'java-api34-result.json') ([ordered]@{ compile_exit = $compileExit; negative_exit = $negativeExit; sdk_jar_sha256 = Hash $jar; source_sha256 = Hash $source; source_dependencies = $javaSourcePins; scope = 'production ProcessFence and its Incarnation/CanonicalJson dependencies against genuine SDK34 bootclasspath; no desktop system modules'; lint = 'not run'; full_app_java_compile = 'not run'; language_target = 8 })
     if ($compileExit -ne 0 -or $negativeExit -eq 0) { throw 'API34 compile or missing-API negative control failed.' }
 }

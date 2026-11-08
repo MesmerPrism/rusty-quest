@@ -1,4 +1,6 @@
 //! Opt-in dual producer banks feeding one retained final graph.
+#[cfg(target_os = "android")]
+use super::optional_color_pass::{OptionalColorRequest, SourceColorPass, SOURCE_COLOR_AVAILABLE};
 use super::*;
 use crate::stereo_bank_transport_v1::{self as abi, StereoBankPolicyUniformV1};
 use crate::stereo_bank_transport_v2 as abi2;
@@ -187,6 +189,8 @@ pub(crate) struct StereoBankResources {
     primary_pipeline: vk::Pipeline,
     primary_pool: vk::DescriptorPool,
     primary_set: vk::DescriptorSet,
+    #[cfg(target_os = "android")]
+    source_color: Option<Box<SourceColorBanks>>,
     guides_layout: vk::DescriptorSetLayout,
     policy_layout: vk::DescriptorSetLayout,
     empty_layout: vk::DescriptorSetLayout,
@@ -199,6 +203,7 @@ pub(crate) struct StereoBankResources {
     pub(super) pipeline: vk::Pipeline,
     pub(super) displacement_pipeline: vk::Pipeline,
     pub(super) video_layout: vk::DescriptorSetLayout,
+    pub(super) camera_color_enabled: bool,
     vertex_spirv: Vec<u8>,
     fragment_spirv: Vec<u8>,
     pending_fence: Option<vk::Fence>,
@@ -216,6 +221,10 @@ impl Drop for StereoBankResources {
         // Unknown submission/retirement retains actual contents fail-closed.
         // Explicit retirement clears these before ordinary destruction.
         if self.pending_fence.is_some() {
+            #[cfg(target_os = "android")]
+            if let Some(color) = self.source_color.take() {
+                mem::forget(color);
+            }
             for lease in &mut self.retained {
                 if let Some(lease) = lease.take() {
                     mem::forget(lease);
@@ -226,6 +235,29 @@ impl Drop for StereoBankResources {
 }
 
 impl SpatialPublicGuideTargets {
+    #[cfg(target_os = "android")]
+    pub(crate) unsafe fn bind_optional_camera_display(
+        &self,
+        device: &ash::Device,
+        view: vk::ImageView,
+    ) -> Result<(), String> {
+        let state = self
+            .stereo_banks
+            .as_ref()
+            .ok_or("camera-color-stereo-missing")?;
+        if !state.camera_color_enabled || state.submission_entered {
+            return Err("camera-color-binding-not-admitted".into());
+        }
+        write_color_views(
+            device,
+            state.guides,
+            abi2::CAMERA_COLOR_BINDING,
+            self.sampler,
+            [view],
+        );
+        Ok(())
+    }
+
     pub(crate) unsafe fn activate_stereo_banks(
         &mut self,
         device: &ash::Device,
@@ -273,6 +305,35 @@ impl SpatialPublicGuideTargets {
             uniform_range_bytes: mem::size_of::<ProjectionZoneUniform>() as u32,
         };
         abi::check_final_layout_limits(&limits, &demand)?;
+        #[cfg(target_os = "android")]
+        let source_color_binding = {
+            let extra = abi2::ORIGIN_ARRAY_COUNT + u32::from(primary_build::CAMERA_COLOR_ABI == 1);
+            let extended = abi::LayoutDemand {
+                samplers: demand.samplers + extra,
+                sampled_images: demand.sampled_images + extra,
+                stage_resources: demand.stage_resources + extra,
+                ..demand
+            };
+            SOURCE_COLOR_AVAILABLE && abi::check_final_layout_limits(&limits, &extended).is_ok()
+        };
+        #[cfg(not(target_os = "android"))]
+        let source_color_binding = false;
+        let camera_color_binding = source_color_binding && primary_build::CAMERA_COLOR_ABI == 1;
+        let source_color_samplers = if source_color_binding {
+            abi2::ORIGIN_ARRAY_COUNT + u32::from(camera_color_binding)
+        } else {
+            0
+        };
+        let final_fragment = if source_color_binding {
+            include_bytes!(concat!(
+                env!("OUT_DIR"),
+                "/spatial_source_color_bank.frag.spv"
+            ))
+            .as_slice()
+        } else {
+            fragment_spirv
+        };
+
         let mut state = StereoBankResources {
             peer: None,
             primary: None,
@@ -281,6 +342,8 @@ impl SpatialPublicGuideTargets {
             primary_pipeline: vk::Pipeline::null(),
             primary_pool: vk::DescriptorPool::null(),
             primary_set: vk::DescriptorSet::null(),
+            #[cfg(target_os = "android")]
+            source_color: source_color_binding.then(|| Box::new(SourceColorBanks::new(*memory))),
             guides_layout: vk::DescriptorSetLayout::null(),
             policy_layout: vk::DescriptorSetLayout::null(),
             empty_layout: vk::DescriptorSetLayout::null(),
@@ -293,8 +356,9 @@ impl SpatialPublicGuideTargets {
             pipeline: vk::Pipeline::null(),
             displacement_pipeline: vk::Pipeline::null(),
             video_layout,
+            camera_color_enabled: camera_color_binding,
             vertex_spirv: vertex_spirv.to_vec(),
-            fragment_spirv: fragment_spirv.to_vec(),
+            fragment_spirv: final_fragment.to_vec(),
             pending_fence: None,
             retained: [None, None],
             recorded_keys: [None, None],
@@ -311,11 +375,17 @@ impl SpatialPublicGuideTargets {
                 state.primary = Some(ScalarProducerBank::create(self, device, memory)?);
                 state.create_primary_pipeline(self, device)?;
             }
-            let guide_bindings = if state.primary.is_some() {
+            let mut guide_bindings = if state.primary.is_some() {
                 abi2::final_guide_bindings().to_vec()
             } else {
                 abi::final_guide_bindings().to_vec()
             };
+            if source_color_binding {
+                guide_bindings.push(abi2::final_display_binding());
+            }
+            if camera_color_binding {
+                guide_bindings.push(abi2::final_camera_color_binding());
+            }
             state.guides_layout = device
                 .create_descriptor_set_layout(
                     &vk::DescriptorSetLayoutCreateInfo::default().bindings(&guide_bindings),
@@ -343,7 +413,11 @@ impl SpatialPublicGuideTargets {
             let sizes = [
                 vk::DescriptorPoolSize::default()
                     .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .descriptor_count(if state.primary.is_some() { 12 } else { 10 }),
+                    .descriptor_count(if state.primary.is_some() {
+                        12 + source_color_samplers
+                    } else {
+                        10
+                    }),
                 vk::DescriptorPoolSize::default()
                     .ty(vk::DescriptorType::UNIFORM_BUFFER)
                     .descriptor_count(2),
@@ -410,7 +484,7 @@ impl SpatialPublicGuideTargets {
                 device,
                 self.projection_render_pass,
                 state.pipeline_layout,
-                fragment_spirv,
+                final_fragment,
                 "stereo-final",
                 true,
             )?;
@@ -419,7 +493,7 @@ impl SpatialPublicGuideTargets {
                 self.projection_render_pass,
                 state.pipeline_layout,
                 vertex_spirv,
-                fragment_spirv,
+                final_fragment,
                 "stereo-final-displacement",
                 true,
             )?;
@@ -429,6 +503,8 @@ impl SpatialPublicGuideTargets {
             Ok(()) => {
                 self.stereo_banks = Some(Box::new(state));
                 SOURCE_BANKS_ACTIVE.store(true, Ordering::Release);
+                #[cfg(target_os = "android")]
+                super::optional_color_pass::set_source_color_device_active(source_color_binding);
                 Ok(())
             }
             Err(error) => {
@@ -642,7 +718,8 @@ impl SpatialPublicGuideTargets {
         slot: usize,
         elapsed: f32,
         mut inputs: StereoRecordingInputs<'_>,
-    ) -> Result<SpatialPublicGuidePassRecord, String> {
+        color_request: Option<OptionalColorRequest>,
+    ) -> Result<(SpatialPublicGuidePassRecord, Option<OptionalColorRequest>), String> {
         validate_recording_inputs(&inputs)?;
         let mut state = self
             .stereo_banks
@@ -916,10 +993,73 @@ impl SpatialPublicGuideTargets {
                         &[],
                     );
                 }
+                let mut color_recorded = None;
+                if let Some(color) = state.source_color.as_mut() {
+                    let primary = state
+                        .primary
+                        .as_ref()
+                        .ok_or("source-color-primary-unavailable")?;
+                    let own = &self.targets[0];
+                    let peer = &state.peer.as_ref().unwrap().targets[0];
+                    let raw = [own, peer, &primary.targets[0]];
+                    if state.camera_color_enabled {
+                        write_color_views(
+                            device,
+                            state.guides,
+                            abi2::CAMERA_COLOR_BINDING,
+                            self.sampler,
+                            [own.image_view],
+                        );
+                    }
+                    let mut views = raw.map(|target| target.image_view);
+                    if let Some(request) = color_request.filter(|request| {
+                        abi2::source_color_origin(
+                            request.placement,
+                            receipt.mask,
+                            completed,
+                            primary_prefix,
+                            inputs.policy.region_origins,
+                        )
+                        .is_some()
+                    }) {
+                        match color.record(
+                            self,
+                            device,
+                            command,
+                            elapsed,
+                            request,
+                            receipt.mask,
+                            raw,
+                        ) {
+                            Ok(display) => {
+                                views = display;
+                                color_recorded = Some(request);
+                            }
+                            Err(error) if !color.failed => {
+                                log_marker(format!(
+                                    "status=optional-source-color-unavailable reason={} runtimeCrash=false",
+                                    crate::marker_token(&error),
+                                ));
+                                color.failed = true;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    write_color_views(
+                        device,
+                        state.guides,
+                        abi2::DISPLAY_BINDING,
+                        self.sampler,
+                        views,
+                    );
+                }
                 inputs.policy.source_state =
                     [completed[0], completed[1], 1, inputs.policy.source_state[3]];
-                let v2 =
+                let mut v2 =
                     abi2::StereoBankPolicyUniformV2::from_input(&inputs.policy, primary_prefix);
+                if let Some(request) = color_recorded {
+                    v2.mask_words[3] = request.placement as u32;
+                }
                 let (bytes, count) = if state.primary.is_some() {
                     (
                         (&v2 as *const abi2::StereoBankPolicyUniformV2).cast::<u8>(),
@@ -940,7 +1080,7 @@ impl SpatialPublicGuideTargets {
                 state.recorded_prefixes = completed;
                 state.receipt_frame = Some((receipt.ordinal, receipt.surface));
                 crate::spatial_stereo_qualification::record_frame(receipt);
-                Ok(aggregate)
+                Ok((aggregate, color_recorded))
             },
         );
         if result.is_err() {
@@ -1070,6 +1210,63 @@ fn validate_recording_inputs(inputs: &StereoRecordingInputs<'_>) -> Result<(), S
     }
     Ok(())
 }
+unsafe fn record_primary_draw(
+    owner: &SpatialPublicGuideTargets,
+    device: &ash::Device,
+    command: vk::CommandBuffer,
+    mask: [u32; 3],
+    output: &SpatialPublicGuideTarget,
+    pipeline: vk::Pipeline,
+    layout: vk::PipelineLayout,
+    descriptor_set: vk::DescriptorSet,
+) {
+    let threshold = f32::from_bits(mask[0] & 0x3fff_ffff);
+    let softness = f32::from_bits(mask[1] & 0x7fff_ffff);
+    let amount = f32::from_bits(mask[2] & 0x7fff_ffff);
+    begin_guide_pass(
+        device,
+        command,
+        owner.render_pass,
+        output.framebuffer,
+        owner.extent,
+    );
+    for eye in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
+        set_packed_eye_view(device, command, owner.extent, eye);
+        device.cmd_bind_pipeline(command, vk::PipelineBindPoint::GRAPHICS, pipeline);
+        device.cmd_bind_descriptor_sets(
+            command,
+            vk::PipelineBindPoint::GRAPHICS,
+            layout,
+            0,
+            &[descriptor_set],
+            &[],
+        );
+        let push = OpaqueGuidePush {
+            params0: [
+                eye as f32,
+                0.0,
+                owner.extent.width as f32,
+                owner.extent.height as f32,
+            ],
+            effect: [
+                threshold,
+                softness,
+                amount,
+                if mask[2] & 0x8000_0000 != 0 { 1.0 } else { 0.0 },
+            ],
+            cycle: [0.0; 4],
+            reprojection_row0: [0.0; 4],
+            reprojection_row1: [0.0; 4],
+            reprojection_row2: [0.0; 4],
+            reprojection_params: [0.0; 4],
+        };
+        push_fragment_constants(device, command, layout, &push);
+        device.cmd_draw(command, 3, 1, 0, 0);
+    }
+    device.cmd_end_render_pass(command);
+    transition_guide_image_for_sampling(device, command, output.image);
+}
+
 impl StereoBankResources {
     unsafe fn create_primary_pipeline(
         &mut self,
@@ -1154,55 +1351,16 @@ impl StereoBankResources {
                 &[],
             );
         }
-        let threshold = f32::from_bits(mask[0] & 0x3fff_ffff);
-        let softness = f32::from_bits(mask[1] & 0x7fff_ffff);
-        let amount = f32::from_bits(mask[2] & 0x7fff_ffff);
-        begin_guide_pass(
+        record_primary_draw(
+            owner,
             device,
             command,
-            owner.render_pass,
-            bank.targets[0].framebuffer,
-            owner.extent,
+            mask,
+            &bank.targets[0],
+            self.primary_pipeline,
+            self.primary_pipeline_layout,
+            self.primary_set,
         );
-        for eye in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
-            set_packed_eye_view(device, command, owner.extent, eye);
-            device.cmd_bind_pipeline(
-                command,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.primary_pipeline,
-            );
-            device.cmd_bind_descriptor_sets(
-                command,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.primary_pipeline_layout,
-                0,
-                &[self.primary_set],
-                &[],
-            );
-            let push = OpaqueGuidePush {
-                params0: [
-                    eye as f32,
-                    0.0,
-                    owner.extent.width as f32,
-                    owner.extent.height as f32,
-                ],
-                effect: [
-                    threshold,
-                    softness,
-                    amount,
-                    if mask[2] & 0x8000_0000 != 0 { 1.0 } else { 0.0 },
-                ],
-                cycle: [0.0; 4],
-                reprojection_row0: [0.0; 4],
-                reprojection_row1: [0.0; 4],
-                reprojection_row2: [0.0; 4],
-                reprojection_params: [0.0; 4],
-            };
-            push_fragment_constants(device, command, self.primary_pipeline_layout, &push);
-            device.cmd_draw(command, 3, 1, 0, 0);
-        }
-        device.cmd_end_render_pass(command);
-        transition_guide_image_for_sampling(device, command, bank.targets[0].image);
         Ok(())
     }
     pub(super) fn mask_diagnostic_plan(
@@ -1237,6 +1395,8 @@ impl StereoBankResources {
     }
     pub(super) unsafe fn destroy(mut self, device: &ash::Device) {
         SOURCE_BANKS_ACTIVE.store(false, Ordering::Release);
+        #[cfg(target_os = "android")]
+        super::optional_color_pass::set_source_color_device_active(false);
         if self.pending_fence.is_some() {
             crate::spatial_stereo_qualification::carrier_cleanup(false);
             return;
@@ -1280,6 +1440,225 @@ impl StereoBankResources {
         for layout in [self.guides_layout, self.policy_layout, self.empty_layout] {
             if layout != vk::DescriptorSetLayout::null() {
                 device.destroy_descriptor_set_layout(layout, None);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+unsafe fn write_color_views<const N: usize>(
+    device: &ash::Device,
+    set: vk::DescriptorSet,
+    binding: u32,
+    sampler: vk::Sampler,
+    views: [vk::ImageView; N],
+) {
+    let images = views.map(|view| {
+        vk::DescriptorImageInfo::default()
+            .sampler(sampler)
+            .image_view(view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+    });
+    device.update_descriptor_sets(
+        &[vk::WriteDescriptorSet::default()
+            .dst_set(set)
+            .dst_binding(binding)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&images)],
+        &[],
+    );
+}
+
+#[cfg(target_os = "android")]
+struct SourceColorBanks {
+    memory: vk::PhysicalDeviceMemoryProperties,
+    source: [Option<SourceColorPass>; 2],
+    primary: Option<DisplayPrimaryPass>,
+    failed: bool,
+}
+
+#[cfg(target_os = "android")]
+impl SourceColorBanks {
+    fn new(memory: vk::PhysicalDeviceMemoryProperties) -> Self {
+        Self {
+            memory,
+            source: [None, None],
+            primary: None,
+            failed: false,
+        }
+    }
+
+    unsafe fn record(
+        &mut self,
+        owner: &SpatialPublicGuideTargets,
+        device: &ash::Device,
+        command: vk::CommandBuffer,
+        elapsed: f32,
+        request: OptionalColorRequest,
+        mask: [u32; 3],
+        raw: [&SpatialPublicGuideTarget; 3],
+    ) -> Result<[vk::ImageView; 3], String> {
+        if self.failed {
+            return Err("optional-source-color-retained-unavailable".into());
+        }
+        let origin = (request.placement - 1) as usize;
+        if self.source[origin].is_none() {
+            self.source[origin] = Some(SourceColorPass::new(
+                device,
+                &self.memory,
+                owner.format,
+                owner.extent,
+                owner.render_pass,
+            )?);
+        }
+        let blended = abi2::primary_required(mask)?;
+        if blended && self.primary.is_none() {
+            self.primary = Some(DisplayPrimaryPass::new(owner, device, &self.memory)?);
+        }
+        // Provision everything before recording. An allocation failure leaves
+        // the command buffer on the original exact guide and display path.
+        let source = self.source[origin].as_ref().unwrap();
+        source.record(command, raw[origin], request.words, elapsed);
+        let mut views = raw.map(|target| target.image_view);
+        views[origin] = source.display_view();
+        if blended {
+            let primary = self.primary.as_ref().unwrap();
+            let inputs = [raw[0].image_view, raw[1].image_view, views[0], views[1]];
+            views[2] = primary.record(owner, device, command, mask, inputs);
+        }
+        Ok(views)
+    }
+}
+
+#[cfg(target_os = "android")]
+struct DisplayPrimaryPass {
+    device: ash::Device,
+    target: Option<SpatialPublicGuideTarget>,
+    descriptor_layout: vk::DescriptorSetLayout,
+    pool: vk::DescriptorPool,
+    set: vk::DescriptorSet,
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+}
+
+#[cfg(target_os = "android")]
+impl DisplayPrimaryPass {
+    unsafe fn new(
+        owner: &SpatialPublicGuideTargets,
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+    ) -> Result<Self, String> {
+        let mut pass = Self {
+            device: device.clone(),
+            target: None,
+            descriptor_layout: vk::DescriptorSetLayout::null(),
+            pool: vk::DescriptorPool::null(),
+            set: vk::DescriptorSet::null(),
+            pipeline_layout: vk::PipelineLayout::null(),
+            pipeline: vk::Pipeline::null(),
+        };
+        pass.target = Some(SpatialPublicGuideTarget::create(
+            device,
+            memory,
+            owner.render_pass,
+            owner.extent,
+            owner.format,
+            "display-primary",
+        )?);
+        let bindings = [0, 1, 2, 3].map(|binding| {
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(binding)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        });
+        pass.descriptor_layout = device
+            .create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                None,
+            )
+            .map_err(|error| format!("display-primary-descriptor-layout-{error:?}"))?;
+        let sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(4)];
+        pass.pool = device
+            .create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::default()
+                    .max_sets(1)
+                    .pool_sizes(&sizes),
+                None,
+            )
+            .map_err(|error| format!("display-primary-descriptor-pool-{error:?}"))?;
+        pass.set = device
+            .allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(pass.pool)
+                    .set_layouts(&[pass.descriptor_layout]),
+            )
+            .map_err(|error| format!("display-primary-descriptor-set-{error:?}"))?[0];
+        let range = [vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .size(mem::size_of::<OpaqueGuidePush>() as u32)];
+        pass.pipeline_layout = device
+            .create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&[pass.descriptor_layout])
+                    .push_constant_ranges(&range),
+                None,
+            )
+            .map_err(|error| format!("display-primary-pipeline-layout-{error:?}"))?;
+        pass.pipeline = create_fullscreen_fragment_pipeline(
+            device,
+            owner.render_pass,
+            pass.pipeline_layout,
+            include_bytes!(concat!(
+                env!("OUT_DIR"),
+                "/spatial_display_primary.frag.spv"
+            )),
+            "display-primary",
+            false,
+        )?;
+        Ok(pass)
+    }
+
+    unsafe fn record(
+        &self,
+        owner: &SpatialPublicGuideTargets,
+        device: &ash::Device,
+        command: vk::CommandBuffer,
+        mask: [u32; 3],
+        views: [vk::ImageView; 4],
+    ) -> vk::ImageView {
+        for (binding, view) in views.into_iter().enumerate() {
+            write_color_views(device, self.set, binding as u32, owner.sampler, [view]);
+        }
+        let target = self.target.as_ref().unwrap();
+        record_primary_draw(
+            owner,
+            device,
+            command,
+            mask,
+            target,
+            self.pipeline,
+            self.pipeline_layout,
+            self.set,
+        );
+        target.image_view
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Drop for DisplayPrimaryPass {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_descriptor_pool(self.pool, None);
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_layout, None);
+            if let Some(target) = self.target.take() {
+                target.destroy(&self.device);
             }
         }
     }

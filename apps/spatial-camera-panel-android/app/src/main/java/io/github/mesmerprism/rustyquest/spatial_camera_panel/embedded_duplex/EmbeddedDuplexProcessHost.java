@@ -67,7 +67,8 @@ final class EmbeddedDuplexProcessHost {
         EmbeddedDuplexPackagedInputs base = EmbeddedDuplexPackagedInputs.load(applicationContext,
                 io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256, role);
         FrozenEffectiveInputs accepted = effectiveInputOwner.capture(base, generation,
-                FrozenEffectiveInputs.readActiveProfile(applicationContext), EmbeddedDuplexNative::deriveEffectiveInputs);
+                FrozenEffectiveInputs.readActiveProfile(applicationContext), EmbeddedDuplexNative::deriveEffectiveInputs,
+                FrozenEffectiveInputs.developmentUsbRelayCapability(applicationContext));
         effectiveInputRunContext = runContext;
         publishEffectiveInputObservation();
         return accepted;
@@ -129,7 +130,15 @@ final class EmbeddedDuplexProcessHost {
                 JSONObject nativeStatus=new JSONObject(EmbeddedDuplexNative.inspectOperationalRun(processFence));
                 if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(nativeStatus.getString("$schema"))
                     ||!nativeStatus.getBoolean("globally_eligible"))throw new IllegalStateException("actual Native owner unresolved");
-                if(runContext.legacy()&&(!processFence.newlyInitialized()||!nativeStatus.isNull("native_generation"))){
+                boolean retainedIdleFirstRun = create && runContext.legacy() && runContext.selectionGeneration == 0
+                    && !processFence.newlyInitialized() && sourceOriginal == null && release == null
+                    && nativeStatus.has("native_generation") && nativeStatus.isNull("native_generation")
+                    && nativeStatus.has("operational_run_id") && nativeStatus.isNull("operational_run_id")
+                    && processFence.clearLegacyWithoutJournals()
+                    && checkpointSnapshot() == null && evidenceSnapshot() == null
+                    && java.nio.file.Files.notExists(new java.io.File(runContext.root,"embedded-duplex-runs-v1").toPath(),java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    && java.nio.file.Files.notExists(new java.io.File(runContext.root,"operator-originals-v1").toPath(),java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                if(runContext.legacy()&&!retainedIdleFirstRun&&(!processFence.newlyInitialized()||!nativeStatus.isNull("native_generation"))){
                     JSONObject whole;
                     if(terminalWholeReceipt==null){
                         // The versioned read already validates physical invariants. Keep its original
@@ -430,7 +439,7 @@ final class EmbeddedDuplexProcessHost {
                 EmbeddedDuplexPlatform callbacks = new EmbeddedDuplexPlatform(applicationContext,
                         display, identity, prepared.localPeerId, prepared.remotePeerId,
                         prepared.routeConfigurationSha256, prepared.remoteControlHost,
-                        prepared.remoteControlPort, fixture);
+                        prepared.remoteControlPort, fixture, frozen);
                 callbacks.bindProcessFence(processFence);
                 JSONObject bootstrap = EmbeddedDuplexBootstrap.runtimeBootstrap(prepared,
                         identity.keyId(), enrollment,
@@ -459,7 +468,7 @@ final class EmbeddedDuplexProcessHost {
                 }
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_CONSTRUCT);
                 EmbeddedDuplexResources installed = new EmbeddedDuplexResources(applicationContext,
-                        display, new JSONObject(initialized), prepared.maxPairDeltaNs);
+                        display, new JSONObject(initialized), prepared.maxPairDeltaNs, frozen);
                 resources = installed;
                 installed.install(trace);
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_REGISTRY);

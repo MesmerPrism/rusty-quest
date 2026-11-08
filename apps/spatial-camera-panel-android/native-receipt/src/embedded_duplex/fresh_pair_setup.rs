@@ -8,6 +8,54 @@ use rusty_manifold_peer::{
 };
 use rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt;
 
+use super::super::operation_failure::{self, FreshReason, FreshStage, FreshSubject};
+
+fn rejected(host: &Host, id: Option<&str>, stage: FreshStage, error: &str) -> String {
+    rejected_with_original(host, id, None, stage, error)
+}
+// Only caller-owned, already validated identity is supplied. No observation or
+// ownership lock is acquired while formatting an error (including locked guards).
+fn rejected_with_original(
+    host: &Host,
+    id: Option<&str>,
+    original: Option<&str>,
+    stage: FreshStage,
+    error: &str,
+) -> String {
+    operation_failure::fresh_rejection(
+        error,
+        stage,
+        FreshReason::OwnerRejected,
+        FreshSubject {
+            request_id: id.map(str::to_owned),
+            phase_id: id.map(str::to_owned),
+            original_id: original.map(str::to_owned),
+            app_generation: Some(host.capability.binding.generation),
+            native_generation: Some(host.capability.generation),
+            app_record_sha256: Some(host.capability.binding.record_sha256.clone()),
+            config_sha256: Some(host.config_sha256.clone()),
+        },
+    )
+}
+fn at<T>(
+    host: &Host,
+    id: Option<&str>,
+    stage: FreshStage,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    result.map_err(|error| rejected(host, id, stage, &error))
+}
+
+fn at_with_original<T>(
+    host: &Host,
+    id: Option<&str>,
+    original: Option<&str>,
+    stage: FreshStage,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    result.map_err(|error| rejected_with_original(host, id, original, stage, &error))
+}
+
 pub(super) const MAGIC: &[u8] = b"RQFS1";
 const SCHEMA: &str = "rusty.quest.embedded_duplex.fresh_pair_setup_frame.v1";
 const DOMAIN: &[u8] = b"rusty.quest.embedded_duplex.fresh_pair_setup_frame.v1\0";
@@ -567,7 +615,12 @@ fn physical_observation(
 }
 
 fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), String> {
-    host.capability.require_live()?;
+    at(
+        host,
+        Some(id),
+        FreshStage::BeginCapability,
+        host.capability.require_live(),
+    )?;
     let prepared = {
         let s = state(host)?;
         s.fresh.prepared_start.as_deref() == Some(id)
@@ -576,8 +629,18 @@ fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), Stri
     };
     // Preliminary reads have no Manifold/signature effect. They establish the
     // actual operator binding before taking a reservation which may need retirement.
-    let local = peer_lifecycle::fresh_setup_eligibility(host)?;
-    let physical = physical_observation(host, id, id, IncomingPhysicalScope::Initial)?;
+    let local = at(
+        host,
+        Some(id),
+        FreshStage::BeginEligibility,
+        peer_lifecycle::fresh_setup_eligibility(host),
+    )?;
+    let physical = at(
+        host,
+        Some(id),
+        FreshStage::BeginPhysical,
+        physical_observation(host, id, id, IncomingPhysicalScope::Initial),
+    )?;
     let original_binding = if host.local_peer_id < host.remote_peer_id {
         let binding = physical
             .get("original_binding")
@@ -603,7 +666,17 @@ fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), Stri
     } else {
         json!({"kind":"incoming_fresh_setup","native_request_id":id})
     };
-    validate_physical(host, local, physical)?;
+    let diagnostic_original = original_binding
+        .get("original_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    at_with_original(
+        host,
+        Some(id),
+        diagnostic_original.as_deref(),
+        FreshStage::BeginPhysical,
+        validate_physical(host, local, physical),
+    )?;
     let prior_pair = status_without_fresh(host)?;
     {
         let mut p = process()
@@ -616,7 +689,13 @@ fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), Stri
             || (p.fresh_setup_request.is_some()
                 && !(prepared && p.fresh_setup_request.as_deref() == Some(id)))
         {
-            return Err("fresh setup native owner busy or unresolved".into());
+            return Err(rejected_with_original(
+                host,
+                Some(id),
+                diagnostic_original.as_deref(),
+                FreshStage::BeginReservation,
+                "",
+            ));
         }
         p.fresh_setup_request = Some(id.into());
     }
@@ -651,15 +730,33 @@ fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), Stri
     }
     let result = (|| -> Result<(), String> {
         if host.local_peer_id < host.remote_peer_id {
-            host.callbacks.bind_fresh_setup_original(id)?;
+            at_with_original(
+                host,
+                Some(id),
+                diagnostic_original.as_deref(),
+                FreshStage::BeginBinding,
+                host.callbacks.bind_fresh_setup_original(id),
+            )?;
         } else {
             host.callbacks
                 .bind_incoming_fresh_setup_phase(id, None, id, "initial")?;
         }
         // Re-read after the exclusive process reservation. Before dispatch, a
         // failed prerequisite can release ONLY this effect-free reservation.
-        let local = peer_lifecycle::fresh_setup_eligibility(host)?;
-        let physical = physical_observation(host, id, id, IncomingPhysicalScope::Registered)?;
+        let local = at_with_original(
+            host,
+            Some(id),
+            diagnostic_original.as_deref(),
+            FreshStage::BeginEligibility,
+            peer_lifecycle::fresh_setup_eligibility(host),
+        )?;
+        let physical = at_with_original(
+            host,
+            Some(id),
+            diagnostic_original.as_deref(),
+            FreshStage::BeginPhysical,
+            physical_observation(host, id, id, IncomingPhysicalScope::Registered),
+        )?;
         if host.local_peer_id < host.remote_peer_id
             && physical.get("original_binding") != Some(&original_binding)
         {
@@ -1126,7 +1223,12 @@ fn complete(host: &Host, id: &str) -> Result<Value, String> {
         return Err(encoded);
     }
     let actual = serde_json::to_value(actual).map_err(safe_decode)?;
-    check_current(host, &actual, &a.session, expiry)?;
+    at(
+        host,
+        Some(id),
+        FreshStage::CurrentValidation,
+        check_current(host, &actual, &a.session, expiry),
+    )?;
     if actual.get("decision_id") != a.local_current.as_ref().and_then(|v| v.get("decision_id")) {
         return Err("fresh final actual session decision changed".into());
     }
@@ -1160,34 +1262,70 @@ fn complete(host: &Host, id: &str) -> Result<Value, String> {
 }
 
 pub(super) fn run(host: &Host) -> Result<String, String> {
-    let _flight = flight(host)?;
+    let _flight = at(host, None, FreshStage::Flight, flight(host))?;
     if host.local_peer_id >= host.remote_peer_id {
-        return Err("fresh setup initiator is lower packaged peer".into());
+        return Err(rejected(host, None, FreshStage::Initiator, ""));
     }
-    let id = ceremony_id::finite(&random_hex()?)?;
-    let session = format!("session.duplex.{}", random_hex()?);
-    let nonce_a = random_hex()?;
+    let id = at(
+        host,
+        None,
+        FreshStage::AllocateIdentity,
+        random_hex().and_then(|value| ceremony_id::finite(&value)),
+    )?;
+    let session = format!(
+        "session.duplex.{}",
+        at(host, Some(&id), FreshStage::AllocateIdentity, random_hex())?
+    );
+    let nonce_a = at(host, Some(&id), FreshStage::AllocateIdentity, random_hex())?;
     {
-        let mut s = state(host)?;
+        let mut s = at(host, Some(&id), FreshStage::CurrentPhase, state(host))?;
         if s.fresh.active.as_ref().is_some_and(|a| !a.completed) {
-            return Err("fresh setup original unresolved".into());
+            return Err(rejected(host, Some(&id), FreshStage::CurrentPhase, ""));
         }
         drop(s);
-        stage_completed_successor(host, &id, &session)?;
-        archive_prior_completed(host).map_err(|error| {
+        at(
+            host,
+            Some(&id),
+            FreshStage::StageSuccessor,
+            stage_completed_successor(host, &id, &session),
+        )?;
+        at(
+            host,
+            Some(&id),
+            FreshStage::ArchivePrior,
+            archive_prior_completed(host),
+        )
+        .map_err(|error| {
             record_failure(host, &id, &error);
             error
         })?;
     }
+    let mut diagnostic_original = None;
     let result = (|| -> Result<String, String> {
-        begin(host, &id, &session, &nonce_a)?;
-        let a = active(host, &id)?;
-        let viewed = exchange(
+        at(
             host,
-            "view",
-            "viewed",
-            &id,
-            json!({"session_id":session,"nonce_a":nonce_a,"view":a.view}),
+            Some(&id),
+            FreshStage::Begin,
+            begin(host, &id, &session, &nonce_a),
+        )?;
+        let a = active(host, &id)?;
+        diagnostic_original = a
+            .original_binding
+            .get("original_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let viewed = at_with_original(
+            host,
+            Some(&id),
+            diagnostic_original.as_deref(),
+            FreshStage::ViewExchange,
+            exchange(
+                host,
+                "view",
+                "viewed",
+                &id,
+                json!({"session_id":session,"nonce_a":nonce_a,"view":a.view}),
+            ),
         )?;
         let nonce_b = viewed["nonce_b"]
             .as_str()
@@ -1222,8 +1360,21 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
             a.context = Some(c.clone());
             a.nonce_b = Some(nonce_b.clone());
         })?;
-        finish_phase(host, &id, &session, &nonce_a, &nonce_b, &c)
+        at_with_original(
+            host,
+            Some(&id),
+            diagnostic_original.as_deref(),
+            FreshStage::FinishPhase,
+            finish_phase(host, &id, &session, &nonce_a, &nonce_b, &c),
+        )
     })();
+    let result = at_with_original(
+        host,
+        Some(&id),
+        diagnostic_original.as_deref(),
+        FreshStage::Context,
+        result,
+    );
     if let Err(error) = &result {
         record_failure(host, &id, error);
     }
@@ -1614,6 +1765,24 @@ struct PhaseArchiveCursor {
 }
 
 fn archive_prior_completed(host: &Host) -> Result<(), String> {
+    let (diagnostic_id, diagnostic_original) = {
+        let s = state(host)?;
+        s.fresh
+            .reservation
+            .as_ref()
+            .map(|r| {
+                (
+                    Some(r.id.clone()),
+                    r.original_binding
+                        .get("original_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                )
+            })
+            .unwrap_or_default()
+    };
+    let id = diagnostic_id.as_deref();
+    let original = diagnostic_original.as_deref();
     let (old, prior) = {
         let s = state(host)?;
         (s.fresh.active.clone(), s.fresh.history.clone())
@@ -1631,12 +1800,29 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
         .clone();
     let actual = host
         .authority
-        .current_fresh_pair_setup_receipt(&transaction)?
-        .ok_or("actual completed fresh transaction missing")?;
+        .current_fresh_pair_setup_receipt(&transaction)
+        .map_err(|error| {
+            rejected_with_original(host, id, original, FreshStage::ArchiveReceipt, &error)
+        })?
+        .ok_or_else(|| {
+            rejected_with_original(host, id, original, FreshStage::ArchiveReceipt, "")
+        })?;
     if old.local_setup.as_ref() != Some(&actual) {
-        return Err("actual completed fresh transaction changed".into());
+        return Err(rejected_with_original(
+            host,
+            id,
+            original,
+            FreshStage::ArchiveReceipt,
+            "",
+        ));
     }
-    let renewal_custody = pair_renewal::completed_for_archive(host, &old.session)?;
+    let renewal_custody = at_with_original(
+        host,
+        id,
+        original,
+        FreshStage::ArchiveRenewal,
+        pair_renewal::completed_for_archive(host, &old.session),
+    )?;
     let old_phase_state = serde_json::to_value(&old).map_err(safe_decode)?;
     let mut phase_state = old_phase_state.clone();
     if let Some(custody) = &renewal_custody {
@@ -1672,7 +1858,13 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
         "sha256:{}",
         rusty_quest_broker_authority::packaged_json_sha256(&raw)
     );
-    let ack = host.callbacks.archive_fresh_setup_phase(&raw)?;
+    let ack = at_with_original(
+        host,
+        id,
+        original,
+        FreshStage::ArchiveJava,
+        host.callbacks.archive_fresh_setup_phase(&raw),
+    )?;
     const FIELDS: [&str; 10] = [
         "$schema",
         "body_sha256",
@@ -1703,7 +1895,13 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
             .and_then(Value::as_str)
             .is_some_and(|s| !s.is_empty())
     {
-        return Err("actual fresh phase durable custody ACK differs".into());
+        return Err(rejected_with_original(
+            host,
+            id,
+            original,
+            FreshStage::ArchiveAck,
+            "",
+        ));
     }
     host.capability.require_live()?;
     // No next phase is admitted if this actual owner archive cannot commit.
@@ -1717,10 +1915,22 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
     if let Some(next) = next {
         mark_dispatch(host, &next)?;
     }
-    history_custody::archive_setup(host, &old)?;
+    at_with_original(
+        host,
+        id,
+        original,
+        FreshStage::ArchiveHistory,
+        history_custody::archive_setup(host, &old),
+    )?;
     // The exact retry cache remains live through both durable custody calls.
     // Only local in-memory metadata locks are held for the final atomic join.
-    let _lifetime_guard = pair_renewal::archived_lifetime_guard(host, renewal_custody.as_ref())?;
+    let _lifetime_guard = at_with_original(
+        host,
+        id,
+        original,
+        FreshStage::ArchiveLifetime,
+        pair_renewal::archived_lifetime_guard(host, renewal_custody.as_ref()),
+    )?;
     let mut s = state(host)?;
     let current_phase_state = s
         .fresh
@@ -1836,8 +2046,18 @@ fn finish_phase(
         json!({"signature":sa_for_b,"initiator_current":local_current}),
     )?;
     let remote_current = finished["current_session"].clone();
-    check_remote_current(host, id, &remote_current, &session, expiry)?;
-    check_current(host, &local_current, &session, expiry)?;
+    at(
+        host,
+        Some(id),
+        FreshStage::CurrentValidation,
+        check_remote_current(host, id, &remote_current, &session, expiry),
+    )?;
+    at(
+        host,
+        Some(id),
+        FreshStage::CurrentValidation,
+        check_current(host, &local_current, &session, expiry),
+    )?;
     update(host, &id, |a| {
         a.remote_current = Some(remote_current.clone())
     })?;
@@ -1852,7 +2072,12 @@ fn finish_phase(
         return Err("fresh completion original differs".into());
     }
     let final_remote = done["current_session"].clone();
-    check_remote_current(host, id, &final_remote, &session, expiry)?;
+    at(
+        host,
+        Some(id),
+        FreshStage::CurrentValidation,
+        check_remote_current(host, id, &final_remote, &session, expiry),
+    )?;
     let final_local = complete(host, &id)?;
     Ok(json!({"$schema":"rusty.quest.embedded_duplex.fresh_pair_setup_result.v2","request_id":id,"session_id":session,
             "phase_request_id":active(host,id)?.phase_id,"phase_archive":state(host)?.fresh.history,
@@ -1964,6 +2189,10 @@ fn stage_completed_successor(host: &Host, id: &str, session: &str) -> Result<boo
     } else {
         json!({"kind":"incoming_fresh_setup","native_request_id":id})
     };
+    let diagnostic_original = binding
+        .get("original_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     {
         let mut p = process()
             .lock()
@@ -1978,7 +2207,13 @@ fn stage_completed_successor(host: &Host, id: &str, session: &str) -> Result<boo
                 .as_ref()
                 .is_some_and(|h| Arc::ptr_eq(&h.pair_state, &host.pair_state))
         {
-            return Err("new completed-setup owner is busy".into());
+            return Err(rejected_with_original(
+                host,
+                Some(id),
+                diagnostic_original.as_deref(),
+                FreshStage::StageSuccessor,
+                "",
+            ));
         }
         let mut s = state(host)?;
         if s.fresh.archive_reservation.is_some() || s.fresh.prepared_start.is_some() {
@@ -2012,6 +2247,13 @@ fn stage_completed_successor(host: &Host, id: &str, session: &str) -> Result<boo
     }
     if host.local_peer_id < host.remote_peer_id {
         if let Err(error) = host.callbacks.bind_fresh_setup_original(id) {
+            let error = rejected_with_original(
+                host,
+                Some(id),
+                diagnostic_original.as_deref(),
+                FreshStage::StageSuccessor,
+                &error,
+            );
             record_failure(host, id, &error);
             return Err(error);
         }

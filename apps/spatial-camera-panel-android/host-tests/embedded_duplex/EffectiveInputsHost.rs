@@ -40,6 +40,255 @@ fn derive(request: &Value) -> Value {
     serde_json::from_str(&raw).unwrap()
 }
 
+fn usb_profile(request: &Value) -> Value {
+    let mut value: Value = serde_json::from_str(&profile(request, 20, 41000)).unwrap();
+    value["peer_network_transport"] = json!("development-usb-adb-relay-v1");
+    for (i, peer) in value["peer_network_endpoints"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        peer["media_endpoint"]["host"] = json!("127.0.0.1");
+        peer["control_endpoint"]["host"] = json!("127.0.0.1");
+        peer["media_endpoint"]["port"] = json!(46061 + i);
+        peer["control_endpoint"]["port"] = json!(46071 + i);
+        peer["local_source_port"] = json!(47061 + i);
+    }
+    value
+}
+
+fn decode_documents(
+    documents: &Value,
+    role: &str,
+) -> Result<crate::packaged_route::PackagedDuplexRoute, String> {
+    use crate::packaged_route::{
+        decode_and_validate_packaged_route, ExactRouteDocument, PackagedRouteExpectations,
+    };
+    let route = documents["route-configuration.json"].as_str().unwrap();
+    let profile = documents["packed-stereo-profile.json"].as_str().unwrap();
+    let a = documents["peer_a_to_peer_b.media-binding.json"]
+        .as_str()
+        .unwrap();
+    let b = documents["peer_b_to_peer_a.media-binding.json"]
+        .as_str()
+        .unwrap();
+    let manifest: Value =
+        serde_json::from_str(documents["product-input-manifest.json"].as_str().unwrap()).unwrap();
+    let lock: Value =
+        serde_json::from_str(documents["accepted-product-lock.json"].as_str().unwrap()).unwrap();
+    let digests = [route, profile, a, b].map(packaged_json_sha256);
+    decode_and_validate_packaged_route(
+        ExactRouteDocument {
+            json: route,
+            sha256: &digests[0],
+        },
+        ExactRouteDocument {
+            json: profile,
+            sha256: &digests[1],
+        },
+        [
+            ExactRouteDocument {
+                json: a,
+                sha256: &digests[2],
+            },
+            ExactRouteDocument {
+                json: b,
+                sha256: &digests[3],
+            },
+        ],
+        PackagedRouteExpectations {
+            route_schema: "rusty.morphovision.embedded_duplex.route_configuration.v1",
+            profile_schema: "rusty.morphovision.embedded_duplex.packed_profile.v1",
+            product_id: lock["product_id"].as_str().unwrap(),
+            package_name: manifest["package"]["application_id"].as_str().unwrap(),
+            installed_role_id: role,
+        },
+    )
+}
+
+fn usb_controls(original: &Value) {
+    let mut request = original.clone();
+    let selected = usb_profile(original);
+    request["profile_json"] = json!(selected.to_string());
+    let result =
+        crate::effective_inputs::derive_effective_inputs_request_json(&request.to_string());
+    if !cfg!(feature = "development-usb-adb-relay") {
+        assert!(result.is_err(), "feature-off build admitted USB relay");
+        return;
+    }
+    let result: Value = serde_json::from_str(&result.expect("explicit USB relay profile")).unwrap();
+    let route: Value = serde_json::from_str(
+        result["documents"]["route-configuration.json"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        route["transport_contract_id"],
+        "rusty.manifold.peer.development_loopback_relay_tcp_transport.v1"
+    );
+    for (i, peer) in route["peers"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(peer["local_source_port"], 47061 + i);
+    }
+    for name in [
+        "peer_a_to_peer_b.media-binding.json",
+        "peer_b_to_peer_a.media-binding.json",
+    ] {
+        let binding: Value =
+            serde_json::from_str(result["documents"][name].as_str().unwrap()).unwrap();
+        let plan = &binding["quest"]["spec"]["plan"];
+        let source = &plan["lanes"][0]["source_device_id"];
+        let peer = route["peers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| &p["device_id"] == source)
+            .unwrap();
+        let endpoint = plan["runtime_endpoints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| &p["device_id"] == source)
+            .unwrap();
+        assert_eq!(
+            endpoint["source_bindings"][0]["source_port"],
+            peer["local_source_port"]
+        );
+        assert_ne!(
+            endpoint["source_bindings"][0]["source_port"],
+            peer["media_endpoint"]["port"]
+        );
+    }
+    let role = original["installed_role_id"].as_str().unwrap();
+    decode_documents(&result["documents"], role)
+        .expect("derived USB route has exact media bindings");
+    let mut changed = result["documents"].clone();
+    let mut changed_route = route.clone();
+    changed_route["peers"][0]["local_source_port"] = json!(47063);
+    changed["route-configuration.json"] = json!(changed_route.to_string());
+    assert!(
+        decode_documents(&changed, role).is_err(),
+        "disjoint but foreign local producer binding accepted"
+    );
+    let mut changed = result["documents"].clone();
+    let name = "peer_a_to_peer_b.media-binding.json";
+    let mut binding: Value = serde_json::from_str(changed[name].as_str().unwrap()).unwrap();
+    let source = binding["quest"]["spec"]["plan"]["lanes"][0]["source_device_id"].clone();
+    let peer = route["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["device_id"] == source)
+        .unwrap();
+    for endpoint in binding["quest"]["spec"]["plan"]["runtime_endpoints"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if endpoint["device_id"] == source {
+            endpoint["source_bindings"][0]["source_port"] = peer["media_endpoint"]["port"].clone();
+        }
+    }
+    let typed: rusty_quest_broker_authority::QuestBrokerMediaSessionProductBinding =
+        serde_json::from_value(binding.clone()).unwrap();
+    binding["quest"]["runtime_spec_canonical_sha256"] = json!(
+        rusty_quest_media_stream::canonical_media_stream_runtime_sha256(&typed.quest.spec).unwrap()
+    );
+    changed[name] = json!(binding.to_string());
+    assert!(
+        decode_documents(&changed, role).is_err(),
+        "rehashed binding substituted an external port for local producer"
+    );
+    let manifest: Value = serde_json::from_str(
+        result["documents"]["product-input-manifest.json"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    for direction in manifest["directional_bindings"].as_array().unwrap() {
+        let binding: Value = serde_json::from_str(
+            result["documents"][direction["media_binding_path"].as_str().unwrap()]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let lifecycle: Value = serde_json::from_str(
+            result["documents"][direction["lifecycle_lock_path"].as_str().unwrap()]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            lifecycle["runtime_spec_canonical_sha256"],
+            binding["quest"]["runtime_spec_canonical_sha256"]
+        );
+    }
+    for damage in [
+        "external-host",
+        "loopback-alias",
+        "external-collision",
+        "producer-collision",
+        "producer-external-collision",
+        "missing-producer",
+        "zero-producer",
+        "zero-media",
+        "zero-control",
+        "mode",
+        "absent-mode",
+    ] {
+        let mut bad = selected.clone();
+        match damage {
+            "external-host" => {
+                bad["peer_network_endpoints"][0]["media_endpoint"]["host"] = json!("10.0.0.1")
+            }
+            "loopback-alias" => {
+                bad["peer_network_endpoints"][0]["media_endpoint"]["host"] = json!("127.0.0.2")
+            }
+            "external-collision" => {
+                bad["peer_network_endpoints"][1]["control_endpoint"]["port"] = json!(46061)
+            }
+            "producer-collision" => {
+                bad["peer_network_endpoints"][1]["local_source_port"] = json!(47061)
+            }
+            "producer-external-collision" => {
+                bad["peer_network_endpoints"][1]["local_source_port"] = json!(46061)
+            }
+            "missing-producer" => {
+                bad["peer_network_endpoints"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("local_source_port");
+            }
+            "zero-producer" => bad["peer_network_endpoints"][0]["local_source_port"] = json!(0),
+            "zero-media" => bad["peer_network_endpoints"][0]["media_endpoint"]["port"] = json!(0),
+            "zero-control" => {
+                bad["peer_network_endpoints"][0]["control_endpoint"]["port"] = json!(0)
+            }
+            "mode" => bad["peer_network_transport"] = json!("development-usb-adb-relay-v2"),
+            "absent-mode" => {
+                bad.as_object_mut()
+                    .unwrap()
+                    .remove("peer_network_transport");
+            }
+            _ => unreachable!(),
+        }
+        request["profile_json"] = json!(bad.to_string());
+        assert!(
+            crate::effective_inputs::derive_effective_inputs_request_json(&request.to_string())
+                .is_err(),
+            "USB damage accepted: {damage}"
+        );
+    }
+    let mut lan: Value = serde_json::from_str(&profile(original, 20, 41000)).unwrap();
+    lan["peer_network_transport"] = json!("unknown");
+    request["profile_json"] = json!(lan.to_string());
+    assert!(
+        crate::effective_inputs::derive_effective_inputs_request_json(&request.to_string())
+            .is_err(),
+        "unknown transport accepted"
+    );
+}
+
 fn main() {
     let root = std::env::args().nth(1).unwrap();
     if root == "--derive" || root == "--assemble" {
@@ -61,6 +310,7 @@ fn main() {
         return;
     }
     let original = base(Path::new(&root));
+    usb_controls(&original);
     let baseline = derive(&original);
     assert_eq!(baseline["documents"], original["documents"]);
     assert!(baseline["lineage"]["profile_sha256"].is_null());

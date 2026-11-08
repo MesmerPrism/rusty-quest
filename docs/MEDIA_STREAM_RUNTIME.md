@@ -75,6 +75,10 @@ must appear in effective state rather than leaving a stale active label.
 
 ### Shared packed capture
 
+The default RECORD template has a separately packaged debug-only
+[PREVIEW experiment and request/result readback](PACKED_CAMERA2_REQUEST_EXPERIMENT.md).
+It changes no FPS override, media closure or enrollment selection.
+
 An embedded host may own one `PackedStereoCaptureOwner` independently of a
 Peer media subscription. `createSharedCapturePipeline` attaches a bounded
 encoder consumer to an already started, configuration-matching owner; closing
@@ -89,7 +93,24 @@ sensor timestamps survive encoding and decoding; an allocation handle alone
 is not a frame identity. Whole-capture shutdown keeps the capture context
 alive until actual camera closure and all retained consumers retire.
 
+The existing explicit diagnostic ARM can also start a finite observation window
+for outer Camera2 callbacks, trace calls, pool polling, encoder offers and
+handler heartbeat delays. See [capture stall diagnostics](CAPTURE_STALL_DIAGNOSTICS.md)
+for its effective readback, 600-second lifetime, inherited trace-read blocking,
+focused host controls and limits. These observations do not change media state
+or supply performance or qualification authority.
+
 Run the bounded host and source checks before Android compilation:
+
+Optional [receiver Android Trace sections](RECEIVER_TRACE_SECTIONS.md) expose
+fixed call boundaries during an explicitly enabled external app-trace session.
+Their focused host gate checks production method placement and failure behavior;
+trace spans and packet-progress counters remain observations, not acceptance.
+
+Optional [sender Android Trace sections](SENDER_TRACE_SECTIONS.md) cover existing
+packet-capacity waits and actual source/sink I/O calls. They require a sampled
+debuggable host and external tracing; existing standalone constructors remain
+off. They change no media policy, packet framing or cleanup authority.
 
 ```powershell
 cargo test --locked -p rusty-quest-media-stream -p rusty-quest-broker-authority -p rusty-quest-manifold-broker-authority-native -p rusty-quest-media-stream-android
@@ -296,6 +317,30 @@ Run `tools/checks/Test-ReceiverStageTraceHost.ps1` with an explicit JDK, the exi
 pinned host JSON dependency, API34 Android jar and create-new output under `target`.
 The pure clock/generation controls and Android receiver typecheck do not establish
 headset, transport, codec or duplex readiness.
+
+The packed receiver also emits bounded `decoder-input-pressure` log markers:
+the first negative input dequeue (`waiting`), first recovery, first timeout,
+first other terminal wait outcome and first `extended-recovered` input wait over
+100 ms per receiver owner (at most five markers). Extended recovery is retained
+separately even when an earlier short wait consumed the first recovery marker;
+100 ms is an observation threshold and does not select or extend the input budget.
+They include receiver and
+connection generations, local elapsed-time start/duration, the selected input
+budget, attempt count, last negative input code and output/release/acquisition
+observation deltas. `hostAcquiredObserved` counts Java observations of exact
+native acquisition metadata; zero does not establish that native acquisition
+stopped. The getter observes metadata and does not consume Surface buffers.
+Markers contain no packet payload or raw frame data, change no receipt schema
+and cannot change a packet or exception outcome if logging fails. The existing
+total input deadline, 10 ms dequeue calls and same packet/codec/connection remain
+unchanged; a timeout remains terminal for a prepared receiver without SDK replay.
+
+`python tools/checks/Test-ReceiverInputPressureHost.py --java-home <jdk> --out-dir target/<fresh-output>`
+compiles the extracted actual `queuePacket` and pressure logger and checks ten
+packet, deadline, Stop, codec-error and bounded-logging schedules. Android codec,
+clock, output drain and acquisition counters are modeled. Run the existing
+receiver API34 typecheck separately. These checks prove no physical backpressure
+cause, Surface pump, recovery policy or headset fix.
 
 When a sender packet offer is rejected, its existing `packed-source` diagnostic
 is emitted before connection retirement can interrupt the accept worker and

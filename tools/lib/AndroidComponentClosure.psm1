@@ -87,7 +87,8 @@ function Assert-AndroidComponentGradleArguments {
     $paired=@('--project-cache-dir','--init-script')
     $properties=@('kotlin.project.persistent.dir','kotlin.project.persistent.dir.gradle.disableWrite',
         'android.aapt2FromMavenOverride','rqCmakeStagingDirectory','androidJar','mediaBuildDir',
-        'rqSourceBanksForeignOwnership','rqDeveloperSourceCompositionFingerprint','rqDeveloperSourceRuntimeStamp','kotlin.compiler.execution.strategy')
+        'rqSourceBanksForeignOwnership','rqDeveloperSourceCompositionFingerprint','rqDeveloperSourceRuntimeStamp',
+        'rqVulkanProvenanceDiagnostic','kotlin.compiler.execution.strategy')
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     for($index=0;$index -lt $Arguments.Count;$index++){
         $argument=[string]$Arguments[$index]
@@ -100,7 +101,9 @@ function Assert-AndroidComponentGradleArguments {
             if(-not [IO.Path]::IsPathFullyQualified($path) -or
                 ($argument -ceq '--init-script' -and -not [IO.File]::Exists($path))){throw 'component-gradle-arguments'}
         }elseif($argument -cmatch '^-P([^=]+)=(.*)$'){
-            if($properties -cnotcontains $Matches[1] -or -not $seen.Add('property:'+$Matches[1])){throw 'component-gradle-arguments'}
+            $propertyName=$Matches[1];$propertyValue=$Matches[2]
+            if($properties -cnotcontains $propertyName -or -not $seen.Add('property:'+$propertyName)){throw 'component-gradle-arguments'}
+            if($propertyName-ceq'rqVulkanProvenanceDiagnostic'-and$propertyValue-cnotin@('true','false')){throw 'component-gradle-arguments'}
         }else{throw 'component-gradle-arguments'}
     }
     if($seen.Contains('--configuration-cache') -and $seen.Contains('--no-configuration-cache')){throw 'component-gradle-arguments'}

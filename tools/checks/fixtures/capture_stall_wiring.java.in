@@ -1,0 +1,174 @@
+package io.github.mesmerprism.rustyquest.media;
+
+import org.json.JSONObject;
+
+/** Production method bodies below, with modeled Android data/control leaves. */
+public final class CaptureStallWiringHost {
+    final CaptureStallDiagnostics stallDiagnostics = new CaptureStallDiagnostics(
+            () -> android.os.SystemClock.elapsedRealtimeNanos());
+    final CaptureFrameTrace leftFrameTrace = new CaptureFrameTrace(), rightFrameTrace = new CaptureFrameTrace();
+    final CaptureFrameTrace trace;
+    final Diagnostic requestDiagnostic = new Diagnostic();
+    final Diagnostic leftRequestDiagnostic = new Diagnostic(), rightRequestDiagnostic = new Diagnostic();
+    final Diagnostic requestPolicy = new Diagnostic();
+    static final class Diagnostic {
+        void completed(CaptureStallDiagnostics.Window window, TotalCaptureResult result) {}
+        JSONObject snapshot() { return new JSONObject(); }
+    }
+    final long captureInstance = 1L;
+    static final int FAILURE_NONE = 0, DETAIL_OTHER = 0;
+    static final class FirstFailure { int originCode, causeCode, detailCode; long elapsedNs; }
+    FirstFailure firstFailure;
+    int leftTimestampSource, rightTimestampSource, frameRate = 60;
+    boolean leftFpsRangePresent, rightFpsRangePresent;
+    int leftFpsLower, leftFpsUpper, rightFpsLower, rightFpsUpper;
+    final String eye;
+    boolean stopRequested, closeRequested;
+    boolean started = true, startupSettled;
+    final Handler cameraHandler = new Handler();
+    final Endpoint left = new Endpoint(), right = new Endpoint();
+    final Object subscriptionLock = new Object();
+    EncoderConsumer encoderConsumer;
+    final CameraResultCadence leftCameraStarted = new CameraResultCadence(), rightCameraStarted = new CameraResultCadence(),
+            leftCameraResults = new CameraResultCadence(), rightCameraResults = new CameraResultCadence();
+    final CameraFailureCadence leftCameraFailed = new CameraFailureCadence(), rightCameraFailed = new CameraFailureCadence();
+    final PackedStereoGlCompositor.StageCadence leftCameraMetadata = new PackedStereoGlCompositor.StageCadence(),
+            rightCameraMetadata = new PackedStereoGlCompositor.StageCadence();
+    final PackedStereoGlCompositor compositor = new PackedStereoGlCompositor();
+    CaptureStallWiringHost(String eye) { this.eye = eye; trace = eye.equals("left") ? leftFrameTrace : rightFrameTrace; }
+    interface EncoderConsumer { void offer(PackedStereoEncoderInput frame); }
+    static final class PackedStereoEncoderInput {
+        int releases;
+        void releaseUnsubmitted() { releases++; }
+    }
+    static final class CameraResultCadence { int count; JSONObject snapshot(long at) { return new JSONObject(); }
+        void observeAt(long a, long b, long c, long d) { count++; }
+        void observeAt(long a, long b, long c, Long d, Long e, Long f) { count++; } }
+    static final class CameraFailureCadence { JSONObject snapshot() { return new JSONObject(); } void observeAt(long a, long b, int c) {} }
+    static final class PackedStereoFramePairer { static final String LEFT = "left"; }
+    static final class Looper { static Looper myLooper() { return null; } static Looper getMainLooper() { return null; } }
+    static final class Endpoint { int closes; void requestClose() { closes++; } }
+    static final class Handler {
+        Runnable pending;
+        boolean postDelayed(Runnable action, long delayMs) { pending = action; return true; }
+        void removeCallbacks(Runnable action) { if (pending == action) pending = null; }
+    }
+    static final class CaptureRequest {}
+    static class CaptureResult {
+        static final int SENSOR_TIMESTAMP = 0, SENSOR_EXPOSURE_TIME = 1, SENSOR_FRAME_DURATION = 2;
+    }
+    static final class TotalCaptureResult extends CaptureResult {
+        long getFrameNumber() { return 43L; }
+        Long get(int key) { return key == SENSOR_TIMESTAMP ? 3_000_000_000L : 11_000_000L; }
+    }
+    static final class CaptureFailure { long getFrameNumber() { return 1L; } int getReason() { return 0; } }
+    static final class CameraCaptureSession {
+        abstract static class CaptureCallback {
+            public abstract void onCaptureStarted(CameraCaptureSession a, CaptureRequest r, long timestamp, long frame);
+            public abstract void onCaptureCompleted(CameraCaptureSession a, CaptureRequest r, TotalCaptureResult t);
+            public abstract void onCaptureFailed(CameraCaptureSession a, CaptureRequest r, CaptureFailure f);
+        }
+    }
+    static final class PackedStereoGlCompositor {
+        int records; RuntimeException failure;
+        boolean stop;
+        void requestStop() { stop = true; }
+        void recordCapture(String e, long f, long t) { records++; if (failure != null) throw failure; }
+        JSONObject captureDiagnosticSnapshot(long at) { return new JSONObject(); }
+        static final class StageCadence { JSONObject snapshot(long at) { return new JSONObject(); } void observeAt(long a, long b) {} }
+    }
+    private CameraCaptureSession.CaptureCallback callback() {
+        return PRODUCTION_CAPTURE_CALLBACK;
+    }
+    PRODUCTION_ENCODER_OFFER
+    PRODUCTION_POOL_POLL
+    PRODUCTION_SNAPSHOT
+    PRODUCTION_ARM
+    PRODUCTION_STOP
+    static void check(boolean result, String message) { if (!result) throw new AssertionError(message); }
+    JSONObject stage(int index) throws Exception { return stallDiagnostics.snapshot().getJSONArray("stages").getJSONObject(index); }
+    void arm() { armDiagnosticTrace("process", 1L, 1L); }
+    public static void main(String[] args) throws Exception {
+        for (String eye : new String[]{"left", "right"}) {
+            CaptureStallWiringHost host = new CaptureStallWiringHost(eye);
+            CameraCaptureSession.CaptureCallback callback = host.callback();
+            callback.onCaptureStarted(null, null, 2_000_000_000L, 42L);
+            callback.onCaptureCompleted(null, null, new TotalCaptureResult());
+            check(!host.stallDiagnostics.snapshot().getBoolean("armed") && host.compositor.records == 1,
+                    "unarmed callback body still runs");
+            host.arm(); callback.onCaptureStarted(null, null, 2_000_000_000L, 42L);
+            callback.onCaptureCompleted(null, null, new TotalCaptureResult());
+            int offset = eye.equals("left") ? 0 : 1;
+            for (int i = offset; i < 12; i += 2)
+                check(host.stage(i).getLong("count") == 1L, "actual callback stage " + i);
+            check(host.compositor.records == 2, "metadata delivery preserved");
+            RuntimeException expected = new IllegalStateException("modeled compositor failure");
+            host.compositor.failure = expected;
+            try { callback.onCaptureCompleted(null, null, new TotalCaptureResult()); throw new AssertionError("missing throw"); }
+            catch (RuntimeException observed) { check(observed == expected, "callback exception identity preserved"); }
+            check(host.stage(2 + offset).getLong("active_since_ns") == 0L, "exception closes outer observation");
+        }
+        CaptureStallWiringHost host = new CaptureStallWiringHost("left"); host.arm();
+        check(host.cameraHandler.pending != null && host.stallDiagnostics.snapshot().getBoolean("active"),
+                "existing production ARM starts finite heartbeat");
+        CameraCaptureSession.CaptureCallback callback = host.callback();
+        Thread worker;
+        java.util.concurrent.atomic.AtomicReference<JSONObject> exported = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> exportFailure = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread reader;
+        synchronized (host.trace) {
+            worker = new Thread(() -> callback.onCaptureStarted(null, null, 3_000_000_000L, 99L));
+            worker.start();
+            long deadline = System.nanoTime() + 2_000_000_000L;
+            while (worker.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield();
+            check(worker.getState() == Thread.State.BLOCKED, "production callback actually blocked on trace");
+            check(host.stage(CaptureStallDiagnostics.LEFT_TRACE_EPOCH).getString("thread_state").equals("BLOCKED"),
+                    "outer production timing precedes epoch monitor");
+            reader = new Thread(() -> {
+                try { exported.set(host.captureDiagnosticSnapshot()); }
+                catch (Throwable error) { exportFailure.set(error); }
+            });
+            reader.start();
+            deadline = System.nanoTime() + 2_000_000_000L;
+            while (reader.getState() != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield();
+            check(reader.getState() == Thread.State.BLOCKED && exported.get() == null,
+                    "actual owner export retains existing synchronous trace locks");
+            android.os.SystemClock.now += 990_000_000L;
+        }
+        worker.join(2000L); check(!worker.isAlive(), "production callback completed");
+        reader.join(2000L); check(!reader.isAlive() && exportFailure.get() == null, "owner export completed");
+        check(exported.get().getJSONObject("stall_probe").getJSONArray("stages")
+                        .getJSONObject(CaptureStallDiagnostics.LEFT_TRACE_EPOCH).getString("thread_state").equals("BLOCKED"),
+                "owner samples stall probe before waiting for legacy trace snapshots");
+        check(host.stage(CaptureStallDiagnostics.LEFT_STARTED).getLong("max_elapsed_ns") == 990_000_000L,
+                "production outer callback includes entry wait");
+        check(host.stage(CaptureStallDiagnostics.LEFT_TRACE_EPOCH).getLong("max_elapsed_ns") == 990_000_000L,
+                "production epoch span includes monitor entry");
+        PackedStereoEncoderInput dropped = new PackedStereoEncoderInput(); host.offerEncoderFrame(dropped);
+        check(dropped.releases == 1, "detached frame release exactly once");
+        host.encoderConsumer = frame -> { android.os.SystemClock.now += 400_000_000L; throw new IllegalStateException(); };
+        try { host.offerEncoderFrame(new PackedStereoEncoderInput()); throw new AssertionError("missing offer throw"); }
+        catch (IllegalStateException expected) { /* unchanged thrown result */ }
+        check(host.stage(CaptureStallDiagnostics.ENCODER_OFFER).getLong("max_elapsed_ns") == 400_000_000L,
+                "actual subscription/callback offer is timed");
+        check(host.stage(CaptureStallDiagnostics.ENCODER_OFFER).getLong("active_since_ns") == 0L,
+                "offer exception retires observation");
+        PackedStereoPoolExecutor.Pool pool = new PackedStereoPoolExecutor.Pool() {
+            public PackedStereoPoolExecutor.Write beginWrite() { return null; }
+            public void finishWrite(PackedStereoPoolExecutor.Write w, PackedStereoPoolExecutor.PairIdentity p) {}
+            public void quarantineWrite(PackedStereoPoolExecutor.Write w, String r) {}
+            public void stopAccepting() {}
+            public void pollReady() throws Exception { android.os.SystemClock.now += 600_000_000L; throw new Exception("pool"); }
+            public boolean retireStopped() { return true; }
+        };
+        try { host.pollCapturePool(pool); throw new AssertionError("missing pool throw"); }
+        catch (Exception expected) { check(expected.getMessage().equals("pool"), "pool exception preserved"); }
+        check(host.stage(CaptureStallDiagnostics.POOL_POLL_READY).getLong("max_elapsed_ns") == 600_000_000L,
+                "production poll span covers native/callback boundary");
+        host.requestStop();
+        check(host.cameraHandler.pending == null && !host.stallDiagnostics.snapshot().getBoolean("active")
+                && host.left.closes == 1 && host.right.closes == 1 && host.compositor.stop,
+                "actual owner Stop cancels probe and preserves camera/compositor stop");
+        System.out.println("capture-stall-wiring:pass");
+    }
+}

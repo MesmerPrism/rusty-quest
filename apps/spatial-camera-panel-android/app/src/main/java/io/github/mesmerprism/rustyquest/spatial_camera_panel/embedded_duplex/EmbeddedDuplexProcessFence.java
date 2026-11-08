@@ -13,7 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.StandardOpenOption;
-import java.security.MessageDigest;
 import java.util.UUID;
 
 /** App writer exclusion only. Neither acquiring nor releasing proves physical cleanup.
@@ -375,6 +374,11 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         f[3]=state;String body=String.join("\n",java.util.Arrays.copyOf(f,checksum))+"\n";return body+digest(body)+"\n";
     }
     synchronized boolean newlyInitialized(){return newlyInitialized;}
+    synchronized boolean clearLegacyWithoutJournals()throws Exception{
+        requireFresh();
+        verifyHeldRecord();
+        return operationalRunId==null&&!pending&&"-".equals(checkpointDigest)&&"-".equals(evidenceDigest);
+    }
     synchronized long previousGeneration(){return acquisitionGeneration;}
     /** Exact held predecessor, retained before this acquisition wrote its new generation. */
     synchronized String acquisitionRecordForRecovery()throws Exception{
@@ -475,10 +479,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     }
     static String digest(String exact) throws Exception {
         if (exact == null) return "-";
-        byte[] hash = MessageDigest.getInstance("SHA-256").digest(exact.getBytes(StandardCharsets.UTF_8));
-        StringBuilder result = new StringBuilder();
-        for (byte value : hash) result.append(String.format("%02x", value & 255));
-        return result.toString();
+        return EmbeddedDuplexCanonicalJson.sha256Bytes(exact.getBytes(StandardCharsets.UTF_8));
     }
     /** Release is resource management only; pending remains durable. */
     public synchronized void close() throws Exception {

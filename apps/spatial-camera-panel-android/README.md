@@ -2057,3 +2057,8 @@ comparison; it proves no installed APK byte equality, signer or provenance.
 and the actual cache/property producer statements without building an APK. Supplying
 an explicit JDK and Kotlin compiler classpath additionally compiles and executes
 the exact version-name function extracted from the Gradle source.
+## Optional camera color
+
+The explicit [camera color provider ABI](../../docs/OPTIONAL_CAMERA_COLOR.md)
+keeps camera processing ahead of background and independent region composition.
+It supports a selected standalone Own or Peer source as well as ordinary blends.

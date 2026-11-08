@@ -5,6 +5,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[path = "build_support/camera_color_provider.rs"]
+mod camera_color_provider;
+
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
     emit_environment_depth_owner_cfg();
@@ -72,6 +75,11 @@ fn main() {
         (
             "shaders/camera_replay_capture.frag.glsl",
             "camera_replay_capture.frag.spv",
+            "fragment",
+        ),
+        (
+            "shaders/spatial_binocular_display.frag.glsl",
+            "spatial_binocular_display.frag.spv",
             "fragment",
         ),
         (
@@ -157,6 +165,40 @@ fn main() {
         source_bank_abi == 2,
         "primary input provider and final ABI2 must be selected together"
     );
+    let optional_color = compile_optional_shader_env(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_COLOR_SHADER",
+        "spatial_optional_color.frag.spv",
+        "fragment",
+    );
+    let source_color = source_bank_abi == 2 && optional_color.compiled;
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_CAMERA_COLOR_ABI"
+    );
+    let camera_color_abi =
+        match env::var("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPTIONAL_CAMERA_COLOR_ABI").as_deref() {
+            Err(env::VarError::NotPresent) | Ok("0") => 0,
+            Ok("1") => 1,
+            _ => panic!("optional camera color provider ABI must be explicit 0 or 1"),
+        };
+    assert!(
+        camera_color_abi == 0 || source_color,
+        "camera color ABI1 requires source-bank ABI2 and the optional color provider"
+    );
+    if source_color {
+        compile_optional_shader_env_with_args(
+            &glslc,
+            &out_dir,
+            "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER",
+            "spatial_display_primary.frag.spv",
+            "fragment",
+            &["-DPRIVATE_LAYER_DISPLAY_PRIMARY=1".to_string()],
+        );
+    } else {
+        fs::write(out_dir.join("spatial_display_primary.frag.spv"), [])
+            .expect("write absent display primary shader");
+    }
     let source_bank_vertex = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
@@ -169,18 +211,45 @@ fn main() {
             format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
         ],
     );
+    let source_bank_fragment_defines = [
+        "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
+        "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+        format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
+    ];
     let source_bank_fragment = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
         "spatial_source_bank.frag.spv",
         "fragment",
-        &[
-            "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
-            "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
-            format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
-        ],
+        &source_bank_fragment_defines,
     );
+    if source_color {
+        let mut source_color_defines = source_bank_fragment_defines.to_vec();
+        source_color_defines.push("-DPRIVATE_LAYER_SOURCE_COLOR=1".to_string());
+        source_color_defines.push(format!(
+            "-DPRIVATE_LAYER_CAMERA_COLOR_ABI={camera_color_abi}"
+        ));
+        compile_optional_shader_env_with_args(
+            &glslc,
+            &out_dir,
+            "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
+            "spatial_source_color_bank.frag.spv",
+            "fragment",
+            &source_color_defines,
+        );
+        if camera_color_abi == 1 {
+            let compiled = fs::read(out_dir.join("spatial_source_color_bank.frag.spv"))
+                .expect("read compiled camera color provider");
+            assert!(
+                camera_color_provider::declares_camera_color_sampler(&compiled),
+                "camera color ABI1 provider must expose compiled sampler set1 binding10"
+            );
+        }
+    } else {
+        fs::write(out_dir.join("spatial_source_color_bank.frag.spv"), [])
+            .expect("write absent source color final shader");
+    }
     assert!(
         source_bank_abi == 1 || (source_bank_vertex.compiled && source_bank_fragment.compiled),
         "ABI2 requires both exact final shader providers"
@@ -188,11 +257,19 @@ fn main() {
     fs::write(
         out_dir.join("spatial_source_bank_build.rs"),
         format!(
-            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};\npub(crate) const SOURCE_BANK_ABI: u32 = {};\npub(crate) const PRIMARY_INPUT_SHADER_COMPILED: bool = {};",
-            source_bank_vertex.compiled && source_bank_fragment.compiled, source_bank_abi, primary_input.compiled
+            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};\npub(crate) const SOURCE_BANK_ABI: u32 = {};\npub(crate) const PRIMARY_INPUT_SHADER_COMPILED: bool = {};\npub(crate) const CAMERA_COLOR_ABI: u32 = {};",
+            source_bank_vertex.compiled && source_bank_fragment.compiled, source_bank_abi, primary_input.compiled, camera_color_abi
         ),
     )
     .expect("write source bank shader metadata");
+    fs::write(
+        out_dir.join("spatial_optional_color_build.rs"),
+        format!(
+            "pub(crate) const OPTIONAL_COLOR_SHADER_COMPILED: bool = {};\npub(crate) const SOURCE_COLOR_SHADER_COMPILED: bool = {};\npub(crate) const CAMERA_COLOR_ABI: u32 = {};",
+            optional_color.compiled, source_color, camera_color_abi
+        ),
+    )
+    .expect("write optional color shader metadata");
     let opaque_projection_effect =
         opaque_projection_effect_env("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT");
     let projection_surface_uniform_abi_version = projection_surface_uniform_abi_version_env(

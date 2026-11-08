@@ -1,0 +1,40 @@
+package android.os;
+
+import java.util.ArrayDeque;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+/** Host model only: no Android/platform tracing proof. */
+public final class Trace {
+    public static volatile boolean enabled, failBegin, failEnd, failEnabled;
+    public static final List<String> events = new CopyOnWriteArrayList<>();
+    private static final ConcurrentHashMap<Long, ArrayDeque<String>> stacks = new ConcurrentHashMap<>();
+    public static boolean isEnabled() {
+        if (failEnabled) throw new IllegalStateException("modeled enabled failure");
+        return enabled;
+    }
+    public static void beginSection(String name) {
+        if (failBegin) throw new IllegalStateException("modeled trace begin failure");
+        ArrayDeque<String> stack = stacks.computeIfAbsent(Thread.currentThread().getId(), id -> new ArrayDeque<>());
+        synchronized (stack) { stack.push(name); }
+        events.add("B:" + name);
+    }
+    public static void endSection() {
+        if (failEnd) throw new IllegalStateException("modeled trace end failure");
+        ArrayDeque<String> stack = stacks.get(Thread.currentThread().getId());
+        if (stack == null) throw new AssertionError("unbalanced end");
+        String name;
+        synchronized (stack) { name = stack.pop(); }
+        events.add("E:" + name);
+    }
+    public static String current(Thread thread) {
+        ArrayDeque<String> stack = stacks.get(thread.getId());
+        if (stack == null) return null;
+        synchronized (stack) { return stack.peek(); }
+    }
+    public static void reset() {
+        events.clear(); stacks.clear(); enabled = false;
+        failBegin = failEnd = failEnabled = false;
+    }
+}

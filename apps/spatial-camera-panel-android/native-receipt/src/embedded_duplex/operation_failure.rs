@@ -18,6 +18,205 @@ struct Failure {
     current_session: Option<Value>,
 }
 
+// These variants describe the actual failing call site, never its error text.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum FreshStage {
+    HostLookup,
+    Clock,
+    Input,
+    Flight,
+    Initiator,
+    AllocateIdentity,
+    CurrentPhase,
+    StageSuccessor,
+    ArchivePrior,
+    Begin,
+    BeginCapability,
+    BeginEligibility,
+    BeginPhysical,
+    BeginBinding,
+    BeginReservation,
+    BeginAuthority,
+    ViewExchange,
+    Context,
+    FinishPhase,
+    ArchiveReceipt,
+    ArchiveRenewal,
+    ArchiveJava,
+    ArchiveAck,
+    ArchiveHistory,
+    ArchiveLifetime,
+    CurrentValidation,
+}
+impl FreshStage {
+    fn owner(self) -> &'static str {
+        match self {
+            Self::ArchiveJava | Self::BeginPhysical => "quest_java",
+            Self::ArchiveReceipt | Self::ArchiveHistory | Self::BeginAuthority => "manifold",
+            _ => "quest_native",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum FreshReason {
+    OwnerRejected,
+    GuardRefused,
+    ReceiptMismatch,
+    BindingMismatch,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FreshSubject {
+    pub request_id: Option<String>,
+    pub phase_id: Option<String>,
+    pub original_id: Option<String>,
+    pub app_generation: Option<u64>,
+    pub native_generation: Option<u64>,
+    pub app_record_sha256: Option<String>,
+    pub config_sha256: Option<String>,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FreshDiagnostic {
+    owner: String,
+    stage: FreshStage,
+    reason: FreshReason,
+    #[serde(flatten)]
+    subject: FreshSubject,
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FreshFailure {
+    #[serde(rename = "$schema")]
+    schema: String,
+    code: String,
+    operation: String,
+    diagnostic: FreshDiagnostic,
+}
+fn closed(value: &Value, keys: &[&str]) -> bool {
+    value
+        .as_object()
+        .is_some_and(|o| o.len() == keys.len() && keys.iter().all(|k| o.contains_key(*k)))
+}
+fn hex(value: &str, len: usize) -> bool {
+    value.len() == len
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+fn digest(value: &str) -> bool {
+    hex(value.strip_prefix("sha256:").unwrap_or(value), 64)
+}
+fn identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value.as_bytes()[0].is_ascii_lowercase()
+        && value
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"_.-".contains(&c))
+}
+fn fresh_cause(raw: Value) -> Option<Value> {
+    if !closed(&raw, &["$schema", "code", "operation", "diagnostic"])
+        || !closed(
+            &raw["diagnostic"],
+            &[
+                "owner",
+                "stage",
+                "reason",
+                "request_id",
+                "phase_id",
+                "original_id",
+                "app_generation",
+                "native_generation",
+                "app_record_sha256",
+                "config_sha256",
+            ],
+        )
+    {
+        return None;
+    }
+    let value: FreshFailure = serde_json::from_value(raw).ok()?;
+    let d = &value.diagnostic;
+    let s = &d.subject;
+    if value.schema != "rusty.quest.embedded_duplex.operation_failure.v2"
+        || value.code != "fresh_setup_rejected"
+        || value.operation != "fresh_pair_setup"
+        || d.owner != d.stage.owner()
+        || s.request_id.as_deref().is_some_and(|v| !identifier(v))
+        || s.phase_id.as_deref().is_some_and(|v| !identifier(v))
+        || s.original_id.as_deref().is_some_and(|v| !hex(v, 32))
+        || s.app_generation
+            .is_some_and(|v| v == 0 || v > i64::MAX as u64)
+        || s.native_generation
+            .is_some_and(|v| v == 0 || v > i64::MAX as u64)
+        || s.app_record_sha256.as_deref().is_some_and(|v| !hex(v, 64))
+        || s.config_sha256.as_deref().is_some_and(|v| !digest(v))
+    {
+        return None;
+    }
+    serde_json::to_value(value).ok()
+}
+pub(super) fn fresh_rejection(
+    error: &str,
+    stage: FreshStage,
+    reason: FreshReason,
+    subject: FreshSubject,
+) -> String {
+    // Keep an earlier precise rejection or the existing actual current-session receipt.
+    if let Some(mut value) = current_cause(error) {
+        if value["operation"] == "fresh_pair_setup" {
+            // A caller may already own the exact validated Original while the
+            // inner failure site knows only its native subject. Retain that
+            // site's stage; enrich only the same complete request/actor tuple.
+            if value["$schema"] == "rusty.quest.embedded_duplex.operation_failure.v2"
+                && value["diagnostic"]["original_id"].is_null()
+                && subject.original_id.is_some()
+                && subject.request_id.is_some()
+                && subject.native_generation.is_some()
+            {
+                if let Ok(known) = serde_json::to_value(&subject) {
+                    if [
+                        "request_id",
+                        "phase_id",
+                        "app_generation",
+                        "native_generation",
+                        "app_record_sha256",
+                        "config_sha256",
+                    ]
+                    .iter()
+                    .all(|key| value["diagnostic"][*key] == known[*key])
+                    {
+                        value["diagnostic"]["original_id"] = known["original_id"].clone();
+                        if let Some(validated) = fresh_cause(value) {
+                            return validated.to_string();
+                        }
+                    }
+                }
+            }
+            return error.to_owned();
+        }
+    }
+    let value = FreshFailure {
+        schema: "rusty.quest.embedded_duplex.operation_failure.v2".into(),
+        code: "fresh_setup_rejected".into(),
+        operation: "fresh_pair_setup".into(),
+        diagnostic: FreshDiagnostic {
+            owner: stage.owner().into(),
+            stage,
+            reason,
+            subject,
+        },
+    };
+    let encoded = serde_json::to_string(&value).expect("fixed fresh failure serialization");
+    if current_cause(&encoded).is_some() {
+        encoded
+    } else {
+        jni_payload(Some("fresh_pair_setup"), "")
+    }
+}
+
 fn operation(value: &str) -> bool {
     matches!(
         value,
@@ -108,6 +307,12 @@ pub(super) fn current_cause(encoded: &str) -> Option<Value> {
         return None;
     }
     let raw: Value = serde_json::from_str(encoded).ok()?;
+    if raw.get("$schema").and_then(Value::as_str)
+        == Some("rusty.quest.embedded_duplex.operation_failure.v2")
+    {
+        serde_json::from_str::<FreshFailure>(encoded).ok()?; // Reject duplicate typed fields too.
+        return fresh_cause(raw);
+    }
     let fields = raw.as_object()?;
     if fields.len() != 6
         || [
@@ -136,7 +341,7 @@ pub(super) fn jni_payload(requested_operation: Option<&str>, error: &str) -> Str
         .unwrap_or("runtime_command");
     if let Some(value) = current_cause(error) {
         if value.get("operation").and_then(Value::as_str) == Some(selected) {
-            return value.to_string();
+            return value.to_string(); // Only validated fields cross JNI, never shadowed input bytes.
         }
     }
     // No raw native/provider/config/exception text is included in the fallback.
@@ -155,6 +360,165 @@ pub(super) fn jni_payload(requested_operation: Option<&str>, error: &str) -> Str
 mod tests {
     use super::*;
     use serde_json::json;
+    fn diagnostic_fixture() -> Value {
+        json!({"$schema":"rusty.quest.embedded_duplex.operation_failure.v2",
+            "code":"fresh_setup_rejected","operation":"fresh_pair_setup",
+            "diagnostic":{"owner":"quest_native","stage":"stage_successor","reason":"owner_rejected",
+                "request_id":"pair.finite.fixture","phase_id":null,"original_id":null,
+                "app_generation":7,"native_generation":9,"app_record_sha256":"a".repeat(64),
+                "config_sha256":"sha256:".to_owned()+&"b".repeat(64)}})
+    }
+    #[test]
+    fn fresh_setup_diagnostic_survives_jni_without_raw_error_inference() {
+        let value = diagnostic_fixture();
+        assert_eq!(current_cause(&value.to_string()), Some(value.clone()));
+        assert_eq!(
+            serde_json::from_str::<Value>(&jni_payload(
+                Some("fresh_pair_setup"),
+                &value.to_string()
+            ))
+            .unwrap(),
+            value
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&jni_payload(Some("pair_ceremony"), &value.to_string()))
+                .unwrap()["code"],
+            "rejected_unknown"
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&jni_payload(
+                Some("fresh_pair_setup"),
+                "stage_successor secret"
+            ))
+            .unwrap()["code"],
+            "rejected_unknown"
+        );
+    }
+    #[test]
+    fn fresh_diagnostic_rejects_open_fields_invalid_identity_and_unbounded_input() {
+        let original = diagnostic_fixture();
+        for key in [
+            "owner",
+            "stage",
+            "reason",
+            "request_id",
+            "phase_id",
+            "original_id",
+            "app_generation",
+            "native_generation",
+            "app_record_sha256",
+            "config_sha256",
+            "extra",
+        ] {
+            let mut value = original.clone();
+            value["diagnostic"][key] = json!("secret/raw/invalid");
+            assert!(current_cause(&value.to_string()).is_none(), "{key}");
+        }
+        let mut missing = original.clone();
+        missing["diagnostic"]
+            .as_object_mut()
+            .unwrap()
+            .remove("phase_id");
+        assert!(current_cause(&missing.to_string()).is_none());
+        let mut huge = original.clone();
+        huge["diagnostic"]["request_id"] = json!("a".repeat(33000));
+        assert!(current_cause(&huge.to_string()).is_none());
+    }
+    #[test]
+    fn actual_site_constructor_preserves_first_stage_and_actual_current_receipt() {
+        let encoded = fresh_rejection(
+            "secret provider text",
+            FreshStage::ArchiveJava,
+            FreshReason::OwnerRejected,
+            FreshSubject::default(),
+        );
+        let value = current_cause(&encoded).unwrap();
+        assert_eq!(value["diagnostic"]["stage"], "archive_java");
+        assert_eq!(value["diagnostic"]["owner"], "quest_java");
+        assert!(value["diagnostic"]["request_id"].is_null());
+        assert!(!encoded.contains("secret"));
+        assert_eq!(
+            fresh_rejection(
+                &encoded,
+                FreshStage::ArchivePrior,
+                FreshReason::OwnerRejected,
+                FreshSubject::default()
+            ),
+            encoded
+        );
+        let prior =
+            session_not_current("fresh_pair_setup", "session.fixture", receipt("expired", 0))
+                .unwrap();
+        assert_eq!(
+            fresh_rejection(
+                &prior,
+                FreshStage::FinishPhase,
+                FreshReason::OwnerRejected,
+                FreshSubject::default()
+            ),
+            prior
+        );
+    }
+    #[test]
+    fn diagnostic_cross_language_integer_and_duplicate_key_bounds_are_closed() {
+        for n in [0u64, (i64::MAX as u64) + 1, u64::MAX] {
+            let mut value = diagnostic_fixture();
+            value["diagnostic"]["native_generation"] = json!(n);
+            assert!(current_cause(&value.to_string()).is_none());
+        }
+        let raw = diagnostic_fixture()
+            .to_string()
+            .replace("\"owner\":", "\"owner\":\"quest_native\",\"owner\":");
+        assert!(current_cause(&raw).is_none());
+    }
+    #[test]
+    fn shadowed_v1_bytes_never_escape_the_validated_jni_boundary() {
+        let original =
+            session_not_current("fresh_pair_setup", "session.fixture", receipt("expired", 0))
+                .unwrap();
+        for (key, hidden) in [
+            ("operation", "secret/address"),
+            ("decision_id", "secret/provider"),
+        ] {
+            let needle = format!("\"{key}\":");
+            let shadow = original.replacen(&needle, &format!("\"{key}\":\"{hidden}\",{needle}"), 1);
+            let emitted = jni_payload(Some("fresh_pair_setup"), &shadow);
+            assert!(!emitted.contains(hidden), "shadowed {key} escaped");
+            assert!(current_cause(&emitted).is_some());
+        }
+    }
+    #[test]
+    fn caller_owned_original_enriches_only_the_same_exact_native_subject() {
+        let encoded = diagnostic_fixture().to_string();
+        let subject = FreshSubject {
+            request_id: Some("pair.finite.fixture".into()),
+            phase_id: None,
+            original_id: Some("c".repeat(32)),
+            app_generation: Some(7),
+            native_generation: Some(9),
+            app_record_sha256: Some("a".repeat(64)),
+            config_sha256: Some("sha256:".to_owned() + &"b".repeat(64)),
+        };
+        let enriched = fresh_rejection(
+            &encoded,
+            FreshStage::ArchivePrior,
+            FreshReason::OwnerRejected,
+            subject.clone(),
+        );
+        let value = current_cause(&enriched).unwrap();
+        assert_eq!(value["diagnostic"]["stage"], "stage_successor");
+        assert_eq!(value["diagnostic"]["original_id"], json!("c".repeat(32)));
+        let mut foreign = subject;
+        foreign.native_generation = Some(10);
+        assert!(current_cause(&fresh_rejection(
+            &encoded,
+            FreshStage::Begin,
+            FreshReason::OwnerRejected,
+            foreign
+        ))
+        .unwrap()["diagnostic"]["original_id"]
+            .is_null());
+    }
     fn receipt(reason: &str, time: u64) -> Value {
         json!({"$schema":CURRENT_SCHEMA,"session_id":"session.fixture","current":false,"rejection_reason":reason,"decision_id":null,"peer_ids":[],"topology_contract_id":null,"validated_at_ms":time,"expires_at_ms":null})
     }

@@ -185,6 +185,16 @@ val spatialEnvironmentDepthOwner =
 val spatialSdkDepthApiLayerEnabled =
   spatialEnvironmentDepthOwner.map { it == "spatial-sdk-api-layer" }
 
+// Only the explicit producer argument selects this debug native diagnostic.
+val spatialVulkanProvenanceSelected = providers.gradleProperty("rqVulkanProvenanceDiagnostic")
+  .orElse("false").map { raw ->
+    require(raw == "true" || raw == "false") { "Invalid Vulkan provenance selection" }
+    raw == "true"
+  }
+require(!spatialVulkanProvenanceSelected.get() || spatialSdkDepthApiLayerEnabled.get()) {
+  "Vulkan provenance requires the selected Spatial SDK API-layer CMake closure"
+}
+
 val spatialImmersiveVideoDefaultEnabled =
   booleanBuildInput("RUSTY_QUEST_SPATIAL_IMMERSIVE_VIDEO_DEFAULT_ENABLED")
 
@@ -350,6 +360,7 @@ android {
           val sourceBanks = providers.gradleProperty("rqSourceBanksForeignOwnership").orElse("false").get()
           require(sourceBanks == "true" || sourceBanks == "false") { "invalid source-bank ownership selection" }
           arguments += "-DRQ_SOURCE_BANKS_FOREIGN_OWNERSHIP=" + (if (sourceBanks == "true") "ON" else "OFF")
+          arguments += "-DRQ_ENABLE_VULKAN_PROVENANCE=OFF"
           cppFlags += listOf("-std=c++20")
           targets += "XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff"
         }
@@ -529,6 +540,19 @@ android {
   }
 
   buildTypes {
+    getByName("debug") {
+      if (spatialVulkanProvenanceSelected.get()) {
+        externalNativeBuild {
+          cmake {
+            arguments += listOf(
+              "-DRQ_ENABLE_VULKAN_PROVENANCE=ON",
+              "-DRQ_VULKAN_PROVENANCE_APP_ID=" + spatialApplicationId.get(),
+            )
+            targets += "VkLayer_rusty_quest_provenance"
+          }
+        }
+      }
+    }
     getByName("release") {
       isMinifyEnabled = false
       signingConfig = signingConfigs.getByName("debug")
