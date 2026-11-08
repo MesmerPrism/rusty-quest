@@ -169,6 +169,10 @@ unsafe fn render_source_set_common_graph(
             crate::spatial_public_multistack_runtime::optional_color_pass::ActiveRoute::begin(
                 surface_generation,
             );
+        let binocular_display_route =
+            crate::spatial_public_multistack_runtime::binocular_display::ActiveRoute::begin(
+                surface_generation,
+            );
         crate::spatial_stereo_qualification::carrier_live();
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         crate::spatial_stereo_qualification::carrier_device(
@@ -766,6 +770,7 @@ unsafe fn render_source_set_common_graph(
                 }
             }
             optional_color_route.observe_retired(record_result.optional_color_request);
+            binocular_display_route.observe_retired(record_result.binocular_display_observation);
             frames_presented = frames_presented.saturating_add(1);
             record_presented_frame(
                 record_result.video_stats.ready,
