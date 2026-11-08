@@ -17,6 +17,9 @@ public final class ReceiverMethodTraceHost {
     final Bounds bounds = new Bounds();
     final long generation = 1L;
     volatile boolean stopRequested;
+    boolean firstInputPressureReported, firstInputRecoveryReported, firstInputTimeoutReported;
+    boolean firstInputTerminalReported, firstExtendedInputRecoveryReported;
+    static final long EXTENDED_INPUT_PRESSURE_MS = 100L;
     boolean liveRequested = true;
     String state = "receiver_armed", connectionState, failure = "", transportStage;
     final AtomicLong revision = new AtomicLong();
@@ -113,6 +116,7 @@ public final class ReceiverMethodTraceHost {
     int retireEarlierReleasedLocked(long connection, long ordinal) { return 0; }
     PRODUCTION_CODEC_FLAGS
     PRODUCTION_QUEUE
+    PRODUCTION_INPUT_PRESSURE
     PRODUCTION_CAPACITY
     PRODUCTION_DRAIN
     PRODUCTION_ACQUIRE

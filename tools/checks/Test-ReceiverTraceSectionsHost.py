@@ -56,6 +56,7 @@ def main():
     methods = {
         'PRODUCTION_CODEC_FLAGS': 'private static int codecInputFlags(',
         'PRODUCTION_QUEUE': 'private void queuePacket(',
+        'PRODUCTION_INPUT_PRESSURE': 'private void logInputPressure(',
         'PRODUCTION_CAPACITY': 'private void awaitIdentityCapacity(',
         'PRODUCTION_DRAIN': 'private void drain(',
         'PRODUCTION_ACQUIRE': 'private void pollSurfaceAcquisition(',
@@ -71,7 +72,11 @@ def main():
     clock.write_text('package android.os;public final class SystemClock{'
                      'public static long elapsedRealtime(){return System.nanoTime()/1000000L;}'
                      'public static long elapsedRealtimeNanos(){return System.nanoTime();}}')
-    host_sources.extend([method_host, clock])
+    log = output / 'android/util/Log.java'
+    log.parent.mkdir(parents=True)
+    log.write_text('package android.util;public final class Log{'
+                   'public static int i(String tag,String text){return 0;}}')
+    host_sources.extend([method_host, clock, log])
     if helper.exists(): host_sources.append(helper); selected.append(helper)
     checks = []
     def run(name, command):

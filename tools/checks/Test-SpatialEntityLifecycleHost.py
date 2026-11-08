@@ -199,8 +199,6 @@ open class ModelSdkActivity(val model:Model) {
  fun finishingStop(){onSpatialShutdown();model.live=false}
 }
 class SpatialCameraPanelActivity(model:Model,room:Boolean=false,skybox:Boolean=false,staged:Boolean=false,carrier:Boolean=false):ModelSdkActivity(model) {
- fun invalidateBackgroundControl(retired:Boolean=false){}
-
 
  var backgroundControlVrReady=true;var backgroundControlSceneReady=true;var backgroundControlSceneRetired=false
  private val cameraLatencyDiagnosticModule=SpatialCameraLatencyDiagnosticModule(SpatialCameraLatencyDiagnosticBindings(

@@ -24,6 +24,13 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.*;
 public final class ReceiverInputPressureHost {
+    // Trace transport is modeled here; the independent method-trace gate
+    // compiles the real helper and verifies section ownership and balancing.
+    static final class ReceiverTraceSections {
+        static final int QUEUE_PACKET = 1;
+        static boolean begin(int section) { return false; }
+        static void end(boolean entered) { }
+    }
     final Object lock = new Object();
     final Bounds bounds = new Bounds();
     final long generation = 7;
