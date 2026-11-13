@@ -1,0 +1,57 @@
+{
+  "schema": "rusty.quest.external_packed_input.dependencies.v1",
+  "sink_repository": "https://github.com/MesmerPrism/Quest-Compositor-Lab",
+  "sink_source_revision": "fa68038e75e7175511f9a9f68c041cb321e7fa5e",
+  "sink_containing_revision": "97d7152f2624a29e5b00a5b9c24d3d3b4ccdb281",
+  "sink_files": [
+    {
+      "path": "adapters/capture-bridge/src/main/java/io/github/mesmerprism/questcompositor/capturebridge/PublisherAccess.java",
+      "git_blob": "b1f5c9df76df9bf4299e38962b0fbacd4a80dbe8",
+      "sha256": "1a21435073ee859b2a11bc1ecc6ccaff99677e177d74473257ec5fe73722b356",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "adapters/capture-bridge/src/main/java/io/github/mesmerprism/questcompositor/capturebridge/PublisherBinding.java",
+      "git_blob": "09a03a692fa2f06a54416fbd8418acd000eca622",
+      "sha256": "13711434ed15764fcdc93865d1734a58c3b28ef9f73b5bb7e6042792834f8515",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "adapters/capture-bridge/src/main/java/io/github/mesmerprism/questcompositor/capturebridge/SinkAdmission.java",
+      "git_blob": "9c9ea3f80fba0ee44fe35fefa68e672f15cac579",
+      "sha256": "5bed0b6bf8e87bfc88341f184240b8e83af734769f9a13949ea079b3dc2ffa23",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "adapters/capture-bridge/src/main/java/io/github/mesmerprism/questcompositor/capturebridge/SinkStatus.java",
+      "git_blob": "e44e5787a36a23fd390b1d96f4596ebbda97b703",
+      "sha256": "baa043c527fe0d9aa16ada11deed9ad53be19342547555a265b45b73e23fbd88",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "adapters/capture-bridge/src/main/java/io/github/mesmerprism/questcompositor/capturebridge/StereoSinkDescriptor.java",
+      "git_blob": "093b57caf17cd29a65f20ca74544d5b6be11d8d8",
+      "sha256": "07c640ececc9af25510051c69ce84af5875f817edc4dcdc5ebe8782cc717fedf",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "adapters/capture-bridge/src/android/java/io/github/mesmerprism/questcompositor/capturebridge/SinkPublisherOwner.java",
+      "git_blob": "7a33f07d20d58f342ef876dc564c7e4111a76e06",
+      "sha256": "038033a5cb8c53a645cc2f4eca86762e63a778d645429ce77e794fecec582726",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "adapters/capture-bridge/src/android/java/io/github/mesmerprism/questcompositor/capturebridge/StereoSinkPublisher.java",
+      "git_blob": "f61f5632c151d9a7f7571f4b58eff626a1a8b30f",
+      "sha256": "f55011c8fd172999f012676c07f28eb4be39d5ec9dde0ffabd70c62c52203d87",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "adapters/capture-bridge/src/android/java/io/github/mesmerprism/questcompositor/capturebridge/StereoSinkPublisherService.java",
+      "git_blob": "5a18e33ef12492605525ae74877c834f9f0abdfc",
+      "sha256": "6422039c6bfecb5423275890a0038de3054ed386eb1a1d4f5ce81260dc1dff21",
+      "license": "AGPL-3.0-or-later"
+    }
+  ],
+  "policy": "Compile exact selected external source only. No unchanged sink suite rerun; no SDK binaries redistributed."
+}
