@@ -908,6 +908,7 @@ dependencies = [
  "rusty-quest-hand-adapter",
  "rusty-quest-native-renderer",
  "rusty-quest-particle-adapter",
+ "serde",
  "serde_json",
  "sha2",
 ]

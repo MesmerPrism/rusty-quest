@@ -54,6 +54,12 @@ impl NativeDisplayCompositeSettings {
     }
 
     pub(crate) fn marker_fields(self) -> String {
+        if matches!(
+            self.source,
+            NativeDisplayCompositeSource::ExternalMetaDiagnostic
+        ) {
+            return "metaInputDiagnostic=true sourceAuthority=external-meta-producer androidMediaProjection=false rawCamera=false nativeReader=true cpuPixelCopy=false feedbackProjection=full-eye-peripheral-stretch".into();
+        }
         format!(
             "displayCompositeEnabled={} displayCompositeSource={} displayCompositeMode={} displayCompositeWidth={} displayCompositeHeight={} displayCompositeMaxImages={} displayCompositeFpsCap={} displayCompositeFeedbackEnabled={} displayCompositeFeedbackProjection={} displayCompositeStream=display_composite displayCompositeCaptureAuthority=android-mediaprojection displayCompositeRawCamera=false displayCompositePassthroughTexture=false displayCompositeEnvironmentDepth=false displayCompositeGeometryWitness=false displayCompositeHighRateJsonPayload={} displayCompositeTransport=ndk-aimage-reader-ahardwarebuffer displayCompositeFramePlane=media-data-plane displayCompositeControlPlane=android-property-profile displayCompositeFormat=rgba8888 displayCompositePrivateFormatFastPathCandidate=true nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false displayCompositeGpuImportReady=false displayCompositeGpuAdoptionPath=android-mediaprojection-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image highRateJsonPayload={} sourceAuthority=android-mediaprojection rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
             self.enabled,
@@ -85,6 +91,8 @@ impl NativeDisplayCompositeSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeDisplayCompositeSource {
     AndroidMediaProjection,
+    /// Private build-selected route; never selected by Android properties.
+    ExternalMetaDiagnostic,
 }
 
 impl NativeDisplayCompositeSource {
@@ -98,6 +106,7 @@ impl NativeDisplayCompositeSource {
     fn marker_value(self) -> &'static str {
         match self {
             Self::AndroidMediaProjection => "android-mediaprojection",
+            Self::ExternalMetaDiagnostic => "external-meta-diagnostic",
         }
     }
 }

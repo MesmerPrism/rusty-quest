@@ -30,6 +30,7 @@ rusty-quest-hand-adapter = { path = "../../../crates/rusty-quest-hand-adapter" }
 rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
 rusty-lsl = { git = "https://github.com/MesmerPrism/rusty-lsl.git", rev = "8b6b2a6cd0c0e5147b7e1cc076a116ef226cddbd", optional = true }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 sha2 = "=0.10.9"
 
 [target.'cfg(target_os = "android")'.dependencies]
@@ -39,6 +40,11 @@ ash = "0.38"
 jni = "0.22"
 ndk-sys = "0.6"
 openxr = "0.21.1"
+
+[build-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "=0.10.9"
 
 [dev-dependencies]
 ash = "0.38"

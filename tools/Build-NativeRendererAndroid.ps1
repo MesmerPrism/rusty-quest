@@ -2043,6 +2043,88 @@ if ($standaloneExperimentOwner) {
     if ($sourceFiles.Count -ne $standaloneBaseSources.Count) { throw 'Standalone base Java source closure is incomplete.' }
     if (@($panelSourceFiles | Where-Object { [IO.Path]::GetFileName($_) -match 'Ble|Polar|Gateway|Relay|Lsl|Kiosk|BreathCompositionPanelModule' }).Count -gt 0) { throw 'Standalone panel source closure contains an excluded owner.' }
 }
+$metaInputSelected = $script:BuildUsesLock -and (@($appBuildLockObject.selected_feature_ids) -contains "renderer.diagnostic.meta_input_surface")
+$metaInputEnv = Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC" -AppBuildEnvByName $appBuildEnvByName
+if ($metaInputSelected -ne ($script:BuildUsesLock -and (@($appBuildLockObject.android_manifest.services) -contains 'NativeMetaInputSurfaceService'))) { throw 'Meta input service must match its exact selected feature.' }
+if ($metaInputSelected -ne ($metaInputEnv -ceq "true")) {
+    throw "Private Meta input Java and native activation must have the same selected feature lock."
+}
+$presentationSelected = $script:BuildUsesLock -and (@($appBuildLockObject.selected_feature_ids) -contains "renderer.diagnostic.presentation")
+$presentationEnv = Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRESENTATION_DIAGNOSTIC" -AppBuildEnvByName $appBuildEnvByName
+if ($presentationSelected -ne ($presentationEnv -ceq "true")) { throw "Presentation Java/native activation requires the selected presentation feature lock." }
+$heldReviewSelected = $script:BuildUsesLock -and (@($appBuildLockObject.selected_feature_ids) -contains 'renderer.diagnostic.held_output_review')
+$heldReviewEnv = Get-EffectiveBuildEnvValue -Name 'RUSTY_QUEST_NATIVE_RENDERER_HELD_OUTPUT_REVIEW' -AppBuildEnvByName $appBuildEnvByName
+if ($heldReviewSelected -ne ($script:BuildUsesLock -and (@($appBuildLockObject.android_manifest.activities) -contains 'NativeHeldReviewActivity'))) { throw 'Held review Activity must match its exact selected feature.' }
+if ($heldReviewSelected -ne ($heldReviewEnv -ceq 'true')) { throw 'Held review requires its exact selected feature lock.' }
+if ($heldReviewSelected -and (-not $metaInputSelected -or -not $presentationSelected -or @($appBuildLockObject.android_manifest.activities) -notcontains 'NativeHeldReviewActivity')) { throw 'Held review requires its diagnostic input, presentation and exact 2D Activity.' }
+$full3Selected = $script:BuildUsesLock -and (@($appBuildLockObject.selected_feature_ids) -contains 'renderer.diagnostic.buffered_stereo_full3')
+$full3Env = Get-EffectiveBuildEnvValue -Name 'RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FULL3_DIAGNOSTIC' -AppBuildEnvByName $appBuildEnvByName
+$full3BundlePath = Get-EffectiveBuildEnvValue -Name 'RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FULL3_BUNDLE' -AppBuildEnvByName $appBuildEnvByName
+$full3BundleHash = Get-EffectiveBuildEnvValue -Name 'RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FULL3_BUNDLE_SHA256' -AppBuildEnvByName $appBuildEnvByName
+if ($full3Selected -ne ($full3Env -ceq 'true')) { throw 'Buffered full-three-pass activation requires its selected feature lock.' }
+if ($full3Selected) {
+    if (-not $presentationSelected -or -not $metaInputSelected) { throw 'Buffered full-three-pass requires the presentation and Meta input features.' }
+    if ($full3BundleHash -cnotmatch '^[0-9a-f]{64}$') { throw 'Buffered full-three-pass bundle requires an exact SHA256.' }
+    Assert-HashMatches -Label 'Buffered full-three-pass bundle' -ExpectedSha256 $full3BundleHash -Path $full3BundlePath
+    $full3Bundle = Read-JsonFile -Path $full3BundlePath
+    if ($full3Bundle.schema -cne 'private.meta_input.full3_bundle.v1' -or $full3Bundle.abi -cne 'presentation128-v1') { throw 'Unsupported buffered full-three-pass bundle interface.' }
+    if ($full3Bundle.atlas -isnot [array] -or $full3Bundle.eye -isnot [array]) { throw 'Bundle extents must be integer arrays.' }
+    foreach ($extentValue in @($full3Bundle.atlas) + @($full3Bundle.eye)) {
+        if ($extentValue -isnot [int] -and $extentValue -isnot [long]) { throw 'Bundle extents must be integers.' }
+    }
+    if ((@($full3Bundle.atlas) -join ',') -cne '3072,1664' -or (@($full3Bundle.eye) -join ',') -cne '1280,1280') { throw 'Buffered full-three-pass bundle geometry differs from its closed interface.' }
+    if (@($full3Bundle.fragments).Count -ne 3) { throw 'Buffered full-three-pass requires exactly three ordered fragment stages.' }
+    $full3BundleRoot = [IO.Path]::GetFullPath((Split-Path -Parent ([IO.Path]::GetFullPath($full3BundlePath))))
+    $full3BundlePrefix = $full3BundleRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    foreach ($stage in @($full3Bundle.fragments)) {
+        if ([string]::IsNullOrWhiteSpace([string]$stage.path) -or [IO.Path]::IsPathRooted([string]$stage.path)) { throw 'Bundle stage paths must be relative descendants.' }
+        $stagePath = [IO.Path]::GetFullPath((Join-Path $full3BundleRoot ([string]$stage.path)))
+        if (-not $stagePath.StartsWith($full3BundlePrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Bundle stage leaves its selected directory.' }
+        if (($stage.bytes -isnot [int] -and $stage.bytes -isnot [long]) -or $stage.sha256 -cnotmatch '^[0-9a-f]{64}$' -or [long]$stage.bytes -le 0) { throw 'Bundle stages require positive integer byte counts and exact SHA256 values.' }
+        if ((Get-Item -LiteralPath $stagePath).Length -ne [long]$stage.bytes) { throw 'Bundle stage byte count changed.' }
+        Assert-HashMatches -Label 'Buffered full-three-pass stage' -ExpectedSha256 ([string]$stage.sha256) -Path $stagePath
+    }
+} elseif (-not [string]::IsNullOrWhiteSpace($full3BundlePath) -or -not [string]::IsNullOrWhiteSpace($full3BundleHash)) {
+    throw 'An unselected buffered full-three-pass payload cannot enter this build.'
+}
+function Assert-NativeMetaInputDiagnosticComposition {
+    param([string[]]$SelectedFeatureIds,[string[]]$Activities,[string[]]$Services,[object[]]$Providers=@(),[object[]]$Receivers=@())
+    $required=@('quest.native.openxr_vulkan_base','renderer.background.native_passthrough','input.controllers_and_hands_optional','renderer.diagnostic.meta_input_surface')
+    $allowed=$required+@('renderer.diagnostic.presentation','renderer.diagnostic.buffered_stereo_full3','renderer.diagnostic.held_output_review')
+    if(@($SelectedFeatureIds | Where-Object {$_ -cnotin $allowed}).Count -gt 0) {throw 'Meta diagnostic composition contains an unrelated product owner.'}
+    foreach($id in $required){if($SelectedFeatureIds -cnotcontains $id){throw 'Meta diagnostic required source closure is incomplete.'}}
+    $held=$SelectedFeatureIds -ccontains 'renderer.diagnostic.held_output_review'
+    $full3=$SelectedFeatureIds -ccontains 'renderer.diagnostic.buffered_stereo_full3'
+    $presentation=$SelectedFeatureIds -ccontains 'renderer.diagnostic.presentation'
+    if(($held -and -not $full3) -or ($full3 -and -not $presentation)){throw 'Meta diagnostic feature dependency closure is incomplete.'}
+    $expectedActivities=@('android.app.NativeActivity')+@(if($held){'NativeHeldReviewActivity'})
+    if((($Activities | Sort-Object) -join '|') -cne (($expectedActivities | Sort-Object) -join '|')){throw 'Meta diagnostic must have only its native host and selected nonexported review Activity.'}
+    if($Services.Count -ne 1 -or $Services[0] -cne 'NativeMetaInputSurfaceService' -or $Providers.Count -gt 0 -or $Receivers.Count -gt 0){throw 'Meta diagnostic has an alternate component owner.'}
+}
+function Assert-NativeMetaInputDiagnosticPackage {
+    param([bool]$MetaInputSelected,[bool]$PresentationSelected,[string]$PackageName)
+    if ($PresentationSelected -and -not $MetaInputSelected) { throw "Presentation requires selected private Meta input." }
+    if ($MetaInputSelected) {
+        $suffix = if ($PresentationSelected) { '.presentation_diagnostic' } else { '.meta_input_diagnostic' }
+        if (-not $PackageName.EndsWith($suffix,[StringComparison]::Ordinal)) { throw "Private Meta input requires its exact feature-selected co-installable package suffix." }
+    }
+}
+Assert-NativeMetaInputDiagnosticPackage -MetaInputSelected $metaInputSelected -PresentationSelected $presentationSelected -PackageName $packageName
+if($metaInputSelected) {
+    $diagnosticProviders=@(if($null -ne $appBuildLockObject.android_manifest.PSObject.Properties['providers']){$appBuildLockObject.android_manifest.providers})
+    $diagnosticReceivers=@(if($null -ne $appBuildLockObject.android_manifest.PSObject.Properties['receivers']){$appBuildLockObject.android_manifest.receivers})
+    Assert-NativeMetaInputDiagnosticComposition -SelectedFeatureIds @($appBuildLockObject.selected_feature_ids) -Activities @($appBuildLockObject.android_manifest.activities) -Services @($appBuildLockObject.android_manifest.services) -Providers $diagnosticProviders -Receivers $diagnosticReceivers
+}
+if ($metaInputSelected) {
+    if (@($appBuildLockObject.android_manifest.services) -notcontains 'NativeMetaInputSurfaceService') { throw "Private Meta input requires its exact generated DUMP service." }
+    $metaInputFragment = Get-EffectiveBuildEnvValue -Name 'RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT' -AppBuildEnvByName $appBuildEnvByName
+    $metaInputFragmentHash = Get-EffectiveBuildEnvValue -Name 'RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT_SHA256' -AppBuildEnvByName $appBuildEnvByName
+    if ($metaInputFragmentHash -notmatch '^[0-9a-f]{64}$') { throw 'Private Meta input fragment requires an exact SHA256.' }
+    Assert-HashMatches -Label 'Private Meta input fragment' -ExpectedSha256 $metaInputFragmentHash -Path $metaInputFragment
+    $sourceFiles += @(Get-ChildItem -LiteralPath (Join-Path $appRoot "src\diagnosticMetaInput\java") -Recurse -Filter *.java | ForEach-Object { $_.FullName })
+}
+if ($heldReviewSelected -and -not $full3Selected) { throw 'Held review requires the exact buffered full-three-pass feature.' }
+if ($metaInputSelected -and ($showcaseSelected -or $standaloneExperimentOwner)) { throw 'Meta input diagnostic cannot select Showcase or an experiment session owner.' }
 $sharedBrokerClientJavaRoot = Join-Path $repoRoot "crates\rusty-quest-broker-client\android"
 $sharedBrokerClientJava = Get-ChildItem -LiteralPath $sharedBrokerClientJavaRoot -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }

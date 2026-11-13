@@ -8,23 +8,23 @@
 use std::{
     ptr,
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         Mutex,
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     },
 };
 
-use jni::sys::{jclass, jint, jobject, JNIEnv};
+use jni::sys::{JNIEnv, jclass, jint, jobject};
 
 use crate::{
     acamera_sys::{
-        AImage, AImageReader, AImageReader_BufferRemovedListener, AImageReader_ImageListener,
+        AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT,
+        AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_RGBA_8888, AImage, AImage_delete,
+        AImage_getHardwareBuffer, AImage_getTimestamp, AImageReader,
+        AImageReader_BufferRemovedListener, AImageReader_ImageListener,
         AImageReader_acquireLatestImage, AImageReader_delete, AImageReader_getWindow,
         AImageReader_newWithUsage, AImageReader_setBufferRemovedListener,
-        AImageReader_setImageListener, AImage_delete, AImage_getHardwareBuffer,
-        AImage_getTimestamp, ANativeWindow, ANativeWindow_acquire, ANativeWindow_release,
-        ANativeWindow_toSurface, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN,
-        AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
-        AIMAGE_FORMAT_RGBA_8888,
+        AImageReader_setImageListener, ANativeWindow, ANativeWindow_acquire, ANativeWindow_release,
+        ANativeWindow_toSurface,
     },
     android_hardware_buffer::{AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle},
     display_composite_capture_export, marker,
@@ -35,6 +35,9 @@ static DISPLAY_COMPOSITE_LATEST_FRAME: Mutex<Option<DisplayCompositeFrame>> = Mu
 
 #[derive(Clone, Debug)]
 pub(crate) struct DisplayCompositeFrame {
+    /// Zero for the existing MediaProjection path; nonzero for the opt-in Meta diagnostic.
+    pub(crate) source_generation: u64,
+    pub(crate) image_lease: Option<std::sync::Arc<crate::meta_input_diagnostic::ImageLease>>,
     pub(crate) hardware_buffer: AndroidHardwareBufferHandle,
     pub(crate) descriptor: AndroidHardwareBufferDescriptor,
     pub(crate) frame_index: u64,
@@ -440,6 +443,8 @@ unsafe extern "C" fn display_composite_on_image_available(
     let dropped = reader_context.dropped_frames.load(Ordering::Relaxed);
     let buffer_removed_count = reader_context.buffer_removed_count.load(Ordering::Relaxed);
     let frame = DisplayCompositeFrame {
+        source_generation: 0,
+        image_lease: None,
         hardware_buffer,
         descriptor,
         frame_index,

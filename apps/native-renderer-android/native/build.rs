@@ -5,7 +5,55 @@ use std::{
     process::Command,
 };
 
+#[cfg(not(test))]
+mod full3_bundle_build;
+
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(native_meta_input_diagnostic)");
+    if env::var("RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC").as_deref() == Ok("true") {
+        assert!(
+            env::var_os("CARGO_FEATURE_SHOWCASE").is_none(),
+            "Showcase cannot select Meta diagnostic composition"
+        );
+        println!("cargo:rustc-cfg=native_meta_input_diagnostic");
+    }
+
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_HELD_OUTPUT_REVIEW");
+    if env::var("RUSTY_QUEST_NATIVE_RENDERER_HELD_OUTPUT_REVIEW").as_deref() == Ok("true")
+        && (env::var("RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC").as_deref() != Ok("true")
+            || env::var("RUSTY_QUEST_NATIVE_RENDERER_PRESENTATION_DIAGNOSTIC").as_deref()
+                != Ok("true")
+            || env::var("RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FULL3_DIAGNOSTIC").as_deref()
+                != Ok("true"))
+    {
+        panic!("Held review requires explicit Meta input, presentation and full3 diagnostics");
+    }
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRESENTATION_DIAGNOSTIC");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT");
+
+    for flag in [
+        "META_INPUT_DIAGNOSTIC",
+        "PRESENTATION_DIAGNOSTIC",
+        "META_INPUT_FULL3_DIAGNOSTIC",
+        "HELD_OUTPUT_REVIEW",
+    ] {
+        let name = format!("RUSTY_QUEST_NATIVE_RENDERER_{flag}");
+        if env::var_os("CARGO_FEATURE_SHOWCASE").is_some() {
+            assert!(
+                env::var(&name).ok().is_none_or(|v| v == "false"),
+                "Showcase cannot select capture diagnostics: {name}"
+            );
+        }
+    }
+    if env::var("RUSTY_QUEST_NATIVE_RENDERER_PRESENTATION_DIAGNOSTIC").as_deref() == Ok("true") {
+        assert_eq!(
+            env::var("RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC").as_deref(),
+            Ok("true"),
+            "Presentation requires selected Meta input"
+        );
+    }
+
     if env::var_os("CARGO_FEATURE_SHOWCASE").is_some() {
         for name in [
             "RUSTY_QUEST_NATIVE_RECORDING_EXPORT",
@@ -252,6 +300,8 @@ fn main() {
     );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    #[cfg(not(test))]
+    let full3_sources = full3_bundle_build::prepare(&out_dir);
     let diagnostics_level = env::var("RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL")
         .unwrap_or_else(|_| "detailed".to_owned());
     if !matches!(diagnostics_level.as_str(), "off" | "basic" | "detailed") {
@@ -384,12 +434,43 @@ fn main() {
         Path::new("shaders/display_composite_feedback.vert.glsl"),
         &out_dir.join("display_composite_feedback.vert.spv"),
     );
+    println!("cargo:rerun-if-changed=shaders/sampled_input_normalize.frag.glsl");
     compile_shader(
         &glslc,
         "fragment",
-        Path::new("shaders/display_composite_feedback.frag.glsl"),
+        Path::new("shaders/sampled_input_normalize.frag.glsl"),
+        &out_dir.join("sampled_input_normalize.frag.spv"),
+    );
+    let meta_input =
+        env::var("RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC").as_deref() == Ok("true");
+    let meta_fragment =
+        env::var_os("RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT").map(PathBuf::from);
+    if meta_input != meta_fragment.is_some() {
+        panic!(
+            "Private Meta input requires both exact opt-in and an explicit private fragment payload"
+        );
+    }
+    let display_fragment = meta_fragment
+        .as_deref()
+        .unwrap_or(Path::new("shaders/display_composite_feedback.frag.glsl"));
+    println!("cargo:rerun-if-changed={}", display_fragment.display());
+    compile_shader(
+        &glslc,
+        "fragment",
+        display_fragment,
         &out_dir.join("display_composite_feedback.frag.spv"),
     );
+    #[cfg(not(test))]
+    if let Some(sources) = full3_sources {
+        for (i, source) in sources.iter().enumerate() {
+            compile_shader(
+                &glslc,
+                "fragment",
+                source,
+                &out_dir.join(format!("full3_{i}.frag.spv")),
+            );
+        }
+    }
     compile_shader(
         &glslc,
         "fragment",

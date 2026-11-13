@@ -10,22 +10,22 @@ use ash::vk::{self, Handle};
 use openxr as xr;
 use openxr::sys::Handle as _;
 
-#[cfg(not(feature = "showcase"))]
+#[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
 use crate::{
     live_hand_joint_capture::LiveHandJointCaptureRecorder,
     live_hand_mesh_capture::LiveHandMeshCaptureRecorder,
     native_renderer_diagnostics_contract::write_renderer_focus_state_file,
 };
-#[cfg(feature = "showcase")]
+#[cfg(any(feature = "showcase", native_meta_input_diagnostic))]
 type LiveHandJointCaptureRecorder = ();
-#[cfg(feature = "showcase")]
+#[cfg(any(feature = "showcase", native_meta_input_diagnostic))]
 type LiveHandMeshCaptureRecorder = ();
-#[cfg(not(feature = "showcase"))]
+#[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
 type ProjectionSessionOwner<'a> = Option<(
     &'a crate::experiment_session_runtime::ExperimentSessionRuntime,
     u64,
 )>;
-#[cfg(feature = "showcase")]
+#[cfg(any(feature = "showcase", native_meta_input_diagnostic))]
 type ProjectionSessionOwner<'a> = Option<(&'a (), u64)>;
 
 use crate::gpu_mesh_ui_panel::GpuMeshUiPanel;
@@ -33,8 +33,8 @@ use crate::native_scene_depth::{SceneDepthAttachment, SceneDepthConfig};
 
 use crate::{
     camera_projection::{
-        record_camera_projection_eye, CameraProjectionFrameStats, CameraProjectionRenderer,
-        PreparedCameraProjection,
+        CameraProjectionFrameStats, CameraProjectionRenderer, PreparedCameraProjection,
+        record_camera_projection_eye,
     },
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
     display_composite_feedback::{
@@ -68,9 +68,9 @@ use crate::{
         NativeDisplayCompositeSettings,
     },
     native_renderer_display_refresh_options::{
-        configure_current_session_display_refresh, NativeDisplayRefreshConfigurationOutcome,
-        NativeDisplayRefreshRuntimeState, NativeDisplayRefreshSession,
-        NativeDisplayRefreshSettings,
+        NativeDisplayRefreshConfigurationOutcome, NativeDisplayRefreshRuntimeState,
+        NativeDisplayRefreshSession, NativeDisplayRefreshSettings,
+        configure_current_session_display_refresh,
     },
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings,
@@ -106,8 +106,8 @@ use crate::{
     native_renderer_properties::PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M,
     native_renderer_property_values::f32_clamped_value,
     native_renderer_timing::{
-        detailed_private_particle_cpu_observation_available, elapsed_ms, FrameCpuTimings,
-        GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
+        FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
+        detailed_private_particle_cpu_observation_available, elapsed_ms,
     },
     openxr_environment_depth::{
         OpenXrEnvironmentDepthFrame, OpenXrEnvironmentDepthProperties,
@@ -148,7 +148,7 @@ fn write_renderer_focus_state(
     frame_count: u64,
     submitted: bool,
 ) {
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     {
         let Some(data_path) = app.internal_data_path() else {
             return;
@@ -322,8 +322,10 @@ pub(crate) fn run_projection_loop(
     let replay_set = if crate::native_geometry_selection::hand_geometry_enabled() {
         Some(RecordedHandReplaySet::load()?)
     } else {
-        crate::marker("native-geometry-selection",
-            "status=particles-only nativeHandGeometryEnabled=false handGeometrySelected=false recordedRigLoaded=false handSkinningResources=false handMeshResources=false graftResources=false handAnchorResources=false pointerRigIndependent=true");
+        crate::marker(
+            "native-geometry-selection",
+            "status=particles-only nativeHandGeometryEnabled=false handGeometrySelected=false recordedRigLoaded=false handSkinningResources=false handMeshResources=false graftResources=false handAnchorResources=false pointerRigIndependent=true",
+        );
         None
     };
     let projection_metadata = CameraProjectionMetadata::load();
@@ -377,7 +379,7 @@ pub(crate) fn run_projection_loop(
             video_projection_metadata,
         )
     };
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     if let Some((runtime, owner)) = session_owner {
         if runtime.renderer_retirement_pending(owner) {
             // inner success means device idle, UI producer retired, and all XR/Vulkan
@@ -400,7 +402,7 @@ pub(crate) fn run_projection_loop(
 }
 
 fn finish_native_activity(app: &android_activity::AndroidApp) -> Result<(), String> {
-    use jni::{jni_sig, jni_str, objects::JObject, JavaVM};
+    use jni::{JavaVM, jni_sig, jni_str, objects::JObject};
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
     let raw = app.activity_as_ptr() as jni::sys::jobject;
     vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
@@ -424,6 +426,14 @@ unsafe fn run_projection_loop_inner(
 ) -> Result<(), String> {
     let replay = replay_set.as_ref().map(|set| &set.left);
     let secondary_replay = replay_set.as_ref().map(|set| &set.right);
+    let meta_input_diagnostic = crate::fullview_passthrough_diagnostic::select(
+        crate::meta_input_diagnostic::enabled(),
+        cfg!(feature = "showcase"),
+        session_owner.is_some(),
+        camera_runtime.is_some() || runtime_options.camera_output_mode.camera_import_enabled(),
+        runtime_options.render_mode == NativeRendererRenderMode::NativePassthroughStyleOnly,
+    )?;
+    crate::presentation_diagnostic::initialize(app.internal_data_path().as_deref())?;
     let entry = xr::Entry::load().map_err(|error| format!("load OpenXR: {error}"))?;
     initialize_android_loader(&entry, app)?;
 
@@ -478,15 +488,32 @@ unsafe fn run_projection_loop_inner(
             && enabled_extensions.ext_hand_tracking
             && available_extensions.fb_hand_tracking_mesh;
     if crate::native_alternate_input::controller_only_selected() {
-        crate::marker("input-policy", format!(
-            "nativeControllerOnlyInput=true liveHandTrackingExtensionEnabled={} liveHandTrackingAimExtensionEnabled={} liveHandTrackingMeshExtensionEnabled={}",
-            enabled_extensions.ext_hand_tracking,
-            enabled_extensions.fb_hand_tracking_aim,
-            enabled_extensions.fb_hand_tracking_mesh,
-        ));
+        crate::marker(
+            "input-policy",
+            format!(
+                "nativeControllerOnlyInput=true liveHandTrackingExtensionEnabled={} liveHandTrackingAimExtensionEnabled={} liveHandTrackingMeshExtensionEnabled={}",
+                enabled_extensions.ext_hand_tracking,
+                enabled_extensions.fb_hand_tracking_aim,
+                enabled_extensions.fb_hand_tracking_mesh,
+            ),
+        );
     }
     enabled_extensions.fb_passthrough =
         native_passthrough_requested && available_extensions.fb_passthrough;
+    if meta_input_diagnostic {
+        if !enabled_extensions.fb_passthrough
+            || !available_extensions.fb_composition_layer_secure_content
+        {
+            return Err(
+                "Meta diagnostic requires native passthrough and secure-content exclusion".into(),
+            );
+        }
+        enabled_extensions.fb_composition_layer_secure_content = true;
+        crate::marker(
+            "fullview-diagnostic",
+            "status=selected source=external-meta-producer ownProjectionExclude=true nativeUnderlayExcluded=false externalCaptureHonored=unmeasured",
+        );
+    }
     enabled_extensions.fb_display_refresh_rate =
         display_refresh_requested && available_extensions.fb_display_refresh_rate;
     enabled_extensions.meta_environment_depth = runtime_options
@@ -633,6 +660,19 @@ unsafe fn run_projection_loop_inner(
     );
     let device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
     let memory_properties = vk_instance.get_physical_device_memory_properties(vk_physical_device);
+    if crate::presentation_diagnostic::enabled() {
+        if device_properties.limits.max_push_constants_size < 128 {
+            vk_instance.destroy_instance(None);
+            return Err("Presentation requires128byte private push constants".into());
+        }
+        crate::marker(
+            "presentation",
+            format!(
+                "status=capability maxPushConstantsSize={} privatePushBytes=128",
+                device_properties.limits.max_push_constants_size
+            ),
+        );
+    }
     if device_properties.api_version < vk_target_version {
         vk_instance.destroy_instance(None);
         return Err("OpenXR-selected Vulkan device does not support Vulkan 1.1".to_string());
@@ -735,7 +775,14 @@ unsafe fn run_projection_loop_inner(
     };
 
     let mut device_extension_ptrs = Vec::new();
-    if mesh_ui_enabled {
+    if meta_input_diagnostic
+        && (!mesh_ui_foreign_queue_ready || !vulkan_external_import_prereqs_ready)
+    {
+        return Err(
+            "Meta diagnostic requires FOREIGN ownership and AHB import prerequisites".into(),
+        );
+    }
+    if mesh_ui_enabled || meta_input_diagnostic {
         device_extension_ptrs.push(ash::ext::queue_family_foreign::NAME.as_ptr());
     }
     if external_hwb_extension_ready {
@@ -858,6 +905,9 @@ unsafe fn run_projection_loop_inner(
         alpha_blend_supported,
         runtime_options.passthrough_style_settings,
     );
+    if meta_input_diagnostic && native_passthrough.is_none() {
+        return Err("Meta diagnostic requires active native passthrough underlay".into());
+    }
     let mut live_hand_compact = LiveHandCompactInput::new(
         &xr_instance,
         system,
@@ -867,7 +917,7 @@ unsafe fn run_projection_loop_inner(
     );
     let (reference_space, reference_space_type) =
         create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     let mut hand_mesh_capture_recorder = if replay.is_some() {
         Some(LiveHandMeshCaptureRecorder::new(
             app,
@@ -881,7 +931,7 @@ unsafe fn run_projection_loop_inner(
     } else {
         None
     };
-    #[cfg(feature = "showcase")]
+    #[cfg(any(feature = "showcase", native_meta_input_diagnostic))]
     let mut hand_mesh_capture_recorder: Option<LiveHandMeshCaptureRecorder> = None;
     let color_format =
         choose_swapchain_format(&session, runtime_options.swapchain_color_format_mode)?;
@@ -915,6 +965,7 @@ unsafe fn run_projection_loop_inner(
         render_pass,
         color_format,
         vulkan_external_import_prereqs_ready,
+        queue_family_index,
     );
     let mut video_projection_renderer = VideoProjectionRenderer::new(
         &vk_instance,
@@ -956,7 +1007,21 @@ unsafe fn run_projection_loop_inner(
     let hand_anchor_particle_settings = runtime_options.hand_anchor_particle_settings;
     let environment_depth_settings = runtime_options.environment_depth_settings;
     let environment_depth_alignment_settings = runtime_options.environment_depth_alignment_settings;
-    let display_composite_settings = runtime_options.display_composite_settings;
+    let display_composite_settings = if crate::meta_input_diagnostic::enabled() {
+        crate::native_renderer_display_composite_options::NativeDisplayCompositeSettings {
+            enabled: true,
+            source: crate::native_renderer_display_composite_options::NativeDisplayCompositeSource::ExternalMetaDiagnostic,
+            mode: NativeDisplayCompositeMode::GpuFeedbackDiagnostic,
+            width: crate::meta_input_diagnostic::width() as u32,
+            height: crate::meta_input_diagnostic::height() as u32,
+            max_images: crate::meta_input_diagnostic::MAX_IMAGES as u32,
+            fps_cap: 90, feedback_enabled: true,
+            feedback_projection: NativeDisplayCompositeFeedbackProjection::FullEyePeripheralStretch,
+            high_rate_json_payload: false,
+        }
+    } else {
+        runtime_options.display_composite_settings
+    };
     let video_projection_settings = runtime_options.video_projection_settings.clone();
     let stimulus_volume_settings = runtime_options.stimulus_volume_settings;
     let projection_target_settings = runtime_options.projection_target_settings.clone();
@@ -1552,7 +1617,7 @@ unsafe fn run_projection_loop_inner(
         ),
     );
 
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     let mut hand_joint_capture_recorder = if replay.is_some() {
         Some(LiveHandJointCaptureRecorder::new(
             app,
@@ -1562,7 +1627,7 @@ unsafe fn run_projection_loop_inner(
         None
     };
 
-    #[cfg(feature = "showcase")]
+    #[cfg(any(feature = "showcase", native_meta_input_diagnostic))]
     let mut hand_joint_capture_recorder: Option<LiveHandJointCaptureRecorder> = None;
     let ui_generation = if mesh_ui_enabled {
         if !external_hwb_extension_ready {
@@ -1617,6 +1682,7 @@ unsafe fn run_projection_loop_inner(
     // Keep XR swapchain RAII handles and app-owned eye resources outside the frame
     // function so every early/error return still joins checked device retirement.
     let mut projection_swapchain: Option<ProjectionSwapchain> = None;
+    let meta_input_publisher = crate::meta_input_diagnostic::publish(app, cmds.len())?;
     let loop_result = run_projection_frames(
         app,
         session_owner,
@@ -1726,16 +1792,20 @@ unsafe fn run_projection_loop_inner(
         &video_projection_metadata,
     );
 
+    // Close request admission under the same POLICY mutex as request(), before
+    // any teardown effect. Never re-read requested() to reopen this decision.
+    let held_review_admitted = crate::held_output_review::begin_teardown();
+    drop(meta_input_publisher);
     simultaneous_hands_controllers.pause_best_effort(
         &xr_instance,
         &session,
         "projection-loop-finished",
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     if let Some(recorder) = hand_joint_capture_recorder.as_mut() {
         recorder.finish_active("projection-loop-ended");
     }
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     if let Some(recorder) = hand_mesh_capture_recorder.as_mut() {
         recorder.finish_active("projection-loop-ended");
     }
@@ -1757,6 +1827,9 @@ unsafe fn run_projection_loop_inner(
         }
     };
     if let Err(error) = retirement {
+        if held_review_admitted {
+            crate::held_output_review::hold("original-owner-retirement-unproven");
+        }
         // The panel may have submitted an additional FOREIGN release after the idle
         // wait. Its timeout is not covered by the ordinary frame fences. Preserve all
         // resource owners and both loaders until process exit; never unload/destroy
@@ -1806,14 +1879,42 @@ unsafe fn run_projection_loop_inner(
             "renderer device retained until process exit: {error}"
         ));
     }
+    // Main's idle and checked panel retirement above cover all original owners,
+    // including the panel's possible additional FOREIGN release submission.
+    let held_review_drain = if held_review_admitted && loop_result.is_ok() {
+        if !crate::held_review_policy::reset_recordings_after_idle(true, cmds.len(), |slot| {
+            vk_device
+                .reset_command_buffer(cmds[slot], vk::CommandBufferResetFlags::RELEASE_RESOURCES)
+                .is_ok()
+        }) {
+            crate::held_output_review::hold("original-recording-reset-failed");
+            // Do not destroy a swapchain/resource still referenced by a recording.
+            loop {
+                std::thread::park();
+            }
+        }
+        Some(
+            display_composite_feedback_renderer
+                .retire_all_source_after_idle(&vk_device, cmds.len()),
+        )
+    } else {
+        if held_review_admitted {
+            crate::held_output_review::hold("frame-loop-failed");
+        }
+        None
+    };
     if let Some(swapchain) = projection_swapchain.take() {
         swapchain.destroy_retired(&vk_device);
     }
-    if let Err(error) = vk_device.wait_for_fences(&fences, true, 1_000_000_000) {
-        crate::marker(
-            "vulkan-cleanup",
-            format!("status=warning reason=wait_fences_failed error={error}"),
-        );
+    // Selected input may fail after fence reset without a submission. Proven
+    // device idle, not an unsubmitted fence or elapsed time, retires GPU work.
+    if !meta_input_diagnostic {
+        if let Err(error) = vk_device.wait_for_fences(&fences, true, 1_000_000_000) {
+            crate::marker(
+                "vulkan-cleanup",
+                format!("status=warning reason=wait_fences_failed error={error}"),
+            );
+        }
     }
     for fence in fences {
         vk_device.destroy_fence(fence, None);
@@ -1873,6 +1974,11 @@ unsafe fn run_projection_loop_inner(
     drop(session);
     vk_device.destroy_device(None);
     vk_instance.destroy_instance(None);
+    if let Some(drain) = held_review_drain {
+        if let Err(error) = crate::held_output_review::complete(app, drain) {
+            crate::held_output_review::hold(&error);
+        }
+    }
 
     loop_result
 }
@@ -2445,7 +2551,7 @@ unsafe fn run_projection_frames(
     let original_product_mesh_panel =
         crate::native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping_installed(
         ) && !crate::native_mesh_ui::neutral_controls_enabled();
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     let mut mesh_hold_request: Option<(u64, u64, u64)> = None;
     #[cfg(feature = "showcase")]
     let mut showcase_cpu_visual_revision: Option<i64> = None;
@@ -2464,6 +2570,8 @@ unsafe fn run_projection_frames(
         };
     let mut display_refresh = NativeDisplayRefreshRuntimeState::new(display_refresh_settings);
     let mut session_running = false;
+    let mut last_full3_rejection: Option<String> = None;
+    let mut held_review_exit_requested = false;
     let mut openxr_session_generation = 0_u64;
     let mut renderer_focus_session_state = "IDLE";
     let mut app_running = true;
@@ -2476,18 +2584,26 @@ unsafe fn run_projection_frames(
     let mut alternate_pointer = crate::native_alternate_input::AlternatePointer::default();
     let mut last_worldspace_hand_state = String::new();
     if alternate_panel_pointer_enabled {
-        crate::marker("worldspace-input", format!("status=config inputPolicy={} trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false exclusivePanelPointer=true simultaneousTrackingRequired={}",
-            worldspace_input_policy.marker(),
-            crate::native_alternate_input::tracked_pointer_enabled_for_mode(render_mode.marker_value()),
-            compact_hand_input_source_mode.selects_live_frame(), enabled_extensions.meta_simultaneous_hands_and_controllers));
+        crate::marker(
+            "worldspace-input",
+            format!(
+                "status=config inputPolicy={} trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false exclusivePanelPointer=true simultaneousTrackingRequired={}",
+                worldspace_input_policy.marker(),
+                crate::native_alternate_input::tracked_pointer_enabled_for_mode(
+                    render_mode.marker_value()
+                ),
+                compact_hand_input_source_mode.selects_live_frame(),
+                enabled_extensions.meta_simultaneous_hands_and_controllers
+            ),
+        );
     }
     let mut ui_particle_phase_frame = 0_u64;
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     let experiment_frame_gate_clock = Instant::now();
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     let mut experiment_frame_gate =
         crate::experiment_session_runtime::SubmittedFrameReadinessGate::default();
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     let mut last_experiment_session_route_revision = 0_u64;
     let mut experiment_shutdown_route_armed = false;
     let mut experiment_shutdown_finish_observed = false;
@@ -2498,11 +2614,14 @@ unsafe fn run_projection_frames(
     let mut last_camera_import_cache_misses = 0_u64;
     let mut projection_target_state =
         ProjectionTargetState::new(projection_target_settings.clone());
+    #[cfg(not(native_meta_input_diagnostic))]
     let mut breath_bridge = ManifoldBreathBridge::start(projection_target_settings);
+    #[cfg(native_meta_input_diagnostic)]
+    let mut breath_bridge: Option<ManifoldBreathBridge> = None;
     let mut previous_frame_instant = Instant::now();
     let mut private_particle_world_anchor =
         PrivateParticleWorldAnchor::new_with_runtime_scale(private_particle_world_anchor_scale_m);
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     let mut control_panel_command_poller =
         crate::native_renderer_panel_bridge::ControlPanelCommandPoller::default();
     let mut environment_depth_provider_attempts = 0_u32;
@@ -2529,7 +2648,7 @@ unsafe fn run_projection_frames(
             environment_depth_alignment_state.marker_fields()
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
         app,
         "applied",
@@ -2544,7 +2663,7 @@ unsafe fn run_projection_frames(
             Duration::from_millis(0),
             &mut app_running,
         );
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         {
             let (pending_route_action, pending_route_revision) =
                 crate::experiment_session_runtime::current_route_action();
@@ -2562,10 +2681,10 @@ unsafe fn run_projection_frames(
                 );
             }
         }
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         let retirement_requested =
             session_owner.is_some_and(|(r, id)| r.renderer_retirement_pending(id));
-        #[cfg(feature = "showcase")]
+        #[cfg(any(feature = "showcase", native_meta_input_diagnostic))]
         let retirement_requested = false;
         if !app_running || retirement_requested {
             if !app_running
@@ -2581,13 +2700,21 @@ unsafe fn run_projection_frames(
             match session.request_exit() {
                 Ok(()) | Err(xr::sys::Result::ERROR_SESSION_NOT_RUNNING) => {}
                 Err(error) if retirement_requested => {
-                    return Err(format!("terminal-request-openxr-exit:{error}"))
+                    return Err(format!("terminal-request-openxr-exit:{error}"));
                 }
                 Err(error) => crate::marker(
                     "openxr-session",
                     format!("event=request-exit-error error={error}"),
                 ),
             }
+        }
+
+        if crate::held_output_review::requested() && session_running && !held_review_exit_requested
+        {
+            session
+                .request_exit()
+                .map_err(|e| format!("held review XR exit request:{e}"))?;
+            held_review_exit_requested = true;
         }
 
         while let Some(event) = xr_instance
@@ -2604,13 +2731,13 @@ unsafe fn run_projection_frames(
                         xr::SessionState::LOSS_PENDING => "LOSS_PENDING",
                         _ => "OTHER",
                     };
-                    #[cfg(not(feature = "showcase"))]
+                    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
                     if event.state() == xr::SessionState::READY {
                         experiment_frame_gate.begin_session();
                     }
                     let focused = event.state() == xr::SessionState::FOCUSED;
                     if !focused {
-                        #[cfg(not(feature = "showcase"))]
+                        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
                         crate::experiment_session_runtime::note_preparation_presentation(
                             crate::experiment_session::PresentationState::Unfocused,
                         );
@@ -2621,7 +2748,7 @@ unsafe fn run_projection_frames(
                             panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
                         }
                     }
-                    #[cfg(not(feature = "showcase"))]
+                    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
                     {
                         let lost_frame_admission = experiment_frame_gate.set_focused(focused);
                         let experiment_generation =
@@ -2786,7 +2913,7 @@ unsafe fn run_projection_frames(
         }
 
         if !session_running {
-            if !app_running || retirement_requested {
+            if !app_running || retirement_requested || crate::held_output_review::requested() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -2910,7 +3037,27 @@ unsafe fn run_projection_frames(
             continue;
         }
         trace_startup_frame(frame_count, "after-locate-views");
-        #[cfg(not(feature = "showcase"))]
+        let presentation_frame = crate::presentation_diagnostic::frame(
+            &views,
+            swapchain.extent,
+            frame_state.predicted_display_time.as_nanos(),
+        )?;
+        if crate::presentation_diagnostic::enabled() && (frame_count == 0 || frame_count % 300 == 0)
+        {
+            crate::marker(
+                "presentation",
+                format!(
+                    "status=submitting nativePassthroughLayerActive={} processedProjectionSubmitted={} captureExcluded={} eyeWidth={} eyeHeight={} sourceCapturePoseAvailable=false",
+                    native_passthrough.is_some(),
+                    crate::presentation_diagnostic::visible(),
+                    enabled_extensions.fb_composition_layer_secure_content
+                        && crate::presentation_diagnostic::visible(),
+                    swapchain.extent.width,
+                    swapchain.extent.height
+                ),
+            );
+        }
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         crate::lsl_panel_runtime::submit_headset_views(
             [
                 views[0].pose.position.x,
@@ -2956,7 +3103,7 @@ unsafe fn run_projection_frames(
             private_particle_world_anchor.refresh_scale_from_android_properties(frame_count);
             private_particle_world_anchor
                 .capture_startup_if_needed(particle_sort_eye_projection, frame_count);
-            #[cfg(not(feature = "showcase"))]
+            #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
             if let Some(recenter) =
                 crate::native_renderer_stimulus_panel::poll_spatial_camera_panel_session_icosphere_recenter(
                     frame_count,
@@ -2980,9 +3127,9 @@ unsafe fn run_projection_frames(
                 );
             }
         }
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         control_panel_command_poller.poll_and_apply(app, frame_count);
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         if let Some(open) =
             crate::native_renderer_stimulus_panel::poll_spatial_camera_panel_open(frame_count)
         {
@@ -3008,7 +3155,7 @@ unsafe fn run_projection_frames(
             runtime.update_audio_reactive_style(session, dt_seconds, frame_count);
         }
 
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         {
             if let Some(candidate) = crate::native_renderer_stimulus_panel::take_live_candidate() {
                 apply_live_stimulus_candidate(
@@ -3201,7 +3348,31 @@ unsafe fn run_projection_frames(
                         .filter(|r| r.valid)
                         .map(|r| r.origin)
                         .unwrap_or([0.0; 3]);
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} controllerTriggerPressed={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false handAimExtensionEnabled={} interactionArbitration={} simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"), ray.is_some_and(|r| r.valid), origin[0], origin[1], origin[2], ray.is_some_and(|r| r.pressed), ui_hand_sample.map(|h| h.source()).unwrap_or("none"), !controller_owner && pointer_pressed, panel.pointer_visual_marker(), enabled_extensions.fb_hand_tracking_aim, if original_product_mesh_panel { "press-edge" } else { "tracked-controller-priority" }, enabled_extensions.meta_simultaneous_hands_and_controllers));
+                    crate::marker(
+                        "worldspace-input",
+                        format!(
+                            "status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} controllerTriggerPressed={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false handAimExtensionEnabled={} interactionArbitration={} simultaneousTrackingRequired={}",
+                            frame_count,
+                            owner.marker(),
+                            worldspace_input_policy.suppresses_hand_tracking_for_controller(true),
+                            ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"),
+                            ray.is_some_and(|r| r.valid),
+                            origin[0],
+                            origin[1],
+                            origin[2],
+                            ray.is_some_and(|r| r.pressed),
+                            ui_hand_sample.map(|h| h.source()).unwrap_or("none"),
+                            !controller_owner && pointer_pressed,
+                            panel.pointer_visual_marker(),
+                            enabled_extensions.fb_hand_tracking_aim,
+                            if original_product_mesh_panel {
+                                "press-edge"
+                            } else {
+                                "tracked-controller-priority"
+                            },
+                            enabled_extensions.meta_simultaneous_hands_and_controllers
+                        ),
+                    );
                 }
                 if consumed
                     || (worldspace_input_policy.suppresses_hand_tracking_for_controller(true)
@@ -3256,7 +3427,7 @@ unsafe fn run_projection_frames(
                     );
                 }
             }
-            #[cfg(not(feature = "showcase"))]
+            #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
             if controller_events.experimenter_restart_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
@@ -3299,7 +3470,7 @@ unsafe fn run_projection_frames(
                     }
                 }
             }
-            #[cfg(not(feature = "showcase"))]
+            #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
             if controller_events.developer_panel_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
@@ -3373,11 +3544,29 @@ unsafe fn run_projection_frames(
                     || original_product_mesh_panel && was_pointer_pressed != pressed
                     || frame_count % 120 == 0
                 {
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false handAimExtensionEnabled={} interactionArbitration={} simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), ui_hand_sample.map(|h| h.source()).unwrap_or("none"), pressed, panel.pointer_visual_marker(), enabled_extensions.fb_hand_tracking_aim, if original_product_mesh_panel { "press-edge" } else { "tracked-controller-priority" }, enabled_extensions.meta_simultaneous_hands_and_controllers));
+                    crate::marker(
+                        "worldspace-input",
+                        format!(
+                            "status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false handAimExtensionEnabled={} interactionArbitration={} simultaneousTrackingRequired={}",
+                            frame_count,
+                            owner.marker(),
+                            worldspace_input_policy.suppresses_hand_tracking_for_controller(true),
+                            ui_hand_sample.map(|h| h.source()).unwrap_or("none"),
+                            pressed,
+                            panel.pointer_visual_marker(),
+                            enabled_extensions.fb_hand_tracking_aim,
+                            if original_product_mesh_panel {
+                                "press-edge"
+                            } else {
+                                "tracked-controller-priority"
+                            },
+                            enabled_extensions.meta_simultaneous_hands_and_controllers
+                        ),
+                    );
                 }
             }
         }
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         {
             let (route_action, route_revision) =
                 crate::experiment_session_runtime::current_route_action();
@@ -3442,7 +3631,7 @@ unsafe fn run_projection_frames(
                 dt_seconds,
                 frame_count,
             );
-            #[cfg(not(feature = "showcase"))]
+            #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
             if let Some(observed_at) = breath_observed_at {
                 renderer.update_breath_composition_driver(
                     crate::breath_composition_runtime::snapshot(),
@@ -3508,7 +3697,7 @@ unsafe fn run_projection_frames(
                     environment_depth_alignment_state.marker_fields(),
                 ),
             );
-            #[cfg(not(feature = "showcase"))]
+            #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
             crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
                 app,
                 "applied",
@@ -3598,9 +3787,11 @@ unsafe fn run_projection_frames(
             elapsed_ms(prior_frame_retire_readback_started);
         trace_startup_frame(frame_count, "before-vulkan-reset-fence");
         let prior_frame_reset_started = Instant::now();
-        vk_device
-            .reset_fences(&[fences[frame_slot]])
-            .map_err(|error| format!("reset Vulkan fence: {error}"))?;
+        if !crate::meta_input_diagnostic::enabled() {
+            vk_device
+                .reset_fences(&[fences[frame_slot]])
+                .map_err(|error| format!("reset Vulkan fence: {error}"))?;
+        }
         trace_startup_frame(frame_count, "after-vulkan-reset-fence");
         vk_device
             .reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())
@@ -3891,7 +4082,7 @@ unsafe fn run_projection_frames(
             );
         }
         frame_timings.live_hand_ms = elapsed_ms(stage_started);
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         if let Some(recorder) = hand_joint_capture_recorder.as_deref_mut() {
             recorder.update_and_record(
                 frame_count,
@@ -3900,7 +4091,7 @@ unsafe fn run_projection_frames(
                 hand_mesh_visual_material_settings,
             );
         }
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         if let Some(recorder) = hand_mesh_capture_recorder.as_deref_mut() {
             recorder.update_and_record(
                 reference_space,
@@ -4168,7 +4359,9 @@ unsafe fn run_projection_frames(
                             target_frame,
                             effective_graft_scale,
                         ) {
-                            Ok(copy_count) => primary_hand_mesh_visual_stats.graft_copy_count = copy_count,
+                            Ok(copy_count) => {
+                                primary_hand_mesh_visual_stats.graft_copy_count = copy_count
+                            }
                             Err(error) => crate::marker(
                                 "hand-mesh-visual",
                                 format!(
@@ -4189,7 +4382,9 @@ unsafe fn run_projection_frames(
                             target_frame,
                             effective_graft_scale,
                         ) {
-                            Ok(copy_count) => secondary_hand_mesh_visual_stats.graft_copy_count = copy_count,
+                            Ok(copy_count) => {
+                                secondary_hand_mesh_visual_stats.graft_copy_count = copy_count
+                            }
                             Err(error) => crate::marker(
                                 "hand-mesh-visual",
                                 format!(
@@ -4516,10 +4711,16 @@ unsafe fn run_projection_frames(
             );
         }
         let (prepared_display_composite_feedback, display_composite_feedback_stats) =
-            if display_composite_feedback_requested(display_composite_settings) {
+            if display_composite_feedback_requested(display_composite_settings)
+                && crate::presentation_diagnostic::visible()
+            {
                 let display_composite_xr_ready_marker_active =
                     !native_passthrough_requested || native_passthrough.is_some();
-                match crate::display_composite_native_stream::latest_display_composite_frame() {
+                match if crate::meta_input_diagnostic::enabled() {
+                    crate::meta_input_diagnostic::latest_frame()
+                } else {
+                    crate::display_composite_native_stream::latest_display_composite_frame()
+                } {
                     Some(frame) => match display_composite_feedback_renderer.prepare_frame(
                         vk_device,
                         cmd,
@@ -4530,9 +4731,44 @@ unsafe fn run_projection_frames(
                         display_composite_settings,
                         display_composite_projection_metadata,
                     ) {
-                        Ok(Some(prepared)) => {
-                            let stats = prepared.stats.clone();
-                            (Some(prepared), stats)
+                        Ok(Some(mut prepared)) => {
+                            match display_composite_feedback_renderer.prepare_full_core3(
+                                vk_device,
+                                cmd,
+                                frame_slot,
+                                &mut prepared,
+                                presentation_frame.as_ref(),
+                            ) {
+                                Ok(()) => {
+                                    last_full3_rejection = None;
+                                    let stats = prepared.stats.clone();
+                                    (Some(prepared), stats)
+                                }
+                                Err(error) => {
+                                    // No effect fallback and no running-session teardown.
+                                    // Both graph/adapter methods finish all fallible
+                                    // work before opening their render pass. Submit
+                                    // the already-recorded import ownership acquire
+                                    // and matching release below, then retire leases
+                                    // through the ORIGINAL slot fence. The XR image
+                                    // follows normal wait/submit/release/end-frame.
+                                    if last_full3_rejection.as_ref() != Some(&error) {
+                                        crate::marker(
+                                            "full-core-graph",
+                                            format!(
+                                                "status=rejected-before-submit reason={} noFallback=true sessionRetained=true completionPublished=false",
+                                                crate::sanitize(&error)
+                                            ),
+                                        );
+                                        last_full3_rejection = Some(error);
+                                    }
+                                    let mut stats = prepared.stats.clone();
+                                    stats.ready = false;
+                                    stats.rendered = false;
+                                    stats.reason = "effect-input-rejected";
+                                    (None, stats)
+                                }
+                            }
                         }
                         Ok(None) => (
                             None,
@@ -4651,6 +4887,7 @@ unsafe fn run_projection_frames(
             effective_diagnostic_settings,
             projection_metadata,
             &projection_target_state,
+            presentation_frame.as_ref(),
             mesh_ui_panel.as_deref(),
             #[cfg(native_development_feedback)]
             Some((
@@ -4674,6 +4911,26 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::ProjectionComposite,
         );
+        if let (Some(presentation), Some(prepared)) = (
+            presentation_frame.as_ref(),
+            prepared_display_composite_feedback.as_ref(),
+        ) {
+            if let Err(e) = display_composite_feedback_renderer.record_presentation_witnesses(
+                vk_device,
+                cmd,
+                frame_slot,
+                swapchain.extent,
+                display_composite_projection_metadata,
+                prepared,
+                presentation,
+            ) {
+                crate::marker(
+                    "presentation-witness",
+                    format!("status=error reason={}", crate::sanitize(&e)),
+                );
+            }
+        }
+        display_composite_feedback_renderer.release_meta_inputs(vk_device, cmd, frame_slot);
         gpu_timestamp_tracker.finalize_frame(vk_device, cmd, frame_slot);
         frame_timings.projection_composite_ms = elapsed_ms(stage_started);
         vk_device
@@ -4692,6 +4949,11 @@ unsafe fn run_projection_frames(
         frame_timings.swapchain_wait_ms = elapsed_ms(stage_started);
         let submit_started = Instant::now();
         trace_startup_frame(frame_count, "before-vulkan-queue-submit");
+        if crate::meta_input_diagnostic::enabled() {
+            vk_device
+                .reset_fences(&[fences[frame_slot]])
+                .map_err(|error| format!("reset Vulkan submit fence: {error}"))?;
+        }
         vk_device
             .queue_submit(
                 queue,
@@ -4703,6 +4965,8 @@ unsafe fn run_projection_frames(
             panel.mark_submitted(frame_slot);
         }
         trace_startup_frame(frame_count, "after-vulkan-queue-submit");
+        display_composite_feedback_renderer
+            .mark_meta_submitted(frame_slot, prepared_display_composite_feedback.as_ref());
         let submit_ms = submit_started.elapsed().as_secs_f64() * 1000.0;
         frame_timings.queue_submit_ms = submit_ms;
         trace_startup_frame(frame_count, "before-swapchain-release-image");
@@ -4755,6 +5019,28 @@ unsafe fn run_projection_frames(
             .layer_flags(projection_layer_flags)
             .space(reference_space)
             .views(&projection_views);
+        let secure_content = xr::sys::CompositionLayerSecureContentFB {
+            ty: xr::sys::CompositionLayerSecureContentFB::TYPE,
+            next: ptr::null(),
+            flags: xr::sys::CompositionLayerSecureContentFlagsFB::EXCLUDE_LAYER,
+        };
+        // Exclusion applies only to the explicit diagnostic projection; live input is never exposed.
+        let projection_layer = if crate::meta_input_diagnostic::enabled()
+            && enabled_extensions.fb_composition_layer_secure_content
+        {
+            let mut raw = projection_layer.into_raw();
+            if !raw.next.is_null() {
+                return Err(
+                    "Full-view diagnostic projection next-chain already occupied".to_owned(),
+                );
+            }
+            raw.next = (&secure_content as *const xr::sys::CompositionLayerSecureContentFB).cast();
+            // SAFETY: secure_content, projection_views and reference_space all
+            // remain alive until synchronous frame_stream.end returns below.
+            unsafe { xr::CompositionLayerProjection::from_raw(raw) }
+        } else {
+            projection_layer
+        };
         let passthrough_layer = native_passthrough
             .as_ref()
             .map(|runtime| runtime.composition_layer_raw(reference_space));
@@ -4762,7 +5048,9 @@ unsafe fn run_projection_frames(
         if let Some(passthrough_layer) = passthrough_layer.as_ref() {
             layers.push(passthrough_layer_base(passthrough_layer));
         }
-        layers.push(&projection_layer);
+        if crate::presentation_diagnostic::visible() {
+            layers.push(&projection_layer);
+        }
         let stage_started = Instant::now();
         trace_startup_frame(frame_count, "before-xr-end-frame");
         frame_stream
@@ -4773,6 +5061,20 @@ unsafe fn run_projection_frames(
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
+        if crate::presentation_diagnostic::enabled() && (frame_count == 0 || frame_count % 300 == 0)
+        {
+            crate::marker(
+                "presentation",
+                format!(
+                    "status=submitted frame={} nativePassthroughLayerActive={} processedProjectionPresent={} ownProjectionExclude={} nativeUnderlayExcluded=false hmdPixelProof=false",
+                    frame_count,
+                    native_passthrough.is_some(),
+                    crate::presentation_diagnostic::visible(),
+                    enabled_extensions.fb_composition_layer_secure_content
+                        && crate::presentation_diagnostic::visible()
+                ),
+            );
+        }
         #[cfg(feature = "showcase")]
         if let Some(frame) = showcase_frame.as_ref() {
             crate::showcase_runtime::confirm_visual_frame_submission(
@@ -4785,7 +5087,7 @@ unsafe fn run_projection_frames(
             );
         }
 
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         control_panel_command_poller.after_current_session_frame_submitted(
             app,
             openxr_session_generation,
@@ -4809,7 +5111,7 @@ unsafe fn run_projection_frames(
             mesh_ui_frame_controls.map(crate::native_mesh_ui::renderer_observed_visibility);
         let submitted_mesh_visibility =
             mesh_ui_frame_controls.and_then(crate::native_mesh_ui::renderer_submitted_visibility);
-        #[cfg(not(feature = "showcase"))]
+        #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
         {
             let experiment_generation = crate::experiment_session_runtime::current_generation();
             if mesh_hold_request.is_some_and(|key| key.0 != experiment_generation) {
@@ -4868,9 +5170,18 @@ unsafe fn run_projection_frames(
                                     at,
                                     crate::experiment_session::PresentationState::Unfocused,
                                 );
-                            crate::marker("experiment-session-panel-presentation", format!(
-                            "generation={} producerGeneration={} visibilityRevision={} submittedFrame={} evidence={} requested=unfocused response={}",
-                            key.0, key.1, key.2, frame_count, evidence, crate::sanitize(&response)));
+                            crate::marker(
+                                "experiment-session-panel-presentation",
+                                format!(
+                                    "generation={} producerGeneration={} visibilityRevision={} submittedFrame={} evidence={} requested=unfocused response={}",
+                                    key.0,
+                                    key.1,
+                                    key.2,
+                                    frame_count,
+                                    evidence,
+                                    crate::sanitize(&response)
+                                ),
+                            );
                         }
                     }
                 }
@@ -4974,16 +5285,36 @@ unsafe fn run_projection_frames(
                 },
             );
             if mesh_visibility_changed == Some(true) {
-                crate::marker("native-mesh-ui", format!("event=panel-visibility-effective generation={} requestRevision={} visible={} submittedFrame={} visibleConfirmation=false",
-                    controls.generation, controls.visibility_revision, controls.panel_visible, frame_count));
+                crate::marker(
+                    "native-mesh-ui",
+                    format!(
+                        "event=panel-visibility-effective generation={} requestRevision={} visible={} submittedFrame={} visibleConfirmation=false",
+                        controls.generation,
+                        controls.visibility_revision,
+                        controls.panel_visible,
+                        frame_count
+                    ),
+                );
             }
             if crate::native_mesh_ui::renderer_observed(controls.generation, controls.revision)
                 && (frame_count == 0 || frame_count % 120 == 0)
             {
-                crate::marker("native-mesh-ui", format!("status=renderer-observed generation={} revision={} submittedFrame={} neutralControlsApplied={} cameraOutputRequested={} particlesDraw={} handsDraw={} graftsDraw={} effectOverride={} visibleConfirmation=false",
-                    controls.generation, controls.revision, frame_count, mesh_ui_controls.is_some(), camera_output_enabled,
-                    private_particle_stats.visible, hand_mesh_visual_stats.any_ready() && mesh_ui_controls.is_none_or(|neutral| neutral.hands),
-                    effective_grafts_enabled, effective_private_layer_settings.layer_override));
+                crate::marker(
+                    "native-mesh-ui",
+                    format!(
+                        "status=renderer-observed generation={} revision={} submittedFrame={} neutralControlsApplied={} cameraOutputRequested={} particlesDraw={} handsDraw={} graftsDraw={} effectOverride={} visibleConfirmation=false",
+                        controls.generation,
+                        controls.revision,
+                        frame_count,
+                        mesh_ui_controls.is_some(),
+                        camera_output_enabled,
+                        private_particle_stats.visible,
+                        hand_mesh_visual_stats.any_ready()
+                            && mesh_ui_controls.is_none_or(|neutral| neutral.hands),
+                        effective_grafts_enabled,
+                        effective_private_layer_settings.layer_override
+                    ),
+                );
             }
         }
         frame_count = frame_count.saturating_add(1);
@@ -5046,7 +5377,7 @@ unsafe fn run_projection_frames(
     Ok(())
 }
 
-#[cfg(not(feature = "showcase"))]
+#[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
 fn consume_new_shutdown_route(
     action: crate::experiment_session_runtime::RouteAction,
     revision: u64,
@@ -5314,7 +5645,7 @@ fn apply_live_stimulus_candidate(
                     stimulus_volume_settings.marker_fields()
                 ),
             );
-            #[cfg(not(feature = "showcase"))]
+            #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
             crate::native_renderer_stimulus_panel::write_live_status(
                 app,
                 "applied",
@@ -5353,7 +5684,7 @@ fn apply_live_private_layer_selection(
             private_layer_settings.marker_fields()
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_private_layer_selection_status(
         app,
         "applied",
@@ -5391,7 +5722,7 @@ fn apply_live_environment_depth_alignment(
             environment_depth_alignment_state.marker_fields()
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
         app,
         "applied",
@@ -5464,7 +5795,7 @@ fn apply_live_private_particle_dynamics(
             crate::sanitize(effective.settings.heartbeat_pulse_parameter_source)
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_private_particle_dynamics_status(
         app,
         "applied",
@@ -5492,7 +5823,7 @@ fn reject_live_environment_depth_alignment(
             environment_depth_alignment_state.marker_fields()
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
         app,
         "rejected",
@@ -5520,7 +5851,7 @@ fn reject_live_private_particle_dynamics(
             crate::sanitize(reason)
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_private_particle_dynamics_status(
         app, "rejected", revision, reason, candidate, None,
     );
@@ -5541,7 +5872,7 @@ fn reject_live_private_layer_selection(
             crate::sanitize(reason)
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_private_layer_selection_status(
         app, "rejected", revision, reason, None,
     );
@@ -5562,7 +5893,7 @@ fn reject_live_stimulus_candidate(
             crate::sanitize(reason)
         ),
     );
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     crate::native_renderer_stimulus_panel::write_live_status(
         app, "rejected", revision, reason, None,
     );
@@ -5671,13 +6002,15 @@ unsafe fn create_projection_render_pass(
     fragment_density_map_enabled: bool,
     scene_depth_format: Option<vk::Format>,
 ) -> Result<vk::RenderPass, String> {
-    let mut attachments = vec![vk::AttachmentDescription::default()
-        .format(color_format)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .load_op(vk::AttachmentLoadOp::CLEAR)
-        .store_op(vk::AttachmentStoreOp::STORE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+    let mut attachments = vec![
+        vk::AttachmentDescription::default()
+            .format(color_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL),
+    ];
     if fragment_density_map_enabled {
         attachments.push(
             vk::AttachmentDescription::default()
@@ -5715,12 +6048,14 @@ unsafe fn create_projection_render_pass(
         subpass = subpass.depth_stencil_attachment(&depth_ref);
     }
     let subpasses = [subpass];
-    let mut dependencies = vec![vk::SubpassDependency::default()
-        .src_subpass(vk::SUBPASS_EXTERNAL)
-        .dst_subpass(0)
-        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)];
+    let mut dependencies = vec![
+        vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE),
+    ];
     if scene_depth_format.is_some() {
         dependencies.push(
             vk::SubpassDependency::default()
@@ -6421,6 +6756,7 @@ unsafe fn record_projection_diagnostic(
     diagnostic_settings: HandMeshVisualDiagnosticSettings,
     projection_metadata: &CameraProjectionMetadata,
     projection_target_state: &ProjectionTargetState,
+    presentation_frame: Option<&crate::presentation_diagnostic::Frame>,
     mesh_ui_panel: Option<&GpuMeshUiPanel>,
     #[cfg(native_development_feedback)] development_feedback_scene: Option<(
         &crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene,
@@ -6741,7 +7077,11 @@ unsafe fn record_projection_diagnostic(
                         TargetRect::UNIT
                     }
                 };
-                let display_target_rect = projection_target_state.effective_rect(display_base_rect);
+                let display_target_rect = if crate::meta_input_diagnostic::enabled() {
+                    TargetRect::UNIT
+                } else {
+                    projection_target_state.effective_rect(display_base_rect)
+                };
                 display_composite_feedback_renderer.record_feedback_eye(
                     device,
                     cmd,
@@ -6750,6 +7090,7 @@ unsafe fn record_projection_diagnostic(
                     display_composite_projection_metadata,
                     display_target_rect,
                     prepared,
+                    presentation_frame.map(|frame| &frame.eyes[eye_index]),
                 );
             }
         }
@@ -8291,7 +8632,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(not(feature = "showcase"))]
+    #[cfg(all(not(feature = "showcase"), not(native_meta_input_diagnostic)))]
     fn shutdown_route_is_consumed_once_without_consuming_other_routes() {
         let mut last_revision = 4;
         assert!(!consume_new_shutdown_route(

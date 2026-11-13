@@ -1,0 +1,58 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.diagnostic.presentation",
+  "module_path": "diagnostic/presentation",
+  "module_kind": "private-diagnostic-presentation",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "build_input"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "private-app-adapter",
+  "description": "Closed native PT/stretch/contain/assumed-angular/finite-cylinder diagnostic with actual per-eye geometry.",
+  "provides": [
+    "diagnostic.presentation"
+  ],
+  "depends_on": [
+    "renderer.diagnostic.meta_input_surface"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "native-passthrough-style-only"
+    ]
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRESENTATION_DIAGNOSTIC",
+        "value": "true"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "sourceAuthority=external-meta-producer",
+      "no360Source=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Explicit co-installable private presentation diagnostic. Manual source angular bounds are assumptions, not exported capture calibration. Private effect input remains outside source."
+}
