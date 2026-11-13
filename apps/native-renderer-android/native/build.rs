@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::{
     env, fs,
     io::{BufRead, BufReader},
@@ -31,6 +32,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRESENTATION_DIAGNOSTIC");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT_SHA256");
 
     for flag in [
         "META_INPUT_DIAGNOSTIC",
@@ -451,13 +453,31 @@ fn main() {
         );
     }
     let display_fragment = meta_fragment
-        .as_deref()
-        .unwrap_or(Path::new("shaders/display_composite_feedback.frag.glsl"));
+        .unwrap_or_else(|| PathBuf::from("shaders/display_composite_feedback.frag.glsl"));
     println!("cargo:rerun-if-changed={}", display_fragment.display());
+    let display_fragment = if meta_input {
+        let expected = env::var("RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT_SHA256")
+            .expect("Private Meta input fragment SHA256 missing or invalid Unicode");
+        let bytes = fs::read(&display_fragment).expect("read private Meta input fragment");
+        assert!(
+            expected.len() == 64
+                && expected
+                    .bytes()
+                    .all(|v| v.is_ascii_digit() || (b'a'..=b'f').contains(&v))
+                && format!("{:x}", Sha256::digest(&bytes)) == expected,
+            "Private Meta input fragment SHA256 mismatch or noncanonical digest"
+        );
+        // Compile the exact verified bytes, never reopen the mutable external path.
+        let snapshot = out_dir.join("meta_input.frag.glsl");
+        fs::write(&snapshot, &bytes).expect("write verified Meta input fragment");
+        snapshot
+    } else {
+        display_fragment
+    };
     compile_shader(
         &glslc,
         "fragment",
-        display_fragment,
+        &display_fragment,
         &out_dir.join("display_composite_feedback.frag.spv"),
     );
     #[cfg(not(test))]
