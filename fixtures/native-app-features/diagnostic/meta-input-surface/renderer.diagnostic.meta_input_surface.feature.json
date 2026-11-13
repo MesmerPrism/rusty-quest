@@ -1,0 +1,27 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.diagnostic.meta_input_surface",
+  "module_path": "diagnostic/meta-input-surface",
+  "module_kind": "private-diagnostic-input",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "build_input" },
+  "owner_lane": "rusty-quest",
+  "status": "private-app-adapter",
+  "description": "Opt-in own Surface input for an external Meta producer, with full-eye raw/private shader diagnostics.",
+  "provides": ["diagnostic.meta_input_surface"],
+  "depends_on": ["quest.native.openxr_vulkan_base", "renderer.background.native_passthrough", "input.controllers_and_hands_optional"],
+  "incompatible_with": ["display_composite", "camera.hwb", "video_projection", "renderer.background.solid_black"],
+  "exclusive_groups": { "diagnostic_input": "meta-input-surface" },
+  "android_manifest": { "permissions": [], "uses_features": [], "activities": [], "services": ["NativeMetaInputSurfaceService"], "queries": [] },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": ["native-passthrough-style-only"] },
+  "build_inputs": {
+    "env": [
+      { "name": "RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_DIAGNOSTIC", "value": "true" },
+      { "name": "RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT" },
+      { "name": "RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FRAGMENT_SHA256" }
+    ],
+    "assets": [], "shaders": []
+  },
+  "markers": { "required": ["nativePassthroughRequested=true", "sourceAuthority=external-meta-producer"], "forbidden": ["recursiveFeedback=true", "cameraInputConnected=true"] },
+  "validation": { "quick": [], "standard": [], "device": [] },
+  "public_private_boundary": "Only a co-installable debug diagnostic package selects this source set. No Meta capture permission is granted to the app. Private effect source is supplied and hashed outside the repository."
+}

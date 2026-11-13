@@ -1,0 +1,122 @@
+{
+  "schema": "rusty.quest.external_packed_input.provenance.v1",
+  "license": "AGPL-3.0-or-later",
+  "origin": "New authored provider/resource orchestration, informed by project-owned packed Image/AHB retention and app-owned v2 Surface transport patterns. No diagnostic source file, renderer/effect/shader formula, private controller/vendor API, platform binary, device evidence or history copied.",
+  "project_reference": {
+    "repository": "https://github.com/MesmerPrism/rusty-quest",
+    "revisions": [
+      "d6d6726aa3b44dce2516d45f939467c6b4235dbf",
+      "67da3975a80d96ad4f0aef542a340cf84428f233"
+    ],
+    "paths": [
+      "apps/native-renderer-android/native/src/meta_input_diagnostic.rs",
+      "apps/native-renderer-android/src/diagnosticMetaInput/java/io/github/mesmerprism/rustyquest/NativeMetaInputContract.java"
+    ]
+  },
+  "copied_files": [
+    {
+      "path": "LICENSE",
+      "source": "LICENSE",
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0",
+      "use": "project license retained byte-exact"
+    }
+  ],
+  "aosp_source_references": [
+    {
+      "release": "android-12.0.0_r1",
+      "url": "https://android.googlesource.com/platform/frameworks/base/+/android-12.0.0_r1/media/jni/android_media_ImageReader.cpp",
+      "sha256": "f7eb8bdc37611cdca30540fadb744c2c03a5e3c1e2d0454390cde860e1561001",
+      "claim": "acquireBuffer(buffer,0) uses waitForFence default"
+    },
+    {
+      "release": "android-14.0.0_r1",
+      "url": "https://android.googlesource.com/platform/frameworks/base/+/android-14.0.0_r1/media/jni/android_media_ImageReader.cpp",
+      "sha256": "a1fcbdd2242f40e075339380f4a0bf0d0cb79203e18e3d5948953d8f8f402de0",
+      "claim": "same synchronous acquire call"
+    },
+    {
+      "url": "https://android.googlesource.com/platform/frameworks/native/+/android-12.0.0_r1/libs/gui/include/gui/BufferItemConsumer.h",
+      "sha256": "0ad0c5e763fc443b5574c415a864c60745ed80034423cedc25448d472cee1ca1",
+      "claim": "default waitForFence=true; real fence wait without timeout"
+    }
+  ],
+  "aosp_bytes_copied": false,
+  "qualification": "Host tests/API typing only; actual platform binary, device capture/import/cleanup/presentation unqualified",
+  "files": [
+    {
+      "path": ".gitignore",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "DEPENDENCIES.json",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "LICENSE",
+      "origin": "byte-exact project license",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "PROVENANCE.json",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "README.md",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "run_checks.py",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "src/android/java/io/github/mesmerprism/rustyquest/packedinput/PackedInputReader.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "src/android/java/io/github/mesmerprism/rustyquest/PackedInputPublisherV2.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "src/main/java/io/github/mesmerprism/rustyquest/packedinput/PackedInputLeaseQueue.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "src/main/java/io/github/mesmerprism/rustyquest/packedinput/PackedReaderRetirement.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "src/main/java/io/github/mesmerprism/rustyquest/packedinput/PackedSnapshotV2Shape.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "TEST-RESULTS.md",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "tests/java/io/github/mesmerprism/rustyquest/packedinput/PackedInputLeaseQueueTest.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "tests/java/io/github/mesmerprism/rustyquest/packedinput/PackedReaderRetirementTest.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    },
+    {
+      "path": "tests/java/io/github/mesmerprism/rustyquest/packedinput/PackedSnapshotV2ShapeTest.java",
+      "origin": "new authored source, host test, documentation or dependency declaration",
+      "license": "AGPL-3.0-or-later"
+    }
+  ]
+}

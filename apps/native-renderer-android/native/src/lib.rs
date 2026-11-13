@@ -6,7 +6,7 @@
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 #![recursion_limit = "256"]
 
-use rusty_quest_native_renderer_contracts::{validate_native_renderer_plan, NativeRendererPlan};
+use rusty_quest_native_renderer_contracts::{NativeRendererPlan, validate_native_renderer_plan};
 
 const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
@@ -80,12 +80,24 @@ mod experiment_control_mode;
 mod experiment_session;
 #[cfg(not(feature = "showcase"))]
 mod experiment_session_runtime;
+mod full_core_graph;
+mod fullview_passthrough_diagnostic;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particles;
 #[cfg(target_os = "android")]
 mod gpu_hand_anchor_particles;
+#[cfg(target_os = "android")]
+mod held_output_review;
+mod held_review_policy;
+#[cfg(target_os = "android")]
+mod meta_input_diagnostic;
+mod meta_input_diagnostic_state;
+#[cfg(target_os = "android")]
+mod presentation_diagnostic;
+mod presentation_geometry;
+mod sampled_input_adapter;
 // Host fixtures exercise the real buffer validation and push ABI without a Vulkan device.
 #[cfg(all(test, not(target_os = "android")))]
 mod gpu_hand_mesh_visual {
@@ -473,9 +485,8 @@ fn request_runtime_permissions(
     permissions: &[&str],
 ) -> Result<(), String> {
     use jni::{
-        jni_sig, jni_str,
+        JavaVM, jni_sig, jni_str,
         objects::{JObject, JValue},
-        JavaVM,
     };
 
     let vm = unsafe { JavaVM::from_raw(state.vm_as_ptr().cast()) };
@@ -531,9 +542,16 @@ impl Drop for ExperimentSessionImmersiveOwner<'_> {
         }
         // Provider retirement precedes shutdown, including failed shutdown ACK.
 
-        match self.runtime.as_ref().expect("positive native identity owns a captured runtime")
-                .shutdown_captured_immersive_owner(self.identity) {
-            Ok(false) => marker("experiment-session-runtime", "status=former-immersive-owner-dropped shutdownDispatched=false"),
+        match self
+            .runtime
+            .as_ref()
+            .expect("positive native identity owns a captured runtime")
+            .shutdown_captured_immersive_owner(self.identity)
+        {
+            Ok(false) => marker(
+                "experiment-session-runtime",
+                "status=former-immersive-owner-dropped shutdownDispatched=false",
+            ),
             Ok(true) => marker(
                 "experiment-session-runtime",
                 "status=immersive-owner-destroyed recordingFinalized=true nextLaunchFresh=true",
@@ -552,6 +570,81 @@ impl Drop for ExperimentSessionImmersiveOwner<'_> {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
+    #[cfg(native_meta_input_diagnostic)]
+    fullview_passthrough_diagnostic::run_entry(
+        true,
+        cfg!(feature = "showcase"),
+        app,
+        |_| unreachable!("product entry excluded from diagnostic composition"),
+        run_diagnostic_activity,
+    )
+    .expect("closed diagnostic composition");
+    #[cfg(not(native_meta_input_diagnostic))]
+    fullview_passthrough_diagnostic::run_entry(
+        false,
+        cfg!(feature = "showcase"),
+        app,
+        run_product_activity,
+        |_| unreachable!("diagnostic entry excluded from product composition"),
+    )
+    .expect("closed product composition");
+}
+
+#[cfg(all(target_os = "android", native_meta_input_diagnostic))]
+fn run_diagnostic_activity(app: android_activity::AndroidApp) {
+    let mut owner = fullview_passthrough_diagnostic::DiagnosticOwner::new();
+    let settings = native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
+    marker("native-app-settings", settings.marker_fields());
+    let options=native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(|name|settings.lookup(name));
+    // No experiment initialization/capture, app-owner status registration,
+    // embedded broker/LSL, media playback or recording starts in this entry.
+    let isolation = fullview_passthrough_diagnostic::select(
+        true,
+        cfg!(feature = "showcase"),
+        false,
+        options.camera_output_mode.camera_import_enabled(),
+        options.render_mode
+            == native_renderer_options::NativeRendererRenderMode::NativePassthroughStyleOnly,
+    );
+    if let Err(error) = isolation {
+        marker(
+            "diagnostic-owner",
+            format!("status=rejected reason={error}"),
+        );
+        keep_activity_alive_after_error(&app);
+        return;
+    }
+    let decision = simultaneous_hands_controllers::resolve_activation(
+        options.simultaneous_hands_controllers_settings,
+        false,
+    );
+    if decision.is_rejected() {
+        marker("diagnostic-owner", "status=rejected reason=input-admission");
+        keep_activity_alive_after_error(&app);
+        return;
+    }
+    marker(
+        "diagnostic-owner",
+        "status=started experimentRuntimeInitialized=false experimentOwnerCaptured=false appQuiescence=false",
+    );
+    let result = xr_vulkan::run_projection_loop(&app, None, None, options, decision);
+    if let Err(error) = &result {
+        marker(
+            "diagnostic-owner",
+            format!("status=held reason={}", sanitize(error)),
+        );
+    }
+    owner.finish(result.is_ok(), held_output_review::ready());
+    if let Err(error) = held_output_review::show_ready(&app, &owner) {
+        held_output_review::hold(&error);
+    }
+    if result.is_err() {
+        keep_activity_alive_after_error(&app);
+    }
+}
+
+#[cfg(all(target_os = "android", not(native_meta_input_diagnostic)))]
+fn run_product_activity(app: android_activity::AndroidApp) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());

@@ -1,0 +1,46 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.diagnostic.buffered_stereo_full3",
+  "module_path": "diagnostic/buffered-stereo-full3",
+  "module_kind": "private-diagnostic-postprocess",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "build_input"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "private-app-adapter",
+  "description": "Explicit buffered stereo diagnostic with a hash-pinned external three-stage shader bundle.",
+  "provides": ["diagnostic.buffered_stereo_full3"],
+  "depends_on": ["renderer.diagnostic.presentation"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.swapchain.color_format": "unorm"
+    },
+    "clear_families": [],
+    "expected_render_modes": ["native-passthrough-style-only"]
+  },
+  "build_inputs": {
+    "env": [
+      {"name": "RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FULL3_DIAGNOSTIC", "value": "true"},
+      {"name": "RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FULL3_BUNDLE"},
+      {"name": "RUSTY_QUEST_NATIVE_RENDERER_META_INPUT_FULL3_BUNDLE_SHA256"}
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": ["sourceAuthority=external-meta-producer"],
+    "forbidden": ["recursiveFeedback=true", "cameraInputConnected=true"]
+  },
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "Only neutral buffer, synchronization and stereo transport are tracked here. Formula bodies, parameters and the authenticated three-stage payload remain with their private owner. Bundle selection is not camera, field-of-view, exclusion or physical-stability acceptance."
+}

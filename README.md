@@ -1164,3 +1164,6 @@ Device-facing smoke wrappers require `-Serial <quest-serial>` or
 `RUSTY_QUEST_SERIAL`; normal ADB work must not rely on an implicit default
 device. Use `RUSTY_QUEST_ADB_SERVER_PORT` or `-AdbServerPort` only when
 intentionally routing through a non-default ADB server port.
+
+The opt-in [stopped-source output review](docs/NATIVE_HELD_OUTPUT_REVIEW.md) documents the separate
+debug feature lock, original-owner drain gate and source/runtime evidence limits.

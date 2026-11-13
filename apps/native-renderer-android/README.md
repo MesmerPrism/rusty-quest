@@ -790,3 +790,6 @@ the wrapper will apply
 `quest-native-renderer-live-hand-visual-diagnostic.profile.json` and require
 the live-marker caveat plus screenshot overlay-color gates instead of recorded
 replay proof.
+
+The opt-in [stopped-source output review](../../docs/NATIVE_HELD_OUTPUT_REVIEW.md) documents the separate
+debug feature lock, original-owner drain gate and source/runtime evidence limits.

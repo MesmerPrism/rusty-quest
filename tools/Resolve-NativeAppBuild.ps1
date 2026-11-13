@@ -794,6 +794,11 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }
+    if ($Activities -contains "NativeHeldReviewActivity") {
+        [void]$lines.Add('        <activity android:name="io.github.mesmerprism.rustyquest.NativeHeldReviewActivity" android:exported="false" android:hardwareAccelerated="true" android:screenOrientation="landscape" android:label="Stopped source review">')
+        [void]$lines.Add('            <meta-data android:name="com.oculus.intent.category.2D" android:value="true" />')
+        [void]$lines.Add('        </activity>')
+    }
     if ($Activities -contains "ControlPanelActivity") {
         [void]$lines.Add('        <activity')
         [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity"')
@@ -876,6 +881,9 @@ function New-GeneratedAndroidManifestText {
     }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
+    }
+    if ($Services -contains "NativeMetaInputSurfaceService") {
+        [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.NativeMetaInputSurfaceService" android:exported="true" android:permission="android.permission.DUMP" />')
     }
     if ($Services -contains "NativeRendererSelfKioskService") {
         [void]$lines.Add('        <service')

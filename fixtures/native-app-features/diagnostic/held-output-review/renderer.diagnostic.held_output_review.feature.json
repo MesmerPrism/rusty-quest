@@ -1,0 +1,18 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.diagnostic.held_output_review",
+  "module_path": "diagnostic/held-output-review",
+  "module_kind": "private-diagnostic-presentation",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "build_input" },
+  "owner_lane": "rusty-quest", "status": "private-app-adapter",
+  "description": "One-way debug review of completed output after Shell source retirement attestation and actual app-owned drain.",
+  "provides": ["diagnostic.held_output_review"],
+  "depends_on": ["renderer.diagnostic.presentation", "renderer.diagnostic.buffered_stereo_full3"],
+  "incompatible_with": [], "exclusive_groups": {},
+  "android_manifest": {"permissions": [], "uses_features": [], "activities": ["NativeHeldReviewActivity"], "services": [], "queries": []},
+  "runtime_profile": {"set": {}, "clear_families": [], "expected_render_modes": ["native-passthrough-style-only"]},
+  "build_inputs": {"env": [{"name": "RUSTY_QUEST_NATIVE_RENDERER_HELD_OUTPUT_REVIEW", "value": "true"}], "assets": [], "shaders": []},
+  "markers": {"required": ["sourceAuthority=external-meta-producer"], "forbidden": ["recursiveFeedback=true"]},
+  "validation": {"quick": [], "standard": [], "device": []},
+  "public_private_boundary": "Explicit diagnostic feature only. Live projection remains excluded; no capture permission, private shader payload or same-process source restart is added."
+}
