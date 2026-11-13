@@ -1,6 +1,7 @@
 //! Explicit private presentation diagnostics. Startup config is closed and bounded.
 use crate::presentation_geometry as math;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::{io::Read, path::Path, sync::OnceLock};
 static CONFIG: OnceLock<Config> = OnceLock::new();
 static DIRECTORY: OnceLock<std::path::PathBuf> = OnceLock::new();
@@ -30,6 +31,8 @@ impl Mode {
 pub(crate) struct Config {
     pub(crate) schema: String,
     pub(crate) mode: Mode,
+    #[serde(default = "save_witnesses_default")]
+    pub(crate) save_witnesses: bool,
     #[serde(default = "input_layout_default")]
     pub(crate) input_layout: String,
     #[serde(default = "input_height_default")]
@@ -50,6 +53,9 @@ pub(crate) struct Config {
     pub(crate) cylinder_half_angle_degrees: f32,
     #[serde(default = "height_default")]
     pub(crate) cylinder_height_m: f32,
+}
+fn save_witnesses_default() -> bool {
+    true
 }
 fn reference_default() -> String {
     "current-left-view".into()
@@ -74,6 +80,7 @@ impl Default for Config {
         Self {
             schema: "private.meta_input.presentation.v1".into(),
             mode: Mode::Native,
+            save_witnesses: save_witnesses_default(),
             input_layout: input_layout_default(),
             input_height: input_height_default(),
             source_tangents: None,
@@ -117,20 +124,36 @@ pub(crate) fn initialize(data: Option<&Path>) -> Result<(), String> {
     };
     c.validate()?;
     let dir = root.join("presentation-witness");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if c.save_witnesses {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
     CONFIG
         .set(c.clone())
         .map_err(|_| "Presentation config already initialized")?;
     DIRECTORY
         .set(dir)
         .map_err(|_| "Presentation directory already initialized")?;
+    let config_sha256 = (!bytes.is_empty()).then(|| format!("{:x}", Sha256::digest(&bytes)));
+    if !c.save_witnesses {
+        write_no_save_policy_receipt(root, &c, config_sha256.as_deref(), bytes.len())?;
+    }
     crate::marker(
         "presentation",
         format!(
-            "status=config mode={:?} reference={} sourceBoundsAuthority={} no360Source=true noSourceCapturePose=true projectionOnlyExclude=true",
+            "status=config mode={:?} reference={} sourceBoundsAuthority={} saveWitnesses={} noPixelWitnesses={} pixelWitnessPolicy={} startupConfigSha256={} startupConfigBytes={} processId={} no360Source=true noSourceCapturePose=true projectionOnlyExclude=true",
             c.mode,
             c.reference,
-            c.source_bounds_authority.as_deref().unwrap_or("none")
+            c.source_bounds_authority.as_deref().unwrap_or("none"),
+            c.save_witnesses,
+            !c.save_witnesses,
+            if c.save_witnesses {
+                "finite-witnesses"
+            } else {
+                "disabled-no-save"
+            },
+            config_sha256.as_deref().unwrap_or("default"),
+            bytes.len(),
+            std::process::id()
         ),
     );
     if c.mode == Mode::Cylinder && c.cylinder_half_angle_degrees >= 179.999 {
@@ -140,6 +163,35 @@ pub(crate) fn initialize(data: Option<&Path>) -> Result<(), String> {
         );
     }
     Ok(())
+}
+fn write_no_save_policy_receipt(
+    root: &Path,
+    config: &Config,
+    config_sha256: Option<&str>,
+    config_bytes: usize,
+) -> Result<(), String> {
+    use std::io::Write;
+    let digest = config_sha256.ok_or("No-save policy requires actual startup bytes")?;
+    let value = serde_json::json!({
+        "schema":"rusty.quest.meta_input.presentation_policy.v1",
+        "process_id":std::process::id(),
+        "startup_config_sha256":digest,
+        "startup_config_bytes":config_bytes,
+        "save_witnesses":config.save_witnesses,
+        "pixel_witness_policy":"disabled-no-save",
+        "reader_generation_available_at_config":false
+    });
+    let temporary = root.join(format!("presentation-policy.{}.part", std::process::id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|e| e.to_string())?;
+    file.write_all(value.to_string().as_bytes())
+        .map_err(|e| e.to_string())?;
+    file.sync_all().map_err(|e| e.to_string())?;
+    drop(file);
+    std::fs::rename(&temporary, root.join("presentation-policy.json")).map_err(|e| e.to_string())
 }
 impl Config {
     pub(crate) fn layout(&self) -> math::InputLayout {
@@ -232,6 +284,9 @@ impl Config {
 }
 pub(crate) fn config() -> Option<&'static Config> {
     enabled().then(|| CONFIG.get()).flatten()
+}
+pub(crate) fn witnesses_enabled() -> bool {
+    config().map_or(true, |c| c.save_witnesses)
 }
 pub(crate) fn visible() -> bool {
     config().map_or(true, |c| c.mode != Mode::Native)
@@ -388,6 +443,7 @@ pub(crate) fn write_witness(
     metadata: &serde_json::Value,
     bytes: &[u8],
 ) -> Result<(), String> {
+    crate::meta_input_diagnostic_state::require_witness_saving(witnesses_enabled())?;
     let dir = DIRECTORY
         .get()
         .ok_or("Presentation witness directory missing")?
@@ -442,6 +498,25 @@ mod tests {
     use super::*;
     fn decode(text: &str) -> Config {
         serde_json::from_str(text).unwrap()
+    }
+    #[test]
+    fn witness_saving_is_an_explicit_boolean_with_legacy_true_default() {
+        assert!(Config::default().save_witnesses);
+        assert!(
+            decode(r#"{"schema":"private.meta_input.presentation.v1","mode":"stretch"}"#)
+                .save_witnesses
+        );
+        let no_save = decode(
+            r#"{"schema":"private.meta_input.presentation.v1","mode":"stretch","save_witnesses":false}"#,
+        );
+        no_save.validate().unwrap();
+        assert!(!no_save.save_witnesses);
+        for invalid in ["null", "0", "\"false\""] {
+            let text = format!(
+                r#"{{"schema":"private.meta_input.presentation.v1","mode":"stretch","save_witnesses":{invalid}}}"#
+            );
+            assert!(serde_json::from_str::<Config>(&text).is_err());
+        }
     }
     #[test]
     fn old_mono_configs_keep_their_shape_and_unknown_bounds() {

@@ -10,7 +10,9 @@ use crate::{
     acamera_sys::*,
     android_hardware_buffer::{AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle},
     display_composite_native_stream::DisplayCompositeFrame,
-    meta_input_diagnostic_state::{Control, WitnessCadence, WitnessTiming},
+    meta_input_diagnostic_state::{
+        Control, WitnessCadence, WitnessTiming, require_witness_saving, witness_timing_if_enabled,
+    },
 };
 use jni::sys::{JNIEnv, jclass, jint, jlong, jobject};
 use std::{
@@ -56,10 +58,12 @@ fn phase_clock_ms() -> u64 {
         .min(u64::MAX as u128) as u64
 }
 pub(crate) fn witness_timing(generation: u64, sequence: u64) -> Option<WitnessTiming> {
-    WITNESS_CADENCE
-        .lock()
-        .ok()?
-        .ready(generation, sequence, phase_clock_ms())
+    witness_timing_if_enabled(crate::presentation_diagnostic::witnesses_enabled(), || {
+        WITNESS_CADENCE
+            .lock()
+            .ok()?
+            .ready(generation, sequence, phase_clock_ms())
+    })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -275,7 +279,9 @@ pub(crate) fn publish(
         .generation;
     crate::held_output_review::initialize(&root, generation)?;
     let dir = root.join("meta-input-witness").join(generation.to_string());
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if crate::presentation_diagnostic::witnesses_enabled() {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
     WITNESS_DIR
         .set(dir)
         .map_err(|_| "Meta diagnostic cannot republish a retired generation")?;
@@ -576,6 +582,9 @@ unsafe fn on_image_admitted(c: &'static Context, reader: *mut AImageReader) {
 /// both raw-pack inputs AND both eye-sized FullCore3 results from the same
 /// retained AImage/submission. Admission or submission alone is insufficient.
 pub(crate) fn full_core3_witness_completed(generation: u64, sequence: u64) {
+    if !crate::presentation_diagnostic::witnesses_enabled() {
+        return;
+    }
     if let Some(s) = stream() {
         if let Ok(c) = s.context.control.lock() {
             if c.active
@@ -599,6 +608,7 @@ pub(crate) fn write_full_core3_paired_raw(
     metadata: &serde_json::Value,
     bytes: &[u8],
 ) -> Result<(), String> {
+    require_witness_saving(crate::presentation_diagnostic::witnesses_enabled())?;
     if completion.mode != 2 || eye > 1 || bytes.len() != 1280 * 1280 * 4 {
         return Err("Invalid FullCore3 paired raw export".into());
     }
@@ -659,6 +669,7 @@ pub(crate) fn write_witness(
     format: ash::vk::Format,
     bytes: &[u8],
 ) -> Result<(), String> {
+    require_witness_saving(crate::presentation_diagnostic::witnesses_enabled())?;
     let dir = WITNESS_DIR
         .get()
         .ok_or("Meta diagnostic witness directory missing")?;

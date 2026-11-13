@@ -64,6 +64,21 @@ pub(crate) struct WitnessTiming {
     pub(crate) first_timestamp_ns: i64,
 }
 
+pub(crate) fn witness_timing_if_enabled(
+    save_witnesses: bool,
+    ready: impl FnOnce() -> Option<WitnessTiming>,
+) -> Option<WitnessTiming> {
+    if save_witnesses { ready() } else { None }
+}
+
+pub(crate) fn require_witness_saving(save_witnesses: bool) -> Result<(), String> {
+    if save_witnesses {
+        Ok(())
+    } else {
+        Err("disabled-no-save: pixel witness saving disabled by startup config".into())
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct WitnessCadence {
     phase: Option<(u64, u64, u64, i64, i64, u64)>,
@@ -112,6 +127,28 @@ impl WitnessCadence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn no_save_prevents_readback_admission_even_for_default_raw_sequence_zero() {
+        let control = Control::new(7);
+        assert_eq!((control.effect, control.sequence), (Effect::Raw, 0));
+        let mut cadence = WitnessCadence::new();
+        for (timestamp, at) in [(100, 0), (101, 100), (102, 200), (103, 300)] {
+            cadence.observe(7, 0, timestamp, at);
+        }
+        assert!(cadence.ready(7, 0, 1000).is_some());
+        assert!(
+            witness_timing_if_enabled(false, || panic!(
+                "disabled saving must not enter readback admission"
+            ))
+            .is_none()
+        );
+        assert!(witness_timing_if_enabled(true, || cadence.ready(7, 0, 1000)).is_some());
+    }
+    #[test]
+    fn defensive_writers_cannot_admit_pixels_when_saving_is_disabled() {
+        assert!(require_witness_saving(false).is_err());
+        assert!(require_witness_saving(true).is_ok());
+    }
     #[test]
     fn delayed_requests_cannot_change_a_newer_or_retired_generation() {
         let mut c = Control::new(71);
