@@ -1,0 +1,40 @@
+{
+  "schema": "rusty.quest.package_update_publication_receipt.v3",
+  "source_revision": "fb5781031a51bd0709a5941e0a271360b8db49d7",
+  "publication_mode": "refresh",
+  "generation": "s1794637252031-v60606-be7856e3ad911507-fab917889dca92b6",
+  "prior_pointer_sha256": "sha256:f6b2298c9edd6f4bd511d0010be3f69132251eff982627732b3d1d362d4e3d92",
+  "prior_envelope_sha256": "sha256:0e827e06bc2d1b35ca3d002c48790658c28b6818afd3bb72d92592e03f2076ac",
+  "channel": "labs",
+  "package_name": "io.github.mesmerprism.rustykiosk.labs",
+  "rollout_ring": "labs",
+  "signer_sha256": "sha256:423d20004c79dd140c692e31aa80369cd3677b1ae2688dbd75011a4c83a0f1fb",
+  "key_id": "release-manifest-2026-a",
+  "public_key": "GtgU9RKlhTbuL1uXIlfBkDvqYBX6K4kao_8ZwIzA3BI",
+  "https_origin": "https://mesmerprism.com",
+  "site_base_path": "rusty-quest",
+  "manifest_id": "rusty-kiosk.labs.s1794637252031.v60606",
+  "manifest_url": "https://mesmerprism.com/rusty-quest/package-updates/rusty-kiosk/labs/generations/s1794637252031-v60606-be7856e3ad911507-fab917889dca92b6/envelope.json",
+  "apk_url": "https://mesmerprism.com/rusty-quest/package-updates/rusty-kiosk/labs/artifacts/sha256/be7856e3ad91150747e640410d53087f81dd1466dc41a8e95df2b0a1275408bd/rusty-kiosk-0.6.6-alpha.6.apk",
+  "apk_sha256": "sha256:be7856e3ad91150747e640410d53087f81dd1466dc41a8e95df2b0a1275408bd",
+  "apk_size_bytes": 87062353,
+  "envelope_sha256": "sha256:fab917889dca92b6b5abb1a69300772cdf20e9654f9efdc30a48fd5925462df9",
+  "version_code": 60606,
+  "version_name": "0.6.6-alpha.6",
+  "sequence": 1794637252031,
+  "issued_at_ms": 1794637252031,
+  "expires_at_ms": 1794723652031,
+  "observed_apk": {
+    "package_name": "io.github.mesmerprism.rustykiosk.labs",
+    "version_code": 60606,
+    "version_name": "0.6.6-alpha.6",
+    "signer_sha256": "sha256:423d20004c79dd140c692e31aa80369cd3677b1ae2688dbd75011a4c83a0f1fb"
+  },
+  "inspection_tool": {
+    "build_tools_version": "35.0.1",
+    "aapt2_name": "aapt2.exe",
+    "aapt2_sha256": "sha256:90481d1cbee3a170007701363391059ac3f9f22c4a4916b0423d591a22ac22d6",
+    "apksigner_name": "apksigner.bat",
+    "apksigner_sha256": "sha256:549dd0028b0314a5112d6b56e2de7800e713f297da4508b513a735546e52ce38"
+  }
+}
